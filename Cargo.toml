@@ -1,0 +1,55 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "tests"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+# Simulation crates use only these Bevy sub-crates (ADR 0002).
+bevy_app = "=0.19.1"
+bevy_ecs = "=0.19.1"
+bevy_math = "=0.19.1"
+# Full engine: game_* crates only.
+bevy = "=0.19.1"
+bevy_egui = "=0.42.0"
+
+rand = "0.10.3"
+rand_chacha = "0.10.0"
+serde = { version = "1.0.229", features = ["derive"] }
+ron = "0.12.2"
+tracing = "0.1"
+criterion = "0.8.2"
+
+sim_core = { path = "crates/sim_core" }
+sim_world = { path = "crates/sim_world" }
+sim_agents = { path = "crates/sim_agents" }
+sim_economy = { path = "crates/sim_economy" }
+sim_military = { path = "crates/sim_military" }
+sim_knowledge = { path = "crates/sim_knowledge" }
+sim_lod = { path = "crates/sim_lod" }
+sim_ai = { path = "crates/sim_ai" }
+sim_headless = { path = "crates/sim_headless" }
+game_render = { path = "crates/game_render" }
+game_ui = { path = "crates/game_ui" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+# Determinism rule: no wall-clock RNG.
+disallowed_methods = "deny"
+
+# Playable debug builds (CLAUDE.md "Build settings").
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+debug = "line-tables-only"

@@ -1,0 +1,3 @@
+disallowed-methods = [
+    { path = "rand::rng", reason = "use SimRng (determinism rule, NFR-08)" },
+]

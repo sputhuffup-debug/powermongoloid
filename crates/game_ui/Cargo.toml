@@ -1,0 +1,21 @@
+[package]
+name = "game_ui"
+description = "HUD, panels, orders UI, event feed, and the dev-build debug panel."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# egui debug panel (UI-07). Enabled by game_app's `dev` feature.
+debug_ui = ["dep:bevy_egui"]
+
+[dependencies]
+bevy.workspace = true
+bevy_egui = { workspace = true, optional = true }
+sim_core.workspace = true
+
+[lints]
+workspace = true
