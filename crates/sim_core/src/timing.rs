@@ -31,15 +31,15 @@ fn mark<const I: usize>(mut t: ResMut<SimTimings>) {
     } else if let Some(last) = t.last_mark {
         t.per_set[I - 1] = now - last;
     }
-    if I == SimSet::ALL.len() {
-        if let Some(start) = t.tick_start {
-            t.total = now - start;
-            t.total_avg = if t.total_avg.is_zero() {
-                t.total
-            } else {
-                t.total_avg.mul_f64(0.9) + t.total.mul_f64(0.1)
-            };
-        }
+    if I == SimSet::ALL.len()
+        && let Some(start) = t.tick_start
+    {
+        t.total = now - start;
+        t.total_avg = if t.total_avg.is_zero() {
+            t.total
+        } else {
+            t.total_avg.mul_f64(0.9) + t.total.mul_f64(0.1)
+        };
     }
     t.last_mark = Some(now);
 }

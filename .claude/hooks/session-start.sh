@@ -7,7 +7,7 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
 fi
 
-pkgs="pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev mesa-vulkan-drivers xvfb"
+pkgs="pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev mesa-vulkan-drivers xvfb libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2"
 missing=""
 for p in $pkgs; do
   dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"

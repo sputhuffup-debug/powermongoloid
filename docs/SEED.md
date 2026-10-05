@@ -288,8 +288,8 @@ Seven milestones take the project from an empty repo to a playable campaign; M3 
 
 Workspace, CI, plugin structure, fixed-tick loop, seeded RNG, headless binary, debug UI shell.
 
-- [ ] `cargo run -p game_app` opens a window with an empty scene and the debug panel showing tick count and tick time
-- [ ] `cargo run -p sim_headless -- --ticks 1000 --seed 42` prints a state hash; running it twice prints the same hash
+- [x] `cargo run -p game_app` opens a window with an empty scene and the debug panel showing tick count and tick time
+- [x] `cargo run -p sim_headless -- --ticks 1000 --seed 42` prints a state hash; running it twice prints the same hash
 - [ ] CI runs fmt, clippy and tests; all pass
 
 ### M1: World
