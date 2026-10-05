@@ -9,6 +9,9 @@ publish.workspace = true
 
 [dependencies]
 bevy_app.workspace = true
+# The headless sim runs systems in parallel, like the game (NFR-04).
+bevy_ecs = { workspace = true, features = ["multi_threaded"] }
+rand.workspace = true
 sim_core.workspace = true
 sim_world.workspace = true
 sim_agents.workspace = true
@@ -17,6 +20,13 @@ sim_military.workspace = true
 sim_knowledge.workspace = true
 sim_lod.workspace = true
 sim_ai.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "tick"
+harness = false
 
 [lints]
 workspace = true

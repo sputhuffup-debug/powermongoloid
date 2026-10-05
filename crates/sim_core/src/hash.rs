@@ -1,7 +1,8 @@
 //! Deterministic state hash over every registered simulation resource and
 //! component (NFR-08). See ADR 0003.
 
-use std::collections::HashMap;
+use std::any::TypeId;
+use std::collections::{BTreeSet, HashMap};
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
@@ -112,6 +113,9 @@ type ComponentHashFn = fn(&EntityRef, &mut StateHasher);
 pub struct HashRegistry {
     resources: Vec<(&'static str, ResourceHashFn)>,
     components: Vec<(&'static str, ComponentHashFn)>,
+    /// Types in the hash, plus types deliberately left out of it.
+    covered: BTreeSet<TypeId>,
+    exempt: Vec<(&'static str, &'static str)>,
 }
 
 impl HashRegistry {
@@ -121,6 +125,10 @@ impl HashRegistry {
     pub fn component_names(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.components.iter().map(|(n, _)| *n)
     }
+    /// `(type name, reason)` for each type deliberately left out of the hash.
+    pub fn exemptions(&self) -> &[(&'static str, &'static str)] {
+        &self.exempt
+    }
 }
 
 pub trait AppHashExt {
@@ -128,13 +136,17 @@ pub trait AppHashExt {
     fn register_hashed<T: Component + StateHash>(&mut self) -> &mut Self;
     /// Includes resource `T` in the state hash.
     fn register_hashed_resource<T: Resource + StateHash>(&mut self) -> &mut Self;
+    /// Declares that component or resource `T` is deliberately not part of
+    /// the state hash (diagnostics, history, pending input). `reason` is
+    /// required so every exemption is reviewable.
+    fn exempt_from_hash<T: 'static>(&mut self, reason: &'static str) -> &mut Self;
 }
 
 impl AppHashExt for App {
     fn register_hashed<T: Component + StateHash>(&mut self) -> &mut Self {
         let name = std::any::type_name::<T>();
         let mut reg = self.world_mut().get_resource_or_init::<HashRegistry>();
-        if !reg.components.iter().any(|(n, _)| *n == name) {
+        if reg.covered.insert(TypeId::of::<T>()) {
             reg.components.push((name, |e, h| match e.get::<T>() {
                 Some(c) => {
                     h.u8(1);
@@ -149,7 +161,7 @@ impl AppHashExt for App {
     fn register_hashed_resource<T: Resource + StateHash>(&mut self) -> &mut Self {
         let name = std::any::type_name::<T>();
         let mut reg = self.world_mut().get_resource_or_init::<HashRegistry>();
-        if !reg.resources.iter().any(|(n, _)| *n == name) {
+        if reg.covered.insert(TypeId::of::<T>()) {
             reg.resources
                 .push((name, |w, h| match w.get_resource::<T>() {
                     Some(r) => {
@@ -161,6 +173,54 @@ impl AppHashExt for App {
         }
         self
     }
+
+    fn exempt_from_hash<T: 'static>(&mut self, reason: &'static str) -> &mut Self {
+        let mut reg = self.world_mut().get_resource_or_init::<HashRegistry>();
+        if reg.covered.insert(TypeId::of::<T>()) {
+            reg.exempt.push((std::any::type_name::<T>(), reason));
+        }
+        self
+    }
+}
+
+/// Crate-name prefixes whose resources are simulation state.
+const SIM_CRATE_PREFIXES: &[&str] = &["sim_"];
+
+/// Lists simulation state the hash does not cover: any component on an
+/// entity with a [`SpawnId`], and any resource defined in a `sim_*` crate,
+/// that is neither registered with [`AppHashExt::register_hashed`] /
+/// [`AppHashExt::register_hashed_resource`] nor exempted with
+/// [`AppHashExt::exempt_from_hash`]. Empty means full coverage.
+pub fn unhashed_state(world: &mut World) -> Vec<String> {
+    let entities: Vec<Entity> = world
+        .query_filtered::<Entity, With<SpawnId>>()
+        .iter(world)
+        .collect();
+    let world: &World = world;
+    let empty = HashRegistry::default();
+    let registry = world.get_resource::<HashRegistry>().unwrap_or(&empty);
+    let covered = |id: Option<TypeId>| {
+        id.is_some_and(|id| id == TypeId::of::<HashRegistry>() || registry.covered.contains(&id))
+    };
+
+    let mut missing = BTreeSet::new();
+    for e in entities {
+        let Ok(infos) = world.inspect_entity(e) else {
+            continue;
+        };
+        for info in infos {
+            if !covered(info.type_id()) {
+                missing.insert(format!("component {}", info.name()));
+            }
+        }
+    }
+    for (info, _) in world.iter_resources() {
+        let name = info.name().to_string();
+        if SIM_CRATE_PREFIXES.iter().any(|p| name.starts_with(p)) && !covered(info.type_id()) {
+            missing.insert(format!("resource {name}"));
+        }
+    }
+    missing.into_iter().collect()
 }
 
 /// Hashes all registered resources, then every entity with a [`SpawnId`] in
@@ -211,7 +271,8 @@ mod tests {
     fn app_with(positions: &[(u64, IVec2)]) -> App {
         let mut app = App::new();
         app.register_hashed::<SpawnId>()
-            .register_hashed::<Position>();
+            .register_hashed::<Position>()
+            .register_hashed_resource::<NextSpawnId>();
         for &(id, p) in positions {
             app.world_mut().spawn((SpawnId(id), Position(p)));
         }
@@ -226,6 +287,31 @@ mod tests {
         let c = compute_state_hash(app_with(&[(0, IVec2::ZERO), (1, IVec2::X)]).world_mut());
         assert_eq!(a, b);
         assert_ne!(a, c);
+    }
+
+    #[derive(Component)]
+    struct Unregistered;
+
+    #[test]
+    fn coverage_check_reports_unhashed_components() {
+        let mut app = app_with(&[(0, IVec2::ZERO)]);
+        assert_eq!(unhashed_state(app.world_mut()), Vec::<String>::new());
+
+        app.world_mut().spawn((SpawnId(1), Unregistered));
+        let missing = unhashed_state(app.world_mut());
+        assert_eq!(missing.len(), 1);
+        assert!(missing[0].contains("Unregistered"), "{missing:?}");
+
+        app.exempt_from_hash::<Unregistered>("test");
+        assert_eq!(unhashed_state(app.world_mut()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn coverage_check_reports_unhashed_sim_resources() {
+        let mut app = App::new();
+        // NextSpawnId lives in sim_core, so it counts as simulation state.
+        app.init_resource::<NextSpawnId>();
+        assert_eq!(unhashed_state(app.world_mut()).len(), 1);
     }
 
     #[test]

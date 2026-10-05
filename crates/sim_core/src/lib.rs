@@ -7,6 +7,7 @@ pub mod command;
 pub mod components;
 pub mod demo;
 pub mod hash;
+pub mod replay;
 pub mod rng;
 pub mod schedule;
 pub mod step;
@@ -15,9 +16,13 @@ pub mod timing;
 use bevy_app::{App, FixedUpdate, Plugin};
 use bevy_ecs::prelude::*;
 
-pub use command::{CommandKind, CommandsProcessed, SimCommand};
+pub use command::{
+    CommandKind, CommandLog, CommandScript, CommandsProcessed, LoggedCommand, SimCommand,
+    SimInputSet,
+};
 pub use components::{Allegiance, DetailLevel, FactionId, Motion, NextSpawnId, Position, SpawnId};
-pub use hash::{AppHashExt, StateHash, StateHasher, compute_state_hash};
+pub use hash::{AppHashExt, StateHash, StateHasher, compute_state_hash, unhashed_state};
+pub use replay::{Checkpoint, REPLAY_FORMAT, Replay};
 pub use rng::{SimRng, SimSeed};
 pub use schedule::{SIM_TICK_HZ, SimSet, SimTick};
 pub use step::{SimStepper, run_sim_tick};
@@ -37,15 +42,26 @@ impl Plugin for SimCorePlugin {
             .init_resource::<NextSpawnId>()
             .init_resource::<SimTimings>()
             .init_resource::<CommandsProcessed>()
+            .init_resource::<CommandLog>()
+            .init_resource::<CommandScript>()
             .add_message::<SimCommand>();
 
         schedule::configure_sets(app);
         timing::add_markers(app);
 
-        app.add_systems(
+        app.configure_sets(
+            FixedUpdate,
+            (SimInputSet::Inject, SimInputSet::Consume)
+                .chain()
+                .in_set(SimSet::Input),
+        )
+        .add_systems(
             FixedUpdate,
             (
-                command::drain_commands.in_set(SimSet::Input),
+                (command::inject_scripted, command::record_commands)
+                    .chain()
+                    .in_set(SimInputSet::Inject),
+                command::drain_commands.in_set(SimInputSet::Consume),
                 schedule::advance_tick.in_set(SimSet::Bookkeeping),
             ),
         );
@@ -59,7 +75,10 @@ impl Plugin for SimCorePlugin {
             .register_hashed::<Position>()
             .register_hashed::<Motion>()
             .register_hashed::<Allegiance>()
-            .register_hashed::<DetailLevel>();
+            .register_hashed::<DetailLevel>()
+            .exempt_from_hash::<SimTimings>("wall-clock diagnostics for the debug panel")
+            .exempt_from_hash::<CommandLog>("history; its effects are in the hashed state")
+            .exempt_from_hash::<CommandScript>("pending replay input, not yet applied");
     }
 }
 

@@ -28,6 +28,19 @@ M1 (M0 complete 2026-10-05; update this line as milestones complete)
 - Test:           cargo test --workspace
 - Lint:           cargo clippy --workspace -- -D warnings && cargo fmt --check
 - Bench:          cargo bench -p sim_headless
+- Record replay:  cargo run --release -p sim_headless -- --ticks 10000 --commands 200 --record run.ron
+- Verify replay:  cargo run --release -p sim_headless -- --replay run.ron [--single-threaded]
+
+## Determinism harness (ADR 0003, ADR 0004)
+- Every new sim component or resource is registered with `register_hashed` /
+  `register_hashed_resource` in the same commit, or exempted with
+  `exempt_from_hash::<T>("reason")`. `state_hash_covers_every_sim_component`
+  fails otherwise.
+- New sim entities are spawned with `sim_core::spawn_sim` so they get a SpawnId.
+- Systems that act on commands go in `SimInputSet::Consume`; never inject input
+  any other way, or replays stop reproducing.
+- If the determinism tests fail, find the first divergent checkpoint
+  (`--checkpoint-every`) and compare single- vs multi-threaded runs first.
 
 ## Definition of done for any task
 1. cargo fmt, clippy and tests pass.
