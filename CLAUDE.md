@@ -19,6 +19,7 @@ M0 (update this line as milestones complete)
   not in code.
 - Every new system gets a tracing span and lives in a named SystemSet.
 - Write the test first for sim logic when practical.
+- Never use bincode (unmaintained). Saves use serde + postcard + zstd.
 - Pin the Bevy version. Do not upgrade Bevy or add dependencies without asking.
 
 ## Commands

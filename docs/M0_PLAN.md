@@ -18,7 +18,7 @@ Spec: `docs/SEED.md` § "M0: Skeleton". Covers SIM-03, UI-07, NFR-08 (harness on
 
 Not added in M0 (used later): `noise 0.9.0` (M1; uses its own `rand 0.8` internally, which is fine), `smallvec`, `zstd 0.14`.
 
-**Needs a decision before M4: bincode.** `bincode 3.0.0`, the latest version, is a tombstone: its `lib.rs` is only `compile_error!` and the project is unmaintained. Options: pin `bincode 2.0.1` (works, no future fixes) or switch to `postcard` (maintained, serde-based, compact). I recommend `postcard` + zstd and will write it up as an ADR when M4 starts.
+**Save format (decided):** `postcard 1.1.3` + `zstd`, added in M4. `bincode` is not used anywhere (see `docs/adr/0001-save-format-postcard.md`).
 
 ## Workspace
 
@@ -29,8 +29,8 @@ Cargo.toml                 # [workspace], shared [workspace.dependencies], dev p
 rust-toolchain.toml
 .github/workflows/ci.yml
 assets/data/.gitkeep
-docs/adr/0001-workspace-and-sim-render-split.md
-docs/adr/0002-determinism-and-state-hash.md
+docs/adr/0002-workspace-and-sim-render-split.md
+docs/adr/0003-determinism-and-state-hash.md
 crates/sim_core            # real content (below)
 crates/sim_world, sim_agents, sim_economy, sim_military,
        sim_knowledge, sim_lod, sim_ai          # empty plugin + named SystemSet
@@ -82,10 +82,9 @@ Dev profile follows CLAUDE.md: `opt-level = 1` for our crates and `opt-level = 3
 
 ## ADRs to write in M0
 
-1. **0001 Workspace and sim/render split**: why `sim_*` crates use only `bevy_ecs`/`bevy_app`/`bevy_math`/`bevy_time`.
-2. **0002 Determinism and state hash**: SpawnId ordering, derived RNG streams, the FNV hash, and headless runs that don't depend on wall-clock time.
+1. **0002 Workspace and sim/render split**: why `sim_*` crates use only `bevy_ecs`/`bevy_app`/`bevy_math`/`bevy_time`.
+2. **0003 Determinism and state hash**: SpawnId ordering, derived RNG streams, the FNV hash, and headless runs that don't depend on wall-clock time.
 
 ## Open questions for you
 
 1. The workspace goes at the repo root, with the repo still named `powermongoloid`. OK, or do you want a `warlord-sim/` subdirectory?
-2. The bincode replacement can wait until M4. Are you happy to defer that decision?

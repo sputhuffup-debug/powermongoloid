@@ -117,7 +117,7 @@ The project is a Rust Cargo workspace on Bevy, with the simulation in its own cr
 | Randomness | `rand` + `rand_chacha` | Every random draw comes from a seeded ChaCha RNG resource, never `thread_rng` |
 | Noise | `noise` | Terrain heightmap and moisture |
 | Data files | `serde` + `ron` | Recipes, occupations, unit stats, worldgen settings |
-| Save files | `serde` + `bincode`, zstd-compressed | Versioned header |
+| Save files | `serde` + `postcard`, zstd-compressed | Versioned header. Never `bincode` (unmaintained; see docs/adr/0001) |
 | Debug UI | `bevy_egui` | Inspector, sim stats, overlays; dev builds only |
 | Profiling | `tracing` spans + Tracy (Bevy `trace_tracy` feature) | Every system has a span |
 | Benchmarks | `criterion` | Headless sim ticks per second at fixed populations |
