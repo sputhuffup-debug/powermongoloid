@@ -1,0 +1,22 @@
+[package]
+name = "sim_headless"
+description = "Composes every sim_* plugin; the binary runs the simulation with no window."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bevy_app.workspace = true
+sim_core.workspace = true
+sim_world.workspace = true
+sim_agents.workspace = true
+sim_economy.workspace = true
+sim_military.workspace = true
+sim_knowledge.workspace = true
+sim_lod.workspace = true
+sim_ai.workspace = true
+
+[lints]
+workspace = true

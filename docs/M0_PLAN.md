@@ -1,6 +1,6 @@
 # M0 Plan: Skeleton
 
-Status: **proposed, awaiting approval**. No code written yet.
+Status: **approved 2026-10-05**; workspace at repo root.
 Spec: `docs/SEED.md` § "M0: Skeleton". Covers SIM-03, UI-07, NFR-08 (harness only).
 
 ## Pinned versions (checked on crates.io, 2026-10-05)
@@ -85,6 +85,3 @@ Dev profile follows CLAUDE.md: `opt-level = 1` for our crates and `opt-level = 3
 1. **0002 Workspace and sim/render split**: why `sim_*` crates use only `bevy_ecs`/`bevy_app`/`bevy_math`/`bevy_time`.
 2. **0003 Determinism and state hash**: SpawnId ordering, derived RNG streams, the FNV hash, and headless runs that don't depend on wall-clock time.
 
-## Open questions for you
-
-1. The workspace goes at the repo root, with the repo still named `powermongoloid`. OK, or do you want a `warlord-sim/` subdirectory?
