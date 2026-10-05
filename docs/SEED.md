@@ -290,7 +290,7 @@ Workspace, CI, plugin structure, fixed-tick loop, seeded RNG, headless binary, d
 
 - [x] `cargo run -p game_app` opens a window with an empty scene and the debug panel showing tick count and tick time
 - [x] `cargo run -p sim_headless -- --ticks 1000 --seed 42` prints a state hash; running it twice prints the same hash
-- [ ] CI runs fmt, clippy and tests; all pass
+- [x] CI runs fmt, clippy and tests; all pass
 
 ### M1: World
 
