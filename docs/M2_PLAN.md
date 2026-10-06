@@ -1,6 +1,6 @@
 # M2 Plan: A living village
 
-Status: **proposed, awaiting approval**. No code written yet.
+Status: **decisions made 2026-10-06; awaiting go-ahead to implement**. No code written yet.
 Spec: `docs/SEED.md` § "M2: A living village".
 
 ## Requirements covered
@@ -137,19 +137,30 @@ The determinism suite, the hash coverage check and parallel-vs-serial agreement 
 8. **Rendering:** agent rendering with distance bands and interpolation.
 9. **UI:** the time bar, settlement panel, villager inspector and picking.
 10. **Verification:** the scenario tests (day cycle, famine), the 5k benchmark, and Xvfb screenshots.
-11. **ADRs:**
+11. **Art detail band:** procedural stylized textures, the terrain material swap, textured building and figure variants, and hysteresis.
+12. **ADRs:**
     - 0006: utility AI and decision traces
     - 0007: economy and the request resolver
     - 0008: agent rendering bands and interpolation
+    - 0009: art direction and detail bands
 
 ## Performance targets for M2
 - 5,000 villagers: ≤ 2 ms per tick in release on the 4-core dev box. That leaves headroom for NFR-03 (≤ 8 ms at 20,000) in M3.
 - Building the population and layout when the world is created: ≤ 1 s.
 
-## Decisions needed before starting
-1. **Art direction** (SEED.md open question, due before M2). Recommendation: **flat-shaded low-poly with vertex colours**, matching M1's terrain. It's cheapest to keep readable with thousands of figures.
-2. **Population scope.** Recommendation: **one region at full detail, other regions empty until M5.** The alternative is a thin population everywhere, which costs performance budget now and would be thrown away when LOD lands.
-3. **Player UI toolkit.** Recommendation: **`bevy_ui` for player panels, egui for debug only**, as the spec says. egui everywhere would be faster to build but isn't shippable.
+## Decisions (answered 2026-10-06)
+1. **Art direction: hybrid by zoom level.** Beyond a set camera distance everything is **flat-shaded low-poly with vertex colours** (the M1 look). Closer than that, the same things switch to **stylized textures**.
+2. **Population scope: one region at full detail.** Other regions stay empty until M5.
+3. **Player UI toolkit: `bevy_ui`.** egui stays dev-only.
+
+### What the hybrid art direction means for M2
+- **One threshold for everything.** A single "detail distance" (initially about 150 world units, set in `assets/data/render.ron`) separates the textured close-up band from the low-poly band. Terrain, buildings and figures switch together, so the scene never mixes styles at the same depth.
+- **Terrain:** chunks inside the threshold use a textured material. Tiling stylized detail textures, mapped by world tile coordinates, are multiplied by the existing vertex colours, so the colours stay the same and only surface detail appears. Chunks outside keep the flat material. That's a material swap per chunk, not a mesh rebuild.
+- **Buildings and figures:** the near band uses textured variants of the models (UV-mapped walls, roofs and clothing). The far bands use the flat vertex-coloured models, then billboards, then density dots. Each switch is a mesh-and-material swap on the render entity.
+- **Popping:** a hysteresis band (switch in at 0.9× the threshold, out at 1.1×) stops chunks and figures flickering at the boundary. A cross-fade can come later if the switch is still noticeable.
+- **Texture assets:** the game must not use anything from existing games. M2 generates its stylized textures **procedurally at startup**: painterly noise for grass, soil, rock and sand, plus simple patterned wall, roof and cloth textures, written in-house like the terrain noise. That means no asset licensing and no new dependencies. Hand-made art can replace them later without code changes, because materials load from a texture handle either way.
+- **Recorded in ADR 0009** (art direction and detail bands), and the SEED.md open question is ticked with this answer.
+- **Testing:** a unit test checks band selection with hysteresis. The Xvfb screenshots include one zoomed past the threshold and one before it, showing both styles.
 
 ## Out of scope (later milestones)
 - Fleeing, hiding and fighting (SIM-13, M3)
