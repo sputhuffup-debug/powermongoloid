@@ -140,11 +140,14 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<(), &'static str> {
                 c.goal = None;
             }
             c.orders.push_back(Order::new(order));
-            let who = faction_name(world, cmd.issuer);
-            log(
-                world,
-                format!("{who}: captain {captain} ordered to {}", describe(&order)),
-            );
+            // AI orders repeat as targets move; only the player's are news.
+            if cmd.origin == sim_core::CommandOrigin::Player {
+                let who = faction_name(world, cmd.issuer);
+                log(
+                    world,
+                    format!("{who}: captain {captain} ordered to {}", describe(&order)),
+                );
+            }
             Ok(())
         }
         CommandKind::SetPosture { captain, posture } => {

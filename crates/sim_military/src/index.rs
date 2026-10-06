@@ -41,6 +41,8 @@ pub struct ArmyInfo {
 pub struct ArmyIndex {
     pub armies: Vec<ArmyInfo>,
     by_entity: HashMap<Entity, usize>,
+    /// Membership signature per army when its slots were last numbered.
+    signatures: HashMap<Entity, (u32, u64, u64)>,
 }
 
 impl ArmyIndex {
@@ -126,7 +128,7 @@ pub struct FighterGrid {
     masks: Vec<u64>,
     used: Vec<u32>,
     pub count: usize,
-    /// Every fighter, in SpawnId order.
+    /// Every fighter (not sorted: users sort what they pick out).
     pub fighters: Vec<(SpawnId, Entity)>,
     /// Fighting villagers (militia), in SpawnId order.
     pub militia: Vec<(SpawnId, Entity)>,
@@ -259,6 +261,7 @@ pub struct Nearby {
 /// Knowledge set: formation slots, then the army index and fighter grid.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // Bevy system parameters.
 pub(crate) fn build_index(
+    tick: Res<sim_core::SimTick>,
     map: Res<WorldMap>,
     army: Res<Army>,
     econ: Res<Economy>,
@@ -318,38 +321,65 @@ pub(crate) fn build_index(
         .map(|(i, a)| (a.entity, i))
         .collect();
 
-    // Formation slots: followers of each army in SpawnId order.
-    let mut members: Vec<(usize, SpawnId)> = followers
-        .iter()
-        .filter_map(|(id, f, ..)| index.by_entity.get(&f.captain).map(|&i| (i, *id)))
-        .collect();
-    members.sort_unstable();
-    let mut slots: HashMap<SpawnId, u16> = HashMap::new();
-    let mut current = usize::MAX;
-    let mut n = 0u16;
-    for (i, id) in &members {
-        if *i != current {
-            current = *i;
-            n = 0;
-        }
-        slots.insert(*id, n);
-        n = n.saturating_add(1);
-    }
-    for (id, mut f, pos, motion, act) in &mut followers {
+    // Head counts, and a membership signature per army.
+    let mut signature = vec![(0u64, 0u64); armies.len()];
+    for (id, f, _, _, act) in &followers {
         let Some(&i) = index.by_entity.get(&f.captain) else {
             continue;
         };
-        if let Some(&slot) = slots.get(id)
-            && f.slot != slot
-        {
-            f.slot = slot;
-        }
         let a = &mut armies[i];
         a.followers += 1;
         if act.kind == ActionKind::Fight {
             a.fighting += 1;
         }
-        let _ = (pos, motion);
+        let s = &mut signature[i];
+        s.0 = s.0.wrapping_add(id.0);
+        s.1 ^= id.0.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+    // Formation slots: followers of each army in SpawnId order, renumbered
+    // every 50 ticks (5 s) so a battle's losses don't reshuffle the ranks
+    // every tick. Armies whose membership hasn't changed are skipped: their
+    // slots are already what renumbering would give.
+    if tick.0.is_multiple_of(50) {
+        let changed: Vec<bool> = armies
+            .iter()
+            .zip(&signature)
+            .map(|(a, s)| index.signatures.get(&a.entity) != Some(&(a.followers, s.0, s.1)))
+            .collect();
+        if changed.iter().any(|c| *c) {
+            let mut members: Vec<(usize, SpawnId)> = followers
+                .iter()
+                .filter_map(|(id, f, ..)| {
+                    let &i = index.by_entity.get(&f.captain)?;
+                    changed[i].then_some((i, *id))
+                })
+                .collect();
+            members.sort_unstable();
+            let mut by_id: Vec<(SpawnId, u16)> = Vec::with_capacity(members.len());
+            let mut current = usize::MAX;
+            let mut n = 0u16;
+            for (i, id) in &members {
+                if *i != current {
+                    current = *i;
+                    n = 0;
+                }
+                by_id.push((*id, n));
+                n = n.saturating_add(1);
+            }
+            by_id.sort_unstable();
+            for (id, mut f, ..) in &mut followers {
+                if let Ok(k) = by_id.binary_search_by_key(id, |(s, _)| *s)
+                    && f.slot != by_id[k].1
+                {
+                    f.slot = by_id[k].1;
+                }
+            }
+        }
+        index.signatures = armies
+            .iter()
+            .zip(&signature)
+            .map(|(a, s)| (a.entity, (a.followers, s.0, s.1)))
+            .collect();
     }
     for (_, f, pos, motion, _) in &followers {
         if let Some(&i) = index.by_entity.get(&f.captain) {
@@ -405,7 +435,6 @@ pub(crate) fn build_index(
             }
         }
     }
-    grid.fighters.sort_unstable();
     grid.militia.sort_unstable();
     let used = std::mem::take(&mut grid.used);
     for &c in &used {
@@ -435,6 +464,7 @@ mod tests {
             .insert_resource(a.clone())
             .insert_resource(Economy::default_data())
             .init_resource::<FlowCache>()
+            .init_resource::<sim_core::SimTick>()
             .init_resource::<ArmyIndex>()
             .init_resource::<FighterGrid>();
         let world = app.world_mut();

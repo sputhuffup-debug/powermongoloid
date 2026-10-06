@@ -94,6 +94,44 @@ impl SpatialGrid {
         }
     }
 
+    /// Like [`Self::for_each_within`], but stops after checking `budget`
+    /// entries, so dense crowds cost a bounded amount. The visiting order is
+    /// fixed, so which entries are seen is deterministic.
+    pub fn for_each_within_budget(
+        &self,
+        p: Vec2,
+        radius: f32,
+        mut budget: usize,
+        mut f: impl FnMut(Entity, Vec2, f32),
+    ) {
+        if self.per_side == 0 {
+            return;
+        }
+        let lo = ((p - radius) / self.chunk_size as f32)
+            .floor()
+            .as_ivec2()
+            .max(IVec2::ZERO);
+        let hi = ((p + radius) / self.chunk_size as f32)
+            .floor()
+            .as_ivec2()
+            .min(IVec2::splat(self.per_side - 1));
+        let r2 = radius * radius;
+        for cy in lo.y..=hi.y {
+            for cx in lo.x..=hi.x {
+                for (_, e, q) in &self.cells[(cy * self.per_side + cx) as usize] {
+                    if budget == 0 {
+                        return;
+                    }
+                    budget -= 1;
+                    let d2 = q.distance_squared(p);
+                    if d2 <= r2 {
+                        f(*e, *q, d2.sqrt());
+                    }
+                }
+            }
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.cells.iter().map(Vec::len).sum()
     }

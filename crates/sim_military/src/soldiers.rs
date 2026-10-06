@@ -306,7 +306,8 @@ pub(crate) fn move_soldiers(
     let c = &army.data.combat;
     let separate = |e: Entity, p: Vec2| {
         let mut push = Vec2::ZERO;
-        spatial.for_each_within(p, f.separation, |other, q, d| {
+        // Bounded: in a dense crowd, the first few neighbours are enough.
+        spatial.for_each_within_budget(p, f.separation, 48, |other, q, d| {
             if other != e && d > 1e-4 {
                 push += (p - q) / d * (f.separation - d) / f.separation;
             }
@@ -344,7 +345,15 @@ pub(crate) fn move_soldiers(
                     return Vec2::ZERO;
                 };
                 let slot = follower.map_or(0, |fl| fl.slot);
-                let to = a.pos + slot_offset(slot, f.spacing) - p;
+                // A place on water or other impassable ground moves in
+                // toward the captain, so the men don't pile up on the shore.
+                let offset = slot_offset(slot, f.spacing);
+                let place = [1.0, 0.75, 0.5, 0.25]
+                    .into_iter()
+                    .map(|k| a.pos + offset * k)
+                    .find(|q| passable(&map, costs, *q))
+                    .unwrap_or(a.pos);
+                let to = place - p;
                 let dist = to.length();
                 if dist < 0.6 {
                     return Vec2::ZERO;

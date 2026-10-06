@@ -5,11 +5,12 @@ use std::collections::BTreeMap;
 
 use bevy::prelude::*;
 use sim_agents::{
-    ActionKind, Activity, DecisionTrace, Employment, FoodSecurity, Needs, Stage, Villager,
-    Villagers,
+    ActionKind, Activity, CombatStats, DecisionTrace, Employment, Enlisted, FoodSecurity, Needs,
+    Stage, Stance, Threat, Villager, Villagers,
 };
 use sim_core::{Calendar, NameTable};
 use sim_economy::{Building, Economy, Occupation, SettlementEconomy, Stockpile};
+use sim_military::{Army, Captain, Equipment, Follower, Soldier};
 use sim_world::Settlement;
 
 use crate::selection::Selection;
@@ -121,17 +122,24 @@ fn villager_panel(
     )>,
     buildings: Query<&Building>,
     settlements: Query<&Settlement>,
+    soldiers: Query<SoldierQuery, With<Enlisted>>,
+    army: Option<Res<Army>>,
     mut panel: Query<&mut Visibility, With<VillagerPanel>>,
     mut text: Query<&mut Text, With<VillagerText>>,
 ) {
     let (Ok(mut vis), Ok(mut text)) = (panel.single_mut(), text.single_mut()) else {
         return;
     };
-    let (Some(names), Some(calendar), Some(data), Some(econ)) =
-        (names, calendar, villagers_data, econ)
+    let (Some(names), Some(calendar), Some(data), Some(econ), Some(army)) =
+        (names, calendar, villagers_data, econ, army)
     else {
         return;
     };
+    if let Some(Ok(soldier)) = selection.villager.map(|e| soldiers.get(e)) {
+        *vis = Visibility::Inherited;
+        text.0 = soldier_text(soldier, &names, &army, &settlements);
+        return;
+    }
     let Some(Ok((v, occ, job, needs, act, trace, inv))) =
         selection.villager.map(|e| villagers.get(e))
     else {
@@ -210,6 +218,118 @@ fn villager_panel(
     text.0 = s;
 }
 
+type SoldierQuery = (
+    Option<&'static Villager>,
+    Option<&'static Soldier>,
+    &'static CombatStats,
+    &'static Needs,
+    &'static Activity,
+    &'static DecisionTrace,
+    Option<&'static Equipment>,
+    Option<&'static Follower>,
+    Has<Captain>,
+    &'static sim_core::Allegiance,
+);
+
+/// The inspector for a soldier or captain (UI-03 for armies).
+#[allow(clippy::type_complexity)] // A query item.
+fn soldier_text(
+    (villager, soldier, cs, needs, act, trace, eq, follower, captain, allegiance): (
+        Option<&Villager>,
+        Option<&Soldier>,
+        &CombatStats,
+        &Needs,
+        &Activity,
+        &DecisionTrace,
+        Option<&Equipment>,
+        Option<&Follower>,
+        bool,
+        &sim_core::Allegiance,
+    ),
+    names: &NameTable,
+    army: &Army,
+    settlements: &Query<&Settlement>,
+) -> String {
+    let name = crate::army::person_name(names, villager, soldier);
+    let role = if captain {
+        "Captain"
+    } else if follower.is_some() {
+        "Follower"
+    } else {
+        "Soldier"
+    };
+    let mut s = format!(
+        "{name}
+{role} | {}
+",
+        army.faction_name(allegiance.0)
+    );
+    if let Some(v) = villager
+        && let Ok(home) = settlements.get(v.settlement)
+    {
+        s += &format!(
+            "From {}
+",
+            names.get(home.name)
+        );
+    }
+    s += "
+";
+    s += &format!(
+        "Health {} {:.0}/{:.0}
+",
+        style::bar(cs.health / cs.max_health.max(1.0), 12),
+        cs.health.max(0.0),
+        cs.max_health
+    );
+    s += &format!(
+        "Morale {} {:.0}%
+",
+        style::bar(cs.morale, 12),
+        cs.morale * 100.0
+    );
+    s += &format!(
+        "Hunger {} {:.0}%
+",
+        style::bar(needs.hunger, 12),
+        needs.hunger * 100.0
+    );
+    let kit = match eq {
+        Some(e) if e.weapon && e.tools => "weapon and tools",
+        Some(e) if e.weapon => "weapon",
+        Some(e) if e.tools => "tools",
+        _ => "bare hands",
+    };
+    s += &format!(
+        "Armed with: {kit}
+
+"
+    );
+    s += &format!(
+        "Now: {}
+",
+        act.kind.name()
+    );
+    s += "
+Why (last decision):
+";
+    for (i, o) in trace.options.iter().enumerate() {
+        let marker = if i == 0 { ">" } else { " " };
+        let factors: Vec<String> = o
+            .factors
+            .iter()
+            .map(|(n, x)| format!("{n} {x:.2}"))
+            .collect();
+        s += &format!(
+            "{marker} {:<13} {:.2}  {}\n",
+            o.kind.name(),
+            o.score,
+            factors.join(", ")
+        );
+    }
+    s
+}
+
 fn capitalise(s: &str) -> String {
     let mut c = s.chars();
     match c.next() {
@@ -218,7 +338,7 @@ fn capitalise(s: &str) -> String {
     }
 }
 
-#[allow(clippy::too_many_arguments)] // Bevy system parameters.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)] // Bevy system parameters.
 fn settlement_panel(
     selection: Res<Selection>,
     names: Option<Res<NameTable>>,
@@ -227,9 +347,11 @@ fn settlement_panel(
         &Settlement,
         Option<&SettlementEconomy>,
         Option<&FoodSecurity>,
+        Option<&Threat>,
     )>,
     stocks: Query<&Stockpile>,
-    villagers: Query<(&Villager, &Occupation)>,
+    villagers: Query<(&Villager, &Occupation, &CombatStats, &Activity), Without<Enlisted>>,
+    army: Option<Res<Army>>,
     mut panel: Query<&mut Visibility, With<SettlementPanel>>,
     mut text: Query<&mut Text, With<SettlementText>>,
 ) {
@@ -239,7 +361,8 @@ fn settlement_panel(
     let (Some(names), Some(econ)) = (names, econ) else {
         return;
     };
-    let Some(Ok((settlement, se, food))) = selection.settlement.map(|e| settlements.get(e)) else {
+    let Some(Ok((settlement, se, food, threat))) = selection.settlement.map(|e| settlements.get(e))
+    else {
         *vis = Visibility::Hidden;
         return;
     };
@@ -256,10 +379,37 @@ fn settlement_panel(
         return;
     };
     let mut by_occ: BTreeMap<Occupation, u32> = BTreeMap::new();
-    for (v, occ) in &villagers {
+    let (mut militia, mut scared) = (0, 0);
+    for (v, occ, cs, act) in &villagers {
         if v.settlement == sel {
             *by_occ.entry(*occ).or_default() += 1;
+            if matches!(cs.stance, Stance::Militia { .. }) {
+                militia += 1;
+            } else if matches!(act.kind, ActionKind::Flee | ActionKind::Hide)
+                && act.stage != Stage::Done
+            {
+                scared += 1;
+            }
         }
+    }
+    if let Some(t) = threat
+        && (t.level > 0.0 || t.provoked_by.is_some())
+    {
+        s += &format!(
+            "Threat {} {:.0}% | {scared} hiding or fleeing
+",
+            style::bar(t.level, 10),
+            t.level * 100.0
+        );
+        if let (Some(f), Some(army)) = (t.provoked_by, army.as_ref()) {
+            s += &format!(
+                "Up in arms against {}: {militia} fighting
+",
+                army.faction_name(f)
+            );
+        }
+        s += "
+";
     }
     s += &format!("Population {}\n", se.population);
     for (occ, n) in &by_occ {

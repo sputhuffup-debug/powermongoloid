@@ -38,11 +38,14 @@ pub(crate) fn find_fallen(
 ) {
     casualties.fallen.clear();
     casualties.pending.clear();
-    for &(_, e) in &grid.fighters {
-        if q.get(e).is_ok_and(|cs| !cs.alive()) {
-            casualties.pending.push(e);
-        }
-    }
+    let mut dead: Vec<(SpawnId, Entity)> = grid
+        .fighters
+        .iter()
+        .copied()
+        .filter(|(_, e)| q.get(*e).is_ok_and(|cs| !cs.alive()))
+        .collect();
+    dead.sort_unstable();
+    casualties.pending.extend(dead.into_iter().map(|(_, e)| e));
 }
 
 #[allow(clippy::type_complexity)]
@@ -62,8 +65,8 @@ pub(crate) fn resolve_strikes(
     )>,
 ) {
     let _span = tracing::info_span!("sim_military::resolve_strikes").entered();
-    // Only fighters swing; the list is already in SpawnId order.
-    let order: Vec<(SpawnId, Entity)> = grid
+    // Only fighters swing; blows land in SpawnId order.
+    let mut order: Vec<(SpawnId, Entity)> = grid
         .fighters
         .iter()
         .copied()
@@ -72,6 +75,7 @@ pub(crate) fn resolve_strikes(
     if order.is_empty() {
         return;
     }
+    order.sort_unstable();
     let eq = &army.data.equipment;
     let c = &army.data.combat;
     for (id, e) in order {

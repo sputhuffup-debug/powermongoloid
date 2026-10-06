@@ -15,6 +15,7 @@ sim_agents.workspace = true
 ron.workspace = true
 serde.workspace = true
 sim_economy.workspace = true
+sim_military.workspace = true
 
 [lints]
 workspace = true

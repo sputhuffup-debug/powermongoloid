@@ -2973,8 +2973,11 @@ dependencies = [
  "bevy",
  "game_render",
  "game_ui",
+ "sim_agents",
  "sim_core",
  "sim_headless",
+ "sim_military",
+ "sim_world",
 ]
 
 [[package]]
@@ -2987,6 +2990,7 @@ dependencies = [
  "sim_agents",
  "sim_core",
  "sim_economy",
+ "sim_military",
  "sim_world",
 ]
 
@@ -3000,6 +3004,7 @@ dependencies = [
  "sim_agents",
  "sim_core",
  "sim_economy",
+ "sim_military",
  "sim_world",
 ]
 
