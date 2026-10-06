@@ -24,10 +24,7 @@ fn main() {
         }))
         // SIM-03: the simulation advances only in FixedUpdate, at 10 Hz.
         .insert_resource(Time::<Fixed>::from_hz(SIM_TICK_HZ))
-        .add_plugins(SimPlugins {
-            seed: seed_from_args(),
-            demo_agents: DEFAULT_DEMO_AGENTS,
-        })
+        .add_plugins(SimPlugins::new(seed_from_args(), DEFAULT_DEMO_AGENTS))
         .add_plugins((game_render::RenderPlugin, game_ui::UiPlugin))
         .run();
 }

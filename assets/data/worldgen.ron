@@ -1,0 +1,90 @@
+// World generation settings (SIM-01, SIM-02). Lengths marked "fraction" are
+// relative to the map size, so the island has the same shape at any size;
+// "tiles_at_2048" values scale linearly with the map size.
+(
+    size: 2048,
+    chunk_size: 64,
+
+    height: (
+        // Base continent shape.
+        octaves: 6,
+        frequency: 3.0,          // features per map width
+        lacunarity: 2.0,
+        gain: 0.5,
+        // Domain warp for irregular coastlines.
+        warp_frequency: 2.0,
+        warp_strength: 0.14,     // fraction
+        // Ridged noise for mountain chains.
+        ridge_octaves: 5,
+        ridge_frequency: 5.0,
+        ridge_weight: 0.35,
+        // Radial island falloff, as fractions of the map size from the centre.
+        island_inner: 0.18,
+        island_outer: 0.47,
+        coast_wobble: 0.22,
+        coast_frequency: 4.0,
+    ),
+
+    moisture: (
+        octaves: 5,
+        frequency: 7.0,
+        lacunarity: 2.0,
+        gain: 0.5,
+    ),
+
+    // Terrain proportions, from quantiles of the height and moisture fields.
+    terrain: (
+        water_fraction: 0.58,    // of all tiles
+        beach_width: 4,          // tiles from water
+        beach_max_land_quantile: 0.25,
+        mountain_land_fraction: 0.06,
+        hills_land_fraction: 0.14,
+        forest_lowland_fraction: 0.33,
+    ),
+
+    settlements: (
+        target: 60,
+        min: 40,
+        max: 80,
+        min_spacing_tiles_at_2048: 110,
+        core_radius: 2,          // cleared village green, tiles
+        farmland_radius: 16,     // tiles
+        farmland_min_fertility: 30, // 0..255 at the centre
+        farmland_falloff: 80,    // extra fertility needed at the edge
+        // Placement: score + spread_weight * (distance to nearest chosen site,
+        // as a fraction of twice the spacing). Higher spreads villages inland.
+        spread_weight: 0.6,
+    ),
+
+    roads: (
+        nearest_neighbours: 2,
+        max_link_tiles_at_2048: 320,
+        // Integer movement costs per tile (orthogonal step; diagonal is x1.41).
+        cost_grass: 10,
+        cost_farmland: 10,
+        cost_beach: 16,
+        cost_forest: 24,
+        cost_hills: 45,
+        cost_mountain: 220,
+        cost_road: 4,
+        // Extra cost per unit of height difference (height is 0..1).
+        slope_cost: 3000,
+        search_margin_tiles: 96,
+    ),
+
+    regions: 10,
+
+    // Original syllables for settlement names: prefix + suffix.
+    names: (
+        prefixes: [
+            "Ash", "Bram", "Cold", "Dun", "Elm", "Fen", "Gare", "Hollow", "Iver", "Kest",
+            "Lark", "Marsh", "Nettle", "Oak", "Pell", "Quarry", "Rook", "Sedge", "Thorn", "Upper",
+            "Vane", "Wick", "Yarrow", "Barrow", "Copper", "Dale", "Ember", "Flint", "Gorse", "Heath",
+            "Kettle", "Lowe", "Mill", "North", "Otter", "Pike", "Reed", "Salt", "Tarn", "Wold",
+        ],
+        suffixes: [
+            "by", "ford", "ham", "stead", "wick", "mere", "holt", "combe", "field", "ley",
+            "thorpe", "brook", "cross", "gate", "haven", "moor", "ridge", "stow", "well", "worth",
+        ],
+    ),
+)

@@ -296,9 +296,9 @@ Workspace, CI, plugin structure, fixed-tick loop, seeded RNG, headless binary, d
 
 Procedural island, terrain meshes, camera.
 
-- [ ] A seed produces the same 2048 x 2048 island every time, with all terrain types present
-- [ ] Terrain renders in chunks; the camera pans, zooms and rotates smoothly
-- [ ] Settlements (40 to 80) are placed on suitable land with road links between neighbors
+- [x] A seed produces the same 2048 x 2048 island every time, with all terrain types present
+- [x] Terrain renders in chunks; the camera pans, zooms and rotates smoothly
+- [x] Settlements (40 to 80) are placed on suitable land with road links between neighbors
 
 ### M2: A living village
 

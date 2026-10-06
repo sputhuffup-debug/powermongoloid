@@ -5,12 +5,14 @@ use bevy::prelude::*;
 
 #[cfg(feature = "debug_ui")]
 mod debug_panel;
+mod labels;
 
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
-    fn build(&self, _app: &mut App) {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(labels::SettlementLabelsPlugin);
         #[cfg(feature = "debug_ui")]
-        _app.add_plugins(debug_panel::DebugPanelPlugin);
+        app.add_plugins(debug_panel::DebugPanelPlugin);
     }
 }

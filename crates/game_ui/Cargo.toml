@@ -16,6 +16,8 @@ debug_ui = ["dep:bevy_egui"]
 bevy.workspace = true
 bevy_egui = { workspace = true, optional = true }
 sim_core.workspace = true
+sim_world.workspace = true
+game_render.workspace = true
 
 [lints]
 workspace = true

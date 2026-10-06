@@ -10,6 +10,8 @@ publish.workspace = true
 [dev-dependencies]
 sim_core.workspace = true
 sim_headless.workspace = true
+sim_world.workspace = true
+bevy_math.workspace = true
 
 [lints]
 workspace = true

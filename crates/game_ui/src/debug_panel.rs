@@ -3,7 +3,9 @@
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
+use game_render::{CameraRig, TerrainChunks};
 use sim_core::{DetailLevel, SimSeed, SimSet, SimTick, SimTimings, SpawnId};
+use sim_world::{RoadNetwork, Settlement, WorldGenReport, WorldMap};
 
 pub struct DebugPanelPlugin;
 
@@ -21,8 +23,21 @@ fn ms(d: std::time::Duration) -> String {
     format!("{:.3} ms", d.as_secs_f64() * 1000.0)
 }
 
+/// World and render state shown in the panel.
+#[derive(bevy::ecs::system::SystemParam)]
+struct WorldInfo<'w, 's> {
+    map: Option<Res<'w, WorldMap>>,
+    report: Option<Res<'w, WorldGenReport>>,
+    roads: Option<Res<'w, RoadNetwork>>,
+    chunks: Option<Res<'w, TerrainChunks>>,
+    settlements: Query<'w, 's, (), With<Settlement>>,
+    rig: Query<'w, 's, &'static CameraRig>,
+}
+
+#[allow(clippy::too_many_arguments)] // Bevy system parameters.
 fn debug_panel(
     mut contexts: EguiContexts,
+    world: WorldInfo,
     tick: Res<SimTick>,
     seed: Res<SimSeed>,
     timings: Res<SimTimings>,
@@ -91,9 +106,51 @@ fn debug_panel(
                 ui.label("Dormant");
                 ui.monospace(dormant.to_string());
                 ui.end_row();
-                ui.label("Untagged (M0 placeholders)");
+                ui.label("No detail level (settlements, placeholders)");
                 ui.monospace(untagged.to_string());
                 ui.end_row();
+            });
+
+            ui.separator();
+            ui.label("World");
+            egui::Grid::new("world").num_columns(2).show(ui, |ui| {
+                if let Some(map) = &world.map {
+                    ui.label("Size");
+                    ui.monospace(format!("{0} x {0} tiles", map.size()));
+                    ui.end_row();
+                }
+                ui.label("Settlements");
+                ui.monospace(world.settlements.iter().count().to_string());
+                ui.end_row();
+                if let Some(roads) = &world.roads {
+                    ui.label("Roads");
+                    ui.monospace(roads.roads.len().to_string());
+                    ui.end_row();
+                }
+                if let Some(report) = &world.report {
+                    ui.label("Generated in");
+                    ui.monospace(ms(report.total));
+                    ui.end_row();
+                }
+                if let Some(chunks) = &world.chunks {
+                    ui.label("Terrain chunks");
+                    ui.monospace(format!(
+                        "{}/{} built, {} builds",
+                        chunks.built_count, chunks.total, chunks.builds
+                    ));
+                    ui.end_row();
+                }
+                if let Ok(rig) = world.rig.single() {
+                    ui.label("Camera");
+                    ui.monospace(format!(
+                        "({:.0}, {:.0}) dist {:.0} yaw {:.0}°",
+                        rig.focus.x,
+                        rig.focus.y,
+                        rig.distance,
+                        rig.yaw.to_degrees()
+                    ));
+                    ui.end_row();
+                }
             });
 
             ui.separator();
