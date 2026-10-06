@@ -132,10 +132,12 @@ impl SpatialGrid {
         }
     }
 
+    /// Entities in the grid.
     pub fn len(&self) -> usize {
         self.cells.iter().map(Vec::len).sum()
     }
 
+    /// Whether the grid is empty.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

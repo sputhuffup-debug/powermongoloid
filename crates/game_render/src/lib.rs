@@ -1,7 +1,19 @@
-//! Rendering. Runs in `Update`, reads simulation state, never writes it.
+//! Rendering. Runs in `Update`, reads simulation state, never writes it
+//! (ADR 0002).
 //!
-//! M1: chunked terrain meshes (RND-01), the orbit camera rig (RND-02) and
-//! settlement visuals; the M0 placeholder wanderers are drawn as gizmos.
+//! # Main pieces
+//! - [`terrain`]: chunked terrain meshes rebuilt when a chunk's revision
+//!   changes (RND-01).
+//! - [`camera`]: the orbit camera rig (RND-02).
+//! - [`agents`]: people in detail bands, interpolated between ticks (RND-03,
+//!   RND-06, ADR 0008). Villagers are coloured by occupation, soldiers by
+//!   faction; captains carry banners.
+//! - [`buildings`]: houses and workplaces in the same bands.
+//! - [`art`]: procedurally generated textures (ADR 0009).
+//! - [`bands`]: detail-band selection with hysteresis (`render.ron`).
+//!
+//! Render-side state lives in render resources keyed by sim `Entity`, never
+//! on sim entities.
 
 pub mod agents;
 pub mod art;

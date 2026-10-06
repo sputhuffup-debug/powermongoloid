@@ -5,6 +5,7 @@
 
 use bevy_app::{App, Plugin};
 
+/// Placeholder plugin for rival warlord AI (M5).
 pub struct AiPlugin;
 
 impl Plugin for AiPlugin {

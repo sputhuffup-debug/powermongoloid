@@ -7,6 +7,7 @@ use sim_economy::{Economy, SettlementEconomy, Stockpile};
 
 use crate::data::Villagers;
 
+/// Food security on a settlement (UI-02, SIM-24).
 #[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
 pub struct FoodSecurity {
     /// Days of food in the storehouse and homes.

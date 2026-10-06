@@ -1,5 +1,10 @@
 //! Player-facing UI. Reads simulation state and sends `SimCommand`s; never
 //! mutates the simulation directly.
+//!
+//! Plugins: the time bar (GP-11); selection and picking; the
+//! villager/soldier inspector and settlement panel (UI-02, UI-03); the
+//! captain panel, right-click orders and village menu ([`army`], UI-01);
+//! settlement labels; and, in dev builds, the egui debug panel (UI-07).
 
 use bevy::prelude::*;
 

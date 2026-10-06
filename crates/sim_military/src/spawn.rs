@@ -35,6 +35,7 @@ pub struct ArmySpec {
 }
 
 impl ArmySpec {
+    /// A neutral army with three days of food and no weapons.
     pub fn new(faction: FactionId, at: IVec2, followers: u32) -> Self {
         Self {
             faction,
@@ -261,6 +262,7 @@ pub fn setup_battle(world: &mut World, per_side: u32) -> Option<[Entity; 2]> {
     Some(out)
 }
 
+/// Spawns the playtest armies; `None` if no settlement is populated.
 pub fn setup_skirmish(world: &mut World) -> Option<Skirmish> {
     let mut q = world.query::<(&sim_core::SpawnId, &Settlement, &SettlementEconomy)>();
     let mut centers: Vec<(u64, IVec2)> = q

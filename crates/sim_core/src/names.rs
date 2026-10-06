@@ -15,21 +15,25 @@ pub struct NameTable {
 }
 
 impl NameTable {
+    /// Stores a name and returns its id.
     pub fn push(&mut self, name: impl Into<String>) -> NameId {
         self.names.push(name.into());
         NameId(self.names.len() as u32 - 1)
     }
 
+    /// The name with id `id`.
     pub fn get(&self, id: NameId) -> &str {
         self.names
             .get(id.0 as usize)
             .map_or("<unnamed>", String::as_str)
     }
 
+    /// Number of names stored.
     pub fn len(&self) -> usize {
         self.names.len()
     }
 
+    /// Whether no names are stored.
     pub fn is_empty(&self) -> bool {
         self.names.is_empty()
     }

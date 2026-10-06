@@ -22,6 +22,7 @@ pub enum SimSet {
 }
 
 impl SimSet {
+    /// Every set, in tick order.
     pub const ALL: [SimSet; 9] = [
         SimSet::Input,
         SimSet::Knowledge,
@@ -34,6 +35,7 @@ impl SimSet {
         SimSet::Bookkeeping,
     ];
 
+    /// Display name (debug panel, `--timings`).
     pub fn name(self) -> &'static str {
         match self {
             SimSet::Input => "Input",

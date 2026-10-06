@@ -37,6 +37,9 @@ M3 (M0 complete 2026-10-05, M1 and M2 complete 2026-10-06; update this line as m
 - Village stats:  cargo run --release -p sim_headless -- --ticks 7200 --stats-every 600
                   (STATS_DETAIL=1 adds who isn't working, restless sleepers, the hungriest villager)
 - Low-memory build (4-core cloud box): add `-j 3` to cargo build/test/clippy
+- Docs:           RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+- Aliases (.cargo/config.toml): cargo game, cargo headless, cargo lint,
+                  cargo test-fast (unit tests), cargo test-all
 
 ## World (ADR 0005)
 - Worldgen parameters live in assets/data/worldgen.ron (embedded at compile time).
@@ -84,11 +87,21 @@ M3 (M0 complete 2026-10-05, M1 and M2 complete 2026-10-06; update this line as m
 - If the determinism tests fail, find the first divergent checkpoint
   (`--checkpoint-every`) and compare single- vs multi-threaded runs first.
 
+## Developer handbook (docs/dev, M3b)
+Humans develop alongside you; keep their docs current in the same commit:
+- New or changed data field: docs/dev/DATA.md (tests/tests/docs.rs fails otherwise).
+- New, moved or reordered system or set: the schedule table in docs/dev/ARCHITECTURE.md.
+- New test: docs/dev/TESTING.md. New term: docs/dev/GLOSSARY.md.
+- A new kind of change others will repeat: a recipe in docs/dev/HOWTO.md
+  (every path it names must exist; the docs test checks).
+- Public items in sim_* crates get a `///` doc comment; `cargo doc` must stay warning-free.
+
 ## Definition of done for any task
 1. cargo fmt, clippy and tests pass.
 2. The determinism test still passes.
 3. Relevant acceptance criteria in docs/SEED.md are checked.
 4. Significant design decisions get a short ADR in docs/adr/.
+5. The developer handbook and rustdoc reflect the change (see above).
 
 ## Build settings
 Use opt-level = 1 for dev and opt-level = 3 for dependencies in dev profile

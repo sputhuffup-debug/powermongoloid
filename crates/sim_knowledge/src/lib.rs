@@ -5,6 +5,7 @@
 
 use bevy_app::{App, Plugin};
 
+/// Placeholder plugin for faction knowledge and messengers (M5).
 pub struct KnowledgePlugin;
 
 impl Plugin for KnowledgePlugin {

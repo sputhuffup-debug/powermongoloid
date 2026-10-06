@@ -23,6 +23,7 @@ pub enum Terrain {
 }
 
 impl Terrain {
+    /// Every terrain, in id order.
     pub const ALL: [Terrain; 8] = [
         Terrain::Water,
         Terrain::Beach,
@@ -34,6 +35,7 @@ impl Terrain {
         Terrain::Road,
     ];
 
+    /// Display name.
     pub fn name(self) -> &'static str {
         match self {
             Terrain::Water => "water",
@@ -47,6 +49,7 @@ impl Terrain {
         }
     }
 
+    /// Anything but water.
     pub fn is_land(self) -> bool {
         self != Terrain::Water
     }
@@ -54,6 +57,7 @@ impl Terrain {
 
 /// Region index per tile; [`NO_REGION`] for water and unreachable land.
 pub type RegionId = u8;
+/// Region id for water and unreachable land.
 pub const NO_REGION: RegionId = u8::MAX;
 
 /// Terrain stored as flat arrays (SEED.md "Core data model"), with
@@ -126,9 +130,11 @@ impl WorldMap {
         )
     }
 
+    /// Map edge in tiles.
     pub fn size(&self) -> u32 {
         self.size
     }
+    /// Chunk edge in tiles.
     pub fn chunk_size(&self) -> u32 {
         self.chunk_size
     }
@@ -136,20 +142,24 @@ impl WorldMap {
     pub fn chunks_per_side(&self) -> u32 {
         self.size / self.chunk_size
     }
+    /// Height below which tiles are water.
     pub fn sea_level(&self) -> f32 {
         self.sea_level
     }
 
+    /// Whether `p` is on the map.
     pub fn in_bounds(&self, p: IVec2) -> bool {
         p.x >= 0 && p.y >= 0 && (p.x as u32) < self.size && (p.y as u32) < self.size
     }
 
+    /// Array index of tile `p` (row-major).
     #[inline]
     pub fn index(&self, p: IVec2) -> usize {
         debug_assert!(self.in_bounds(p));
         p.y as usize * self.size as usize + p.x as usize
     }
 
+    /// Tile at array index `index`.
     #[inline]
     pub fn pos(&self, index: usize) -> IVec2 {
         IVec2::new(
@@ -158,15 +168,19 @@ impl WorldMap {
         )
     }
 
+    /// Terrain at `p`.
     pub fn terrain(&self, p: IVec2) -> Terrain {
         self.terrain[self.index(p)]
     }
+    /// Height at `p` (0..1).
     pub fn height(&self, p: IVec2) -> f32 {
         self.height[self.index(p)]
     }
+    /// Fertility at `p` (0..255).
     pub fn fertility(&self, p: IVec2) -> u8 {
         self.fertility[self.index(p)]
     }
+    /// Region at `p`.
     pub fn region(&self, p: IVec2) -> RegionId {
         self.region[self.index(p)]
     }
@@ -176,9 +190,11 @@ impl WorldMap {
         self.height(p).max(self.sea_level)
     }
 
+    /// All terrain, row-major.
     pub fn terrain_slice(&self) -> &[Terrain] {
         &self.terrain
     }
+    /// All heights, row-major.
     pub fn height_slice(&self) -> &[f32] {
         &self.height
     }

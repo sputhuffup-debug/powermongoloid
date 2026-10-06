@@ -1,16 +1,36 @@
-//! Core simulation crate: the fixed-tick schedule (SIM-03), the seeded RNG,
-//! stable spawn IDs, the command path and the state hash (NFR-08).
+//! Core simulation crate: the fixed-tick schedule (SIM-03), the calendar,
+//! seeded randomness, stable spawn IDs, the command path and replays, and the
+//! state hash (NFR-08).
 //!
-//! Depends only on `bevy_ecs`, `bevy_app` and `bevy_math` (ADR 0002).
+//! # Main pieces
+//! - [`SimSet`]: the nine ordered phases of a tick in `FixedUpdate`. Every sim
+//!   system belongs to exactly one. [`SimTick`] counts ticks.
+//! - [`SimCommand`]: the only way input reaches the sim. [`SimInputSet::Inject`]
+//!   replays scripted commands and records the player's; consumers run in
+//!   [`SimInputSet::Consume`].
+//! - [`SpawnId`] and [`spawn_sim`]: stable ids that every order-dependent
+//!   step sorts by.
+//! - [`SimRng`] and [`SimSeed::stream`]: the only sources of randomness.
+//! - [`compute_state_hash`] and [`AppHashExt`]: every sim component and
+//!   resource is registered in the hash or exempted with a reason.
+//! - [`Replay`] and [`CommandScript`]: recorded sessions.
+//! - [`Calendar`]: day length, phases and seasons (`calendar.ron`).
+//!
+//! Depends only on `bevy_ecs`, `bevy_app` and `bevy_math` (ADR 0002). See
+//! `docs/dev/ARCHITECTURE.md` and `docs/dev/DETERMINISM.md`.
 
 pub mod calendar;
 pub mod command;
+/// Core components: SpawnId, position, motion, allegiance, detail level.
 pub mod components;
 pub mod hash;
 pub mod names;
 pub mod replay;
+/// Seeded randomness: the shared `SimRng` and per-system streams.
 pub mod rng;
+/// The ordered tick phases (`SimSet`) and the tick counter.
 pub mod schedule;
+/// Stepping the simulation outside the game loop (headless, tests).
 pub mod step;
 pub mod timing;
 

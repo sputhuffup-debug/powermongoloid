@@ -15,6 +15,7 @@ pub struct Checkpoint {
     pub hash: u64,
 }
 
+/// A recorded session: setup, the player's commands and the expected hashes (NFR-08).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Replay {
     pub format: u32,
@@ -35,6 +36,7 @@ pub struct Replay {
     pub checkpoints: Vec<Checkpoint>,
 }
 
+/// Why a replay file could not be loaded.
 #[derive(Debug)]
 pub enum ReplayError {
     Parse(String),
@@ -58,11 +60,13 @@ impl std::fmt::Display for ReplayError {
 impl std::error::Error for ReplayError {}
 
 impl Replay {
+    /// Serialises to pretty RON.
     pub fn to_ron(&self) -> String {
         ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
             .expect("replay types always serialize")
     }
 
+    /// Parses RON and checks the format version.
     pub fn from_ron(text: &str) -> Result<Self, ReplayError> {
         let replay: Replay = ron::from_str(text).map_err(|e| ReplayError::Parse(e.to_string()))?;
         if replay.format != REPLAY_FORMAT {

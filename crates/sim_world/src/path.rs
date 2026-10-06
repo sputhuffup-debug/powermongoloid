@@ -138,6 +138,7 @@ impl PathCache {
     /// Hops up to this many tiles may go straight.
     pub const SHORT: i32 = 8;
 
+    /// A cached path from `from` to `to`, searched if missing.
     pub fn get_or_find(
         &mut self,
         map: &WorldMap,
@@ -245,10 +246,12 @@ impl PathCache {
         self.paths.insert(((from.x, from.y), (to.x, to.y)), path);
     }
 
+    /// Number of cached results.
     pub fn len(&self) -> usize {
         self.paths.len()
     }
 
+    /// Whether nothing is cached.
     pub fn is_empty(&self) -> bool {
         self.paths.is_empty()
     }

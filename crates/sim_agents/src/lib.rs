@@ -1,7 +1,20 @@
-//! Villagers: households, needs, occupations and utility AI (SIM-10,
-//! SIM-11, SIM-12).
+//! Villagers: population, needs, occupations and the utility AI (SIM-10..13).
 //!
-//! Never depends on rendering, windowing, audio or asset crates.
+//! # Main pieces
+//! - [`Villager`], [`Needs`], [`Activity`], [`Travel`], [`Employment`].
+//! - The AI ([`ai`]): every [`AgentSet::Decide`] tick, a tenth of villagers
+//!   score their options (eat, fetch, sleep, work or haul, go home, idle,
+//!   hide, flee, fight) and record why in [`DecisionTrace`] (ADR 0006).
+//! - Actions (`act::perform`, in `EconomySet::Post`): carrying out the
+//!   chosen action. Goods move only through `Transfers`.
+//! - Walking ([`movement`]): parallel path planning and movement.
+//! - [`FoodSecurity`], plus the combat-side components that every person
+//!   carries ([`CombatStats`], [`Strike`], [`Threat`] on settlements,
+//!   [`Enlisted`] for soldiers).
+//! - [`population::populate`]: creates households when the world is built.
+//!
+//! Tuning lives in `villagers.ron` ([`Villagers`]). Never depends on
+//! rendering, windowing, audio or asset crates.
 
 pub mod act;
 pub mod ai;

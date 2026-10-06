@@ -5,6 +5,7 @@
 
 use bevy_app::{App, Plugin};
 
+/// Placeholder plugin for simulation LOD (M5).
 pub struct LodPlugin;
 
 impl Plugin for LodPlugin {

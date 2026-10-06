@@ -9,6 +9,7 @@ use sim_core::{Calendar, NameTable, Position, SimTick};
 use sim_economy::{Building, Economy, Occupation, SettlementEconomy, Stockpile};
 use sim_world::Settlement;
 
+/// One settlement's state, for `--stats-every` and tests.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct VillageStats {
     pub name: String,
@@ -26,6 +27,7 @@ pub struct VillageStats {
     pub workplaces: BTreeMap<String, u32>,
 }
 
+/// A population summary at one tick.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Stats {
     pub tick: u64,
@@ -59,6 +61,7 @@ pub struct Stats {
 }
 
 impl Stats {
+    /// Villagers doing `kind`.
     pub fn count(&self, kind: ActionKind) -> u32 {
         self.actions
             .iter()
@@ -67,6 +70,7 @@ impl Stats {
             .sum()
     }
 
+    /// A one-line summary for the CLI.
     pub fn line(&self) -> String {
         let acts: Vec<String> = ActionKind::ALL
             .iter()
@@ -111,6 +115,7 @@ fn short(k: ActionKind) -> &'static str {
     }
 }
 
+/// Summarises the villagers (not soldiers) and every settlement.
 pub fn collect(app: &mut App) -> Stats {
     let world = app.world_mut();
     let tick = world.resource::<SimTick>().0;

@@ -22,6 +22,7 @@ impl StateHash for SpawnId {
 pub struct NextSpawnId(pub u64);
 
 impl NextSpawnId {
+    /// Returns the next id and advances the counter.
     pub fn allocate(&mut self) -> SpawnId {
         let id = SpawnId(self.0);
         self.0 += 1;
@@ -35,6 +36,7 @@ impl StateHash for NextSpawnId {
     }
 }
 
+/// A faction: 0 is independent, 1 the player, 2 and up rivals (army.ron).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct FactionId(pub u16);
 
@@ -62,6 +64,7 @@ impl StateHash for Motion {
     }
 }
 
+/// The faction a person or army belongs to.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Allegiance(pub FactionId);
 

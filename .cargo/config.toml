@@ -1,0 +1,12 @@
+# Shortcuts for common commands (docs/dev/GETTING_STARTED.md). No extra tools needed.
+[alias]
+# The game, dev build (playable: dependencies are optimised).
+game = "run -p game_app --"
+# The headless sim, release build: `cargo headless -- --help`.
+headless = "run --release -p sim_headless --"
+# Lints exactly as CI runs them (run `cargo fmt --check` too).
+lint = "clippy --workspace --all-targets -- -D warnings"
+# Unit tests only: seconds, not minutes.
+test-fast = "test --workspace --lib --bins"
+# Everything CI tests, including scenario and determinism suites.
+test-all = "test --workspace"

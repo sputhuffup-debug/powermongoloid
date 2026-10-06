@@ -5,14 +5,17 @@ use serde::{Deserialize, Serialize};
 use sim_core::{Calendar, FactionId, Posture, StateHash, StateHasher};
 use sim_economy::{Economy, GoodId};
 
+/// `assets/data/army.ron`, embedded at compile time.
 pub const DEFAULT_ARMY_RON: &str = include_str!("../../../assets/data/army.ron");
 
+/// A faction's name and colour.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FactionDef {
     pub name: String,
     pub color: (f32, f32, f32),
 }
 
+/// Base fighting stats for a kind of soldier.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct UnitStats {
     pub health: f32,
@@ -21,12 +24,14 @@ pub struct UnitStats {
     pub morale: f32,
 }
 
+/// What arms add (SIM-32).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EquipmentData {
     pub weapon_attack: f32,
     pub tools_defense: f32,
 }
 
+/// Combat and morale numbers (`combat` in army.ron).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CombatData {
     pub engage_radius: f32,
@@ -42,6 +47,7 @@ pub struct CombatData {
     pub kill_morale: f32,
 }
 
+/// The captain's leadership aura.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LeadershipData {
     pub radius: f32,
@@ -50,6 +56,7 @@ pub struct LeadershipData {
     pub captain_loss_morale: f32,
 }
 
+/// Food, morale, desertion and starvation (SIM-31).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UpkeepData {
     pub hungry: f32,
@@ -64,6 +71,7 @@ pub struct UpkeepData {
     pub first_desertion_within_days: f32,
 }
 
+/// Loose formation and steering.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FormationData {
     pub spacing: f32,
@@ -72,6 +80,7 @@ pub struct FormationData {
     pub catch_up: f32,
 }
 
+/// How frightening an army is to settlements, by posture.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ThreatData {
     pub radius: f32,
@@ -80,6 +89,7 @@ pub struct ThreatData {
     pub aggressive: f32,
 }
 
+/// A value per posture.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeepDays {
     pub passive: f32,
@@ -87,6 +97,7 @@ pub struct KeepDays {
     pub aggressive: f32,
 }
 
+/// Who joins when an army recruits.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecruitData {
     pub radius: f32,
@@ -95,6 +106,7 @@ pub struct RecruitData {
     pub fed_army_bonus: f32,
 }
 
+/// The whole of army.ron, as written. See docs/dev/DATA.md.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArmyData {
     pub factions: Vec<FactionDef>,
@@ -126,6 +138,7 @@ pub struct Army {
 }
 
 impl Army {
+    /// Parses army.ron text and resolves trade goods against the economy.
     pub fn from_ron(text: &str, calendar: &Calendar, econ: &Economy) -> Result<Self, String> {
         let data: ArmyData = ron::from_str(text).map_err(|e| e.to_string())?;
         if data.factions.len() < 2 {
@@ -148,6 +161,7 @@ impl Army {
         })
     }
 
+    /// The shipped army data.
     pub fn default_data(calendar: &Calendar, econ: &Economy) -> Self {
         Self::from_ron(DEFAULT_ARMY_RON, calendar, econ).expect("assets/data/army.ron is valid")
     }
@@ -157,6 +171,7 @@ impl Army {
         per_day / self.ticks_per_day
     }
 
+    /// A faction's display name.
     pub fn faction_name(&self, f: FactionId) -> &str {
         self.data
             .factions
@@ -169,6 +184,7 @@ impl Army {
         a != b && a.0 != 0 && b.0 != 0
     }
 
+    /// Threat an army of this posture poses at close range.
     pub fn threat_of(&self, posture: Posture) -> f32 {
         match posture {
             Posture::Passive => self.data.threat.passive,
@@ -177,6 +193,7 @@ impl Army {
         }
     }
 
+    /// Days of food a village keeps when an army of this posture gathers.
     pub fn keep_days(&self, posture: Posture) -> f32 {
         match posture {
             Posture::Passive => self.data.gather_keep_days.passive,
@@ -185,6 +202,7 @@ impl Army {
         }
     }
 
+    /// Chance an asked adult joins, by posture.
     pub fn willing(&self, posture: Posture) -> f32 {
         let w = &self.data.recruit.willing;
         match posture {
@@ -204,6 +222,7 @@ impl Army {
         self.data.formation.spacing * (n as f32 + 1.5).sqrt()
     }
 
+    /// Food value of one unit of `g` in barter.
     pub fn trade_value(&self, g: GoodId) -> f32 {
         self.trade_value.get(g.0 as usize).copied().unwrap_or(0.0)
     }
