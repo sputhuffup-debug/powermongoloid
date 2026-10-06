@@ -1,11 +1,11 @@
 //! Road network: which settlements to link, and deterministic A* routing.
 
-use std::cmp::Reverse;
-use std::collections::{BTreeSet, BinaryHeap};
+use std::collections::BTreeSet;
 
 use bevy_math::IVec2;
 
 use crate::map::Terrain;
+use crate::path::{TravelCosts, find_path};
 use crate::settings::{RoadSettings, WorldGenSettings};
 
 /// Pairs of settlement indices (a < b) to link: a minimum spanning tree so
@@ -56,23 +56,28 @@ pub(crate) fn links(centers: &[IVec2], s: &WorldGenSettings) -> Vec<(usize, usiz
     edges
 }
 
-/// Cost to enter a tile, x10 for orthogonal steps; `None` is impassable.
-fn tile_cost(t: Terrain, r: &RoadSettings) -> Option<u32> {
-    Some(match t {
-        Terrain::Water => return None,
-        Terrain::Grass => r.cost_grass,
-        Terrain::Farmland => r.cost_farmland,
-        Terrain::Beach => r.cost_beach,
-        Terrain::Forest => r.cost_forest,
-        Terrain::Hills => r.cost_hills,
-        Terrain::Mountain => r.cost_mountain,
-        Terrain::Road => r.cost_road,
-    })
+/// Road-building costs as a [`TravelCosts`] table.
+fn road_costs(r: &RoadSettings) -> TravelCosts {
+    let mut per_terrain = [None; 8];
+    for t in Terrain::ALL {
+        per_terrain[t as usize] = match t {
+            Terrain::Water => None,
+            Terrain::Grass => Some(r.cost_grass),
+            Terrain::Farmland => Some(r.cost_farmland),
+            Terrain::Beach => Some(r.cost_beach),
+            Terrain::Forest => Some(r.cost_forest),
+            Terrain::Hills => Some(r.cost_hills),
+            Terrain::Mountain => Some(r.cost_mountain),
+            Terrain::Road => Some(r.cost_road),
+        };
+    }
+    TravelCosts {
+        per_terrain,
+        slope_cost: r.slope_cost,
+    }
 }
 
-/// Integer-cost A* from `from` to `to`, 8-connected, inside a box around the
-/// endpoints (`margin` tiles; `None` = whole map). Costs are integers and
-/// ties break on tile index, so the path is fully deterministic.
+/// Routes a road from `from` to `to` (see [`find_path`]).
 pub(crate) fn route(
     terrain: &[Terrain],
     height: &[f32],
@@ -82,75 +87,7 @@ pub(crate) fn route(
     r: &RoadSettings,
     margin: Option<i32>,
 ) -> Option<Vec<IVec2>> {
-    let (lo, hi) = match margin {
-        Some(m) => (
-            (from.min(to) - IVec2::splat(m)).max(IVec2::ZERO),
-            (from.max(to) + IVec2::splat(m)).min(IVec2::splat(size as i32 - 1)),
-        ),
-        None => (IVec2::ZERO, IVec2::splat(size as i32 - 1)),
-    };
-    let w = (hi.x - lo.x + 1) as usize;
-    let h = (hi.y - lo.y + 1) as usize;
-    let local = |p: IVec2| (p.y - lo.y) as usize * w + (p.x - lo.x) as usize;
-    let global = |p: IVec2| p.y as usize * size + p.x as usize;
-    let unlocal = |i: usize| IVec2::new((i % w) as i32 + lo.x, (i / w) as i32 + lo.y);
-
-    let min_step = r.cost_road as u64;
-    let heuristic = |p: IVec2| {
-        let d = (p - to).abs();
-        let (a, b) = (d.x.max(d.y) as u64, d.x.min(d.y) as u64);
-        (10 * a + 4 * b) * min_step
-    };
-
-    let mut g = vec![u64::MAX; w * h];
-    let mut came = vec![u32::MAX; w * h];
-    let mut heap = BinaryHeap::new();
-    let start = local(from);
-    g[start] = 0;
-    heap.push(Reverse((heuristic(from), start)));
-
-    while let Some(Reverse((_, i))) = heap.pop() {
-        let p = unlocal(i);
-        if p == to {
-            let mut path = vec![p];
-            let mut cur = i;
-            while came[cur] != u32::MAX {
-                cur = came[cur] as usize;
-                path.push(unlocal(cur));
-            }
-            path.reverse();
-            return Some(path);
-        }
-        let gi = g[i];
-        for (dx, dy) in [
-            (1, 0),
-            (-1, 0),
-            (0, 1),
-            (0, -1),
-            (1, 1),
-            (1, -1),
-            (-1, 1),
-            (-1, -1),
-        ] {
-            let q = p + IVec2::new(dx, dy);
-            if q.x < lo.x || q.y < lo.y || q.x > hi.x || q.y > hi.y {
-                continue;
-            }
-            let Some(cost) = tile_cost(terrain[global(q)], r) else {
-                continue;
-            };
-            let step = if dx != 0 && dy != 0 { 14 } else { 10 };
-            let climb = (height[global(q)] - height[global(p)]).abs() * r.slope_cost;
-            let ng = gi + (cost * step) as u64 + climb as u64;
-            let j = local(q);
-            if ng < g[j] {
-                g[j] = ng;
-                came[j] = i as u32;
-                heap.push(Reverse((ng + heuristic(q), j)));
-            }
-        }
-    }
-    None
+    find_path(terrain, height, size, from, to, &road_costs(r), margin)
 }
 
 #[cfg(test)]

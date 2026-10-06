@@ -6,7 +6,7 @@ Requirement IDs (GP-, SIM-, RND-, UI-, NFR-) are stable; reference them
 in commits, tests and comments.
 
 ## Current milestone
-M2 (M0 complete 2026-10-05, M1 complete 2026-10-06; update this line as milestones complete)
+M3 (M0 complete 2026-10-05, M1 and M2 complete 2026-10-06; update this line as milestones complete)
 
 ## Hard rules
 - sim_* crates never depend on rendering, windowing, audio or asset crates.
@@ -31,6 +31,8 @@ M2 (M0 complete 2026-10-05, M1 complete 2026-10-06; update this line as mileston
 - Record replay:  cargo run --release -p sim_headless -- --ticks 10000 --commands 200 --record run.ron
 - Verify replay:  cargo run --release -p sim_headless -- --replay run.ron [--single-threaded]
 - Map image:      cargo run --release -p sim_headless -- --seed 42 --ticks 1 --map-ppm map.ppm
+- Village stats:  cargo run --release -p sim_headless -- --ticks 7200 --stats-every 600
+                  (STATS_DETAIL=1 adds who isn't working, restless sleepers, the hungriest villager)
 - Low-memory build (4-core cloud box): add `-j 3` to cargo build/test/clippy
 
 ## World (ADR 0005)
@@ -39,6 +41,21 @@ M2 (M0 complete 2026-10-05, M1 complete 2026-10-06; update this line as mileston
   (the renderer rebuilds only those chunks) and keeps the state hash current.
 - Rendering and UI never write to sim entities, not even marker components;
   track render-side state in render-side resources or `Local`s.
+
+## Villagers and economy (ADR 0006, ADR 0007)
+- Behaviour is tuned in assets/data/villagers.ron and economy.ron; the
+  village_day and famine tests guard the tuning. Re-run them after any change.
+- Agents never touch a building's Stockpile directly: post a `Transfers` order
+  in `EconomySet::Post`; `resolve_transfers` applies orders in SpawnId order.
+- Per-agent systems may run in parallel only if they write the agent's own
+  components; anything shared goes through a sorted, serial step.
+- Every decision records a `DecisionTrace`; use it (and the inspector) to
+  debug behaviour before changing weights.
+
+## Rendering (ADR 0008, ADR 0009)
+- Detail bands come from assets/data/render.ron: stylized textures inside the
+  detail distance, flat low-poly beyond, then billboards, then dots.
+- Textures are generated in game_render::art; replace by swapping handles.
 
 ## Determinism harness (ADR 0003, ADR 0004)
 - Every new sim component or resource is registered with `register_hashed` /

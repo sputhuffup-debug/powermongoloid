@@ -3,15 +3,18 @@
 //! M1: chunked terrain meshes (RND-01), the orbit camera rig (RND-02) and
 //! settlement visuals; the M0 placeholder wanderers are drawn as gizmos.
 
+pub mod agents;
+pub mod art;
+pub mod bands;
+pub mod buildings;
 pub mod camera;
-pub mod settlements;
 pub mod terrain;
 
 use bevy::prelude::*;
-use sim_core::demo::Wanderer;
-use sim_core::{Motion, Position};
-use sim_world::WorldMap;
 
+pub use agents::{AgentVisual, AgentVisuals, occupation_color};
+pub use bands::{Band, RenderSettings};
+pub use buildings::BuildingVisuals;
 pub use camera::CameraRig;
 pub use terrain::{TerrainChunks, surface_point, tile_to_world};
 
@@ -25,13 +28,15 @@ impl Plugin for RenderPlugin {
                 brightness: 400.0,
                 ..default()
             })
+            .init_resource::<RenderSettings>()
+            .add_systems(PreStartup, art::generate)
             .add_plugins((
                 terrain::TerrainPlugin,
                 camera::CameraRigPlugin,
-                settlements::SettlementVisualsPlugin,
+                buildings::BuildingVisualsPlugin,
+                agents::AgentVisualsPlugin,
             ))
-            .add_systems(Startup, setup_light)
-            .add_systems(Update, draw_wanderers);
+            .add_systems(Startup, setup_light);
     }
 }
 
@@ -46,21 +51,4 @@ fn setup_light(mut commands: Commands) {
         },
         Transform::from_xyz(0.0, 1.0, 0.0).looking_at(Vec3::new(-0.6, 0.0, -0.4), Vec3::Y),
     ));
-}
-
-fn draw_wanderers(
-    q: Query<(&Position, &Motion), With<Wanderer>>,
-    map: Option<Res<WorldMap>>,
-    mut gizmos: Gizmos,
-) {
-    let Some(map) = map else { return };
-    for (pos, motion) in &q {
-        let p = pos.0.as_vec2() + motion.offset + 0.5;
-        let ground = terrain::surface_height_at(&map, p.x, p.y);
-        gizmos.sphere(
-            tile_to_world(p.x, p.y, ground + 0.4),
-            0.35,
-            Color::srgb(0.85, 0.25, 0.20),
-        );
-    }
 }

@@ -1,0 +1,56 @@
+// Goods, recipes and workplaces (SIM-20, SIM-21).
+(
+    // `food`: how much hunger (0..1 scale) one unit removes; 0 = not food.
+    // Listed in id order; names are referenced by recipes below.
+    goods: [
+        (name: "grain", food: 0.3),
+        (name: "fish", food: 0.35),
+        (name: "mutton", food: 0.45),
+        (name: "bread", food: 0.4),
+        (name: "wood", food: 0.0),
+        (name: "ore", food: 0.0),
+        (name: "tools", food: 0.0),
+        (name: "weapons", food: 0.0),
+    ],
+
+    // Production chains. A worker of `worker` at a `workplace` takes the
+    // inputs from the workplace's stock, works `duration` ticks, and puts
+    // the outputs back for carters to haul.
+    recipes: [
+        (name: "farming", workplace: Farm, worker: Farmer, inputs: [], outputs: [("grain", 8)], duration: 240),
+        (name: "fishing", workplace: FishingSpot, worker: Fisher, inputs: [], outputs: [("fish", 2)], duration: 200),
+        (name: "herding", workplace: Pasture, worker: Shepherd, inputs: [], outputs: [("mutton", 2)], duration: 300),
+        (name: "woodcutting", workplace: WoodcutterCamp, worker: Woodcutter, inputs: [], outputs: [("wood", 3)], duration: 200),
+        (name: "mining", workplace: Mine, worker: Miner, inputs: [], outputs: [("ore", 2)], duration: 300),
+        (name: "toolmaking", workplace: Smithy, worker: Smith, inputs: [("ore", 2), ("wood", 1)], outputs: [("tools", 1)], duration: 400),
+        (name: "weaponsmithing", workplace: Smithy, worker: Smith, inputs: [("ore", 2), ("wood", 1)], outputs: [("weapons", 1)], duration: 450),
+        (name: "baking", workplace: Bakery, worker: Baker, inputs: [("grain", 3)], outputs: [("bread", 4)], duration: 150),
+    ],
+
+    // Where each workplace may be built and how many work there. `sites` are
+    // tried in order within `radius` tiles of the settlement centre; sites of
+    // the same kind stay `spacing` tiles apart.
+    workplaces: [
+        (kind: Farm, slots: 8, radius: 30, spacing: 3, sites: [Farmland, Grass, Clearing]),
+        (kind: FishingSpot, slots: 6, radius: 40, spacing: 4, sites: [Coast]),
+        (kind: Pasture, slots: 6, radius: 30, spacing: 5, sites: [Grass, Farmland, Clearing]),
+        (kind: WoodcutterCamp, slots: 8, radius: 40, spacing: 5, sites: [ForestEdge]),
+        (kind: Mine, slots: 10, radius: 40, spacing: 5, sites: [Upland]),
+        (kind: Smithy, slots: 6, radius: 12, spacing: 2, sites: [Centre]),
+        (kind: Bakery, slots: 6, radius: 12, spacing: 2, sites: [Centre]),
+        (kind: Storehouse, slots: 0, radius: 6, spacing: 2, sites: [Centre]),
+    ],
+
+    // Units a workplace can hold before its workers stop producing.
+    workplace_capacity: 200,
+    storehouse_capacity: 100000,
+    home_capacity: 40,
+    // Units a villager can carry; carters use carts.
+    carry: 8,
+    cart_carry: 50,
+    // Starting stock per villager. Food is sized so a settlement holds
+    // roughly a day of meals: enough to start, not enough to ride out a
+    // collapse in production (M2 famine criterion).
+    initial_stock_per_villager: [("grain", 4), ("bread", 1), ("wood", 1), ("ore", 1)],
+    initial_home_food_per_resident: 2,
+)

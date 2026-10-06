@@ -3,9 +3,9 @@
 //!
 //! Depends only on `bevy_ecs`, `bevy_app` and `bevy_math` (ADR 0002).
 
+pub mod calendar;
 pub mod command;
 pub mod components;
-pub mod demo;
 pub mod hash;
 pub mod names;
 pub mod replay;
@@ -17,6 +17,7 @@ pub mod timing;
 use bevy_app::{App, FixedUpdate, Plugin};
 use bevy_ecs::prelude::*;
 
+pub use calendar::{Calendar, ClockReading, Phase};
 pub use command::{
     CommandKind, CommandLog, CommandScript, CommandsProcessed, LoggedCommand, SimCommand,
     SimInputSet,
@@ -39,6 +40,7 @@ pub struct SimCorePlugin {
 impl Plugin for SimCorePlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(SimSeed(self.seed))
+            .insert_resource(Calendar::default_data())
             .insert_resource(SimRng::from_seed(self.seed))
             .init_resource::<SimTick>()
             .init_resource::<NextSpawnId>()
@@ -70,6 +72,7 @@ impl Plugin for SimCorePlugin {
         );
 
         app.register_hashed_resource::<SimSeed>()
+            .register_hashed_resource::<Calendar>()
             .register_hashed_resource::<SimTick>()
             .register_hashed_resource::<SimRng>()
             .register_hashed_resource::<NextSpawnId>()

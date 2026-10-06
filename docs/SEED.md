@@ -304,9 +304,9 @@ Procedural island, terrain meshes, camera.
 
 Villagers, needs, occupations, utility AI, goods and recipes, day phases.
 
-- [ ] One region with 5,000 villagers runs a full day cycle: they go to work, produce goods, eat, return home and sleep
-- [ ] Clicking a villager shows name, job, needs and current action
-- [ ] Cutting off a village's farmers causes measurable hunger within 2 game-days
+- [x] One region with 5,000 villagers runs a full day cycle: they go to work, produce goods, eat, return home and sleep
+- [x] Clicking a villager shows name, job, needs and current action
+- [x] Cutting off a village's farmers causes measurable hunger within 2 game-days
 
 ### M3: Armies (go/no-go)
 
@@ -419,7 +419,7 @@ The biggest risk is design, not engineering: a huge simulation that the player c
 
 Open questions to decide before or during the noted milestone:
 
-- [ ] Art direction: flat-shaded low-poly, or a stylized texture look? (before M2)
+- [x] Art direction: flat-shaded low-poly, or a stylized texture look? (before M2) **Decided 2026-10-06: both, by zoom level: flat-shaded low-poly beyond a detail distance, stylized textures closer in. See docs/M2_PLAN.md and ADR 0009.**
 - [ ] Should the player see and control a warlord avatar on the map, or only an abstract command view? (before M3)
 - [ ] Combat depth: individual duels with equipment, or simpler morale-dominant clashes? (during M3)
 - [ ] Is the campaign one large island or a sequence of islands of increasing size? (before M6)

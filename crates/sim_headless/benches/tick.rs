@@ -1,8 +1,8 @@
 //! Tick-cost benchmarks for NFR-03 (≤ 8 ms per tick at 20,000 full-detail
 //! agents) and NFR-04 (≥ 300 ticks/s headless at 20,000 agents).
 //!
-//! Until villagers exist (M2), the load is the M0 placeholder wanderers, so
-//! these numbers track harness overhead, not the real budget.
+//! Load: villagers populated in one region (M2). 20,000 full-detail agents
+//! (NFR-02) needs armies too; M3 adds those loads.
 //!
 //!   cargo bench -p sim_headless
 //!   cargo bench -p sim_headless -- --save-baseline nightly   # CI nightly job
@@ -21,7 +21,7 @@ fn tick(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
     for agents in LOADS {
         let mut app = headless_app(HeadlessConfig {
-            demo_agents: agents,
+            population: agents,
             ..HeadlessConfig::new(42)
         });
         // Tick 0 spawns the agents; measure steady-state ticks only.
@@ -39,7 +39,7 @@ fn state_hash(c: &mut Criterion) {
     let mut group = c.benchmark_group("state_hash");
     for agents in LOADS {
         let mut app = headless_app(HeadlessConfig {
-            demo_agents: agents,
+            population: agents,
             ..HeadlessConfig::new(42)
         });
         app.step(10);

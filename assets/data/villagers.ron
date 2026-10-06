@@ -1,0 +1,91 @@
+// Villagers (SIM-10, SIM-11, SIM-12). Rates are per game day unless noted;
+// a day is 2,400 ticks (calendar.ron).
+(
+    population: (
+        // M2 populates one region at full detail; the rest wait for LOD (M5).
+        total: 5000,
+        // Region to populate: Auto = the region with the most settlements.
+        region: Auto,
+        min_per_settlement: 150,
+    ),
+
+    households: (
+        // Household sizes 1..=7 and their relative weights.
+        size_weights: [4, 10, 14, 16, 12, 8, 4],
+        // Ages in years (a year is 120 days: four 30-day seasons).
+        adult_age: (min: 18, max: 55),
+        child_age: (min: 0, max: 15),
+        elder_chance: 0.12,
+        elder_age: (min: 56, max: 75),
+        // Age from which villagers work, and after which they stop.
+        working_age: (min: 16, max: 62),
+    ),
+
+    // Shares of working-age villagers, by occupation. Workers whose
+    // workplace can't be built (no coast for fishers, say) become farmers,
+    // or idle if there's no farm space either.
+    occupations: [
+        (occupation: Farmer, share: 0.45),
+        (occupation: Fisher, share: 0.09),
+        (occupation: Shepherd, share: 0.09),
+        (occupation: Woodcutter, share: 0.05),
+        (occupation: Miner, share: 0.03),
+        (occupation: Smith, share: 0.04),
+        (occupation: Baker, share: 0.07),
+        (occupation: Carter, share: 0.14),
+        (occupation: Idle, share: 0.04),
+    ],
+
+    needs: (
+        hunger_per_day: 0.9,
+        rest_lost_per_day_awake: 0.9,
+        rest_gained_per_day_asleep: 2.4,
+        // Thresholds on the 0..1 hunger scale.
+        hungry: 0.4,
+        starving: 0.85,
+        // Eating stops once hunger is this low.
+        sated: 0.05,
+        meal_ticks: 40,
+    ),
+
+    // Utility AI (SIM-12). Each action scores weight x product of response
+    // curves; the current action gets `inertia` added so agents don't flip
+    // between near-equal options.
+    ai: (
+        decision_interval: 10,
+        inertia: 0.08,
+        eat: (weight: 1.15, hunger: Logistic(mid: 0.35, steepness: 14.0)),
+        fetch: (weight: 0.7, home_stock_low: 1.0),
+        sleep: (weight: 1.0, tiredness: Logistic(mid: 0.55, steepness: 10.0), night_drive: 0.8, night: 1.0, evening: 0.55, day: 0.05),
+        work: (weight: 0.9, morning: 0.35, work: 1.0, evening: 0.02, night: 0.0),
+        go_home: (weight: 0.45, evening: 1.0, night: 1.0, day: 0.0),
+        idle: (weight: 0.12),
+        // Multiplier per tile of travel distance (prefers nearby options).
+        distance_falloff: 0.006,
+    ),
+
+    movement: (
+        // Tiles per tick on each terrain (10 ticks = 1 second at 1x).
+        speed: (water: 0.0, beach: 0.11, grass: 0.13, farmland: 0.12, forest: 0.08, hills: 0.07, mountain: 0.04, road: 0.2),
+        slope_cost: 1500.0,
+    ),
+
+    idle: (min_ticks: 60, max_ticks: 180, wander_radius: 6),
+
+    // Original names: given name + household family name.
+    names: (
+        given: [
+            "Alda", "Bertil", "Corwen", "Dagna", "Edric", "Fenna", "Garrick", "Hilde", "Ivo", "Jorun",
+            "Kael", "Liese", "Maddox", "Nell", "Osric", "Perrin", "Quilla", "Rowan", "Sabine", "Tobin",
+            "Una", "Vesna", "Wendel", "Yara", "Aric", "Brenna", "Cedric", "Delia", "Emmet", "Freya",
+            "Gisla", "Hollis", "Isolde", "Jory", "Kestrel", "Linnet", "Merrick", "Nyla", "Orla", "Piers",
+            "Roswith", "Sten", "Tamsin", "Ulric", "Wilma", "Ansel", "Briony", "Cormac", "Dunstan", "Elspeth",
+        ],
+        family: [
+            "Ashby", "Brook", "Cartwright", "Dunmore", "Ellis", "Fletcher", "Greaves", "Hale", "Ingram", "Jessop",
+            "Kemp", "Lowe", "Marsh", "Noble", "Orme", "Pike", "Quarrie", "Reeve", "Stroud", "Thatcher",
+            "Underhill", "Vane", "Ware", "Yeoman", "Barrow", "Cole", "Dyer", "Fenwick", "Garner", "Hayward",
+            "Kettle", "Lockett", "Moss", "Nettleton", "Oakes", "Pryor", "Rook", "Sallow", "Tanner", "Woolley",
+        ],
+    ),
+)

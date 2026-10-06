@@ -1,0 +1,14 @@
+// Game calendar (SIM-04, SIM-05). At 1x the sim runs 10 ticks per second,
+// so 2,400 ticks is a 4-minute day.
+(
+    ticks_per_day: 2400,
+    // Phases in order, as fractions of the day; they must sum to 1.
+    phases: [
+        (phase: Morning, fraction: 0.15),
+        (phase: Work, fraction: 0.45),
+        (phase: Evening, fraction: 0.15),
+        (phase: Night, fraction: 0.25),
+    ],
+    days_per_season: 30,
+    seasons_per_year: 4,
+)

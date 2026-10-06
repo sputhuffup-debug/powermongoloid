@@ -5,7 +5,9 @@
 
 pub mod map;
 pub mod noise;
+pub mod path;
 pub mod settings;
+pub mod spatial;
 pub mod worldgen;
 
 use std::time::Duration;
@@ -13,12 +15,13 @@ use std::time::Duration;
 use bevy_app::{App, FixedUpdate, Plugin};
 use bevy_ecs::prelude::*;
 use bevy_math::IVec2;
-use sim_core::demo::DemoAnchors;
 use sim_core::{AppHashExt, NameId, NameTable, NextSpawnId, Position, SimSeed, SimSet, SpawnId};
 use sim_core::{StateHash, StateHasher};
 
 pub use map::{NO_REGION, RegionId, Terrain, WorldMap};
+pub use path::{PathCache, SharedPath, TravelCosts, find_path};
 pub use settings::WorldGenSettings;
+pub use spatial::{Mobile, SpatialGrid, world_pos};
 pub use worldgen::{GeneratedWorld, generate_world};
 
 /// A settlement (SEED.md "Core data model").
@@ -98,10 +101,15 @@ impl Plugin for WorldPlugin {
             .register_hashed_resource::<WorldMap>()
             .register_hashed_resource::<RoadNetwork>()
             .register_hashed::<Settlement>()
+            .init_resource::<PathCache>()
+            .init_resource::<SpatialGrid>()
+            .register_hashed::<Mobile>()
             .exempt_from_hash::<WorldGenReport>("wall-clock diagnostics")
+            .exempt_from_hash::<PathCache>("memoised pure function of the map and endpoints")
+            .exempt_from_hash::<SpatialGrid>("rebuilt from positions every tick")
             .add_systems(
                 FixedUpdate,
-                map::refresh_chunk_digests.in_set(SimSet::Bookkeeping),
+                (map::refresh_chunk_digests, spatial::rebuild_grid).in_set(SimSet::Bookkeeping),
             );
     }
 
@@ -123,7 +131,6 @@ pub fn install_world(world: &mut World, generated: GeneratedWorld, total: Durati
         timings,
     } = generated;
     let mut ids = Vec::with_capacity(settlements.len());
-    let mut anchors = Vec::with_capacity(settlements.len());
     for site in settlements {
         let name = world.resource_mut::<NameTable>().push(site.name);
         let id = world.resource_mut::<NextSpawnId>().allocate();
@@ -137,7 +144,6 @@ pub fn install_world(world: &mut World, generated: GeneratedWorld, total: Durati
             Position(site.center),
         ));
         ids.push(id);
-        anchors.push(site.center);
     }
     let roads = roads
         .into_iter()
@@ -153,7 +159,4 @@ pub fn install_world(world: &mut World, generated: GeneratedWorld, total: Durati
         total,
         stages: timings,
     });
-    if let Some(mut demo) = world.get_resource_mut::<DemoAnchors>() {
-        demo.0 = anchors;
-    }
 }

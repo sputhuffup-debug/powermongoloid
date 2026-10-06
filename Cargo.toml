@@ -59,5 +59,12 @@ debug = false
 [profile.dev.package.sim_world]
 opt-level = 3
 
+# Thousands of villagers per tick: keep tests and debug runs responsive.
+[profile.dev.package.sim_agents]
+opt-level = 3
+
+[profile.dev.package.sim_economy]
+opt-level = 3
+
 [profile.release]
 debug = "line-tables-only"
