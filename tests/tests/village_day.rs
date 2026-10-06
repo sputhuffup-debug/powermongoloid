@@ -36,18 +36,29 @@ fn five_thousand_villagers_live_a_full_day() {
         "one region populated with 5,000 villagers"
     );
 
-    // They go to work: in the body of the work phase, nearly every worker
-    // is working, hauling for their workplace, or walking there.
+    // They go to work: through the work phase, workers are working,
+    // hauling for their workplace, or walking there, apart from meal
+    // breaks (eating is the AI's choice too) and carters waiting for the
+    // first goods of the day.
     let work: Vec<&Stats> = samples
         .iter()
-        .filter(|(p, f, _)| *p == Phase::Work && (0.2..0.9).contains(f))
+        .filter(|(p, f, _)| *p == Phase::Work && (0.15..0.95).contains(f))
         .map(|(_, _, s)| s)
         .collect();
     assert!(!work.is_empty());
-    for s in &work {
-        let share = s.working_or_commuting as f32 / s.workers as f32;
+    let shares: Vec<f32> = work
+        .iter()
+        .map(|s| s.working_or_commuting as f32 / s.workers as f32)
+        .collect();
+    let mean = shares.iter().sum::<f32>() / shares.len() as f32;
+    assert!(
+        mean >= 0.85,
+        "on average only {:.0}% of workers at work",
+        mean * 100.0
+    );
+    for (s, share) in work.iter().zip(&shares) {
         assert!(
-            share >= 0.85,
+            *share >= 0.6,
             "only {:.0}% of workers at work: {}",
             share * 100.0,
             s.line()

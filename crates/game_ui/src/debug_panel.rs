@@ -30,6 +30,7 @@ struct WorldInfo<'w, 's> {
     report: Option<Res<'w, WorldGenReport>>,
     roads: Option<Res<'w, RoadNetwork>>,
     chunks: Option<Res<'w, TerrainChunks>>,
+    agents: Option<Res<'w, game_render::AgentVisuals>>,
     settlements: Query<'w, 's, (), With<Settlement>>,
     rig: Query<'w, 's, &'static CameraRig>,
 }
@@ -106,7 +107,7 @@ fn debug_panel(
                 ui.label("Dormant");
                 ui.monospace(dormant.to_string());
                 ui.end_row();
-                ui.label("No detail level (settlements, placeholders)");
+                ui.label("No detail level (settlements, buildings)");
                 ui.monospace(untagged.to_string());
                 ui.end_row();
             });
@@ -137,6 +138,22 @@ fn debug_panel(
                     ui.monospace(format!(
                         "{}/{} built, {} builds",
                         chunks.built_count, chunks.total, chunks.builds
+                    ));
+                    ui.end_row();
+                }
+                if let Some(chunks) = &world.chunks {
+                    ui.label("Textured chunks");
+                    ui.monospace(format!("{} (detail band)", chunks.textured_count));
+                    ui.end_row();
+                }
+                if let Some(agents) = &world.agents {
+                    ui.label("Villagers by band");
+                    ui.monospace(format!(
+                        "tex {} · flat {} · board {} · dot {}",
+                        agents.per_band[0],
+                        agents.per_band[1],
+                        agents.per_band[2],
+                        agents.per_band[3]
                     ));
                     ui.end_row();
                 }

@@ -2982,6 +2982,8 @@ name = "game_render"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "ron",
+ "serde",
  "sim_agents",
  "sim_core",
  "sim_economy",
@@ -2995,7 +2997,9 @@ dependencies = [
  "bevy",
  "bevy_egui",
  "game_render",
+ "sim_agents",
  "sim_core",
+ "sim_economy",
  "sim_world",
 ]
 

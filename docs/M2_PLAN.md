@@ -1,6 +1,6 @@
 # M2 Plan: A living village
 
-Status: **decisions made 2026-10-06; awaiting go-ahead to implement**. No code written yet.
+Status: **implemented 2026-10-06** (go-ahead given the same day). See "Changes during implementation" at the end.
 Spec: `docs/SEED.md` § "M2: A living village".
 
 ## Requirements covered
@@ -170,3 +170,13 @@ The determinism suite, the hash coverage check and parallel-vs-serial agreement 
 - Carters between settlements (SIM-23, M4)
 - Loyalty dynamics (M4)
 - Inter-region simulation (M5)
+
+## Changes during implementation
+
+- **Time keys:** Space pauses and 1–4 set 1x/2x/4x/8x. The plan said 1–5; five keys weren't needed with Space for pause.
+- **Work-phase acceptance check:** this is now a mean of at least 85% of workers working through the body of the work phase, with no sample below 60%. Meal breaks are AI choices, and with staggered starting hunger they no longer all fall at once.
+- **Behaviour fixes found by the tests and the stats probe** (ADR 0006): hunger damps work; sleep has a night floor and ends only by day; workers haul for their own workplace when it is well stocked or short of inputs; `TakeMeal` lets villagers eat even when their hands are full.
+- **Layout** (ADR 0007): buildings are placed only on land reachable from the centre; farms and pastures may use cleared forest as a last resort; houses stand every other tile.
+- **Settlement jump (N key):** goes to populated settlements first.
+- **Player panels:** both sit on the right, clear of the dev debug panel. The UI uses ASCII bars and separators because the default font lacks block and middle-dot glyphs.
+- **Performance** (release, 4-core dev box): 1.1 ms per tick at 5,000 villagers (target ≤ 2 ms). At 20,000 villagers it is 5.1 ms per tick: within NFR-03 (≤ 8 ms), but not yet NFR-04's 300 ticks/s (≤ 3.3 ms). That is to be measured on the 8-core reference machine and optimised in M3.

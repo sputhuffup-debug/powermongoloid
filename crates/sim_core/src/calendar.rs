@@ -55,9 +55,17 @@ pub struct ClockReading {
 }
 
 impl ClockReading {
-    /// A 24-hour clock face for display, with the day starting at 06:00.
+    /// A 24-hour clock face for display. Each phase spans fixed hours:
+    /// morning 06-08, work 08-17, evening 17-21, night 21-06.
     pub fn hours_minutes(&self) -> (u32, u32) {
-        let minutes = ((self.day_fraction * 24.0 * 60.0) as u32 + 6 * 60) % (24 * 60);
+        let (start, end) = match self.phase {
+            Phase::Morning => (6.0, 8.0),
+            Phase::Work => (8.0, 17.0),
+            Phase::Evening => (17.0, 21.0),
+            Phase::Night => (21.0, 30.0),
+        };
+        let hours = start + (end - start) * self.phase_fraction;
+        let minutes = ((hours * 60.0) as u32) % (24 * 60);
         (minutes / 60, minutes % 60)
     }
 }
@@ -181,6 +189,16 @@ mod tests {
         assert_eq!(c.next_start_of(Phase::Work, 360), 360);
         assert_eq!(c.next_start_of(Phase::Work, 361), 2400 + 360);
         assert_eq!(c.next_start_of(Phase::Morning, 2000), 2400);
+    }
+
+    #[test]
+    fn clock_face_follows_phases() {
+        let c = Calendar::default_data();
+        assert_eq!(c.at(0).hours_minutes(), (6, 0));
+        assert_eq!(c.at(360).hours_minutes(), (8, 0));
+        assert_eq!(c.at(1440).hours_minutes(), (17, 0));
+        assert_eq!(c.at(1800).hours_minutes(), (21, 0));
+        assert_eq!(c.at(2399).hours_minutes().0, 5);
     }
 
     #[test]

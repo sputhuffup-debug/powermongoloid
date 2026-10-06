@@ -267,7 +267,7 @@ const SETTLEMENT_VIEW_DISTANCE: f32 = 110.0;
 /// N / Shift+N: cycle the camera through settlements in stable ID order.
 fn jump_to_settlement(
     keys: Res<ButtonInput<KeyCode>>,
-    settlements: Query<(&SpawnId, &Settlement)>,
+    settlements: Query<(&SpawnId, &Settlement, Has<sim_economy::SettlementEconomy>)>,
     mut rigs: Query<&mut CameraRig>,
     mut index: Local<Option<usize>>,
 ) {
@@ -277,12 +277,16 @@ fn jump_to_settlement(
     let Ok(mut rig) = rigs.single_mut() else {
         return;
     };
-    let mut list: Vec<(SpawnId, IVec2)> =
-        settlements.iter().map(|(id, s)| (*id, s.center)).collect();
-    if list.is_empty() {
+    // Populated settlements first, then the rest, each in stable ID order.
+    let mut sorted: Vec<(bool, SpawnId, IVec2)> = settlements
+        .iter()
+        .map(|(id, s, populated)| (!populated, *id, s.center))
+        .collect();
+    if sorted.is_empty() {
         return;
     }
-    list.sort_unstable_by_key(|(id, _)| *id);
+    sorted.sort_unstable_by_key(|(unpopulated, id, _)| (*unpopulated, *id));
+    let list: Vec<(SpawnId, IVec2)> = sorted.into_iter().map(|(_, id, c)| (id, c)).collect();
     let back = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let n = list.len();
     let next = match (*index, back) {

@@ -1,0 +1,13 @@
+// Rendering settings. Art direction (ADR 0009): stylized textures close up,
+// flat-shaded low-poly beyond `detail_distance`, then billboards, then dots.
+(
+    // Camera distances (world units; one tile is one unit).
+    detail_distance: 150.0,
+    billboard_distance: 600.0,
+    dot_distance: 1400.0,
+    // Switch out at (1 + hysteresis) x a threshold and back in at
+    // (1 - hysteresis) x, so things don't flicker at the boundary.
+    hysteresis: 0.1,
+    // Tiles per repeat of the terrain detail texture.
+    terrain_texture_tiles: 4.0,
+)

@@ -15,7 +15,7 @@ pub struct SettlementLabelsPlugin;
 
 impl Plugin for SettlementLabelsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (spawn_labels, place_labels).chain());
+        app.add_systems(Update, (spawn_labels, place_labels, click_labels).chain());
     }
 }
 
@@ -50,6 +50,8 @@ fn spawn_labels(
                 anchor: surface_point(&map, settlement.center) + Vec3::Y * LABEL_LIFT,
             },
             Text::new(names.get(settlement.name)),
+            // Clicking a label selects the settlement (UI-02).
+            Button,
             TextFont {
                 font_size: FontSize::Px(15.0),
                 ..default()
@@ -65,6 +67,20 @@ fn spawn_labels(
             },
             Visibility::Hidden,
         ));
+    }
+}
+
+fn click_labels(
+    labels: Query<(&Interaction, &SettlementLabel), Changed<Interaction>>,
+    mut selection: ResMut<crate::selection::Selection>,
+) {
+    for (interaction, label) in &labels {
+        if *interaction == Interaction::Pressed {
+            *selection = crate::selection::Selection {
+                villager: None,
+                settlement: Some(label.settlement),
+            };
+        }
     }
 }
 

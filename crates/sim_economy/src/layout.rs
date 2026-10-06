@@ -137,7 +137,7 @@ pub struct Layout {
 
 /// Radius (tiles) around the centre that stays open as the village green.
 const GREEN_RADIUS: i32 = 2;
-const HOUSE_RADIUS: i32 = 45;
+const HOUSE_RADIUS: i32 = 50;
 
 fn open_land(t: Terrain) -> bool {
     matches!(
@@ -377,8 +377,9 @@ pub fn build_settlement(
         if houses.len() as u32 >= req.houses {
             break;
         }
-        // Checkerboard spacing leaves lanes between houses.
-        if (p.x + p.y) % 2 != 0
+        // Every other tile both ways leaves lanes between houses.
+        if p.x % 2 != 0
+            || p.y % 2 != 0
             || occupied.contains(&p)
             || !reachable.contains(p)
             || !open_land(map.terrain(p))
