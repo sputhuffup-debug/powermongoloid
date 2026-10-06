@@ -55,7 +55,10 @@ fn spawn_labels(
                 ..default()
             },
             TextColor(Color::srgb(1.0, 0.97, 0.88)),
-            TextShadow::default(),
+            TextShadow {
+                offset: Vec2::splat(1.5),
+                color: Color::srgba(0.0, 0.0, 0.0, 0.85),
+            },
             Node {
                 position_type: PositionType::Absolute,
                 ..default()

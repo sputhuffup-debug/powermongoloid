@@ -51,6 +51,7 @@ The existing determinism suite and the hash coverage test must keep passing with
   - Pan with WASD or arrow keys, edge scrolling, or right/middle-mouse drag.
   - Zoom with the mouse wheel (exponential, clamped).
   - Q/E tapped rotates in 90-degree steps; Q/E held rotates freely.
+  - N / Shift+N jump to the next / previous settlement (added during implementation).
   - Pitch follows zoom, and every motion is damped so it's smooth.
 - Settlements: small house clusters placed from a hash of the settlement's ID, so their look is stable.
 

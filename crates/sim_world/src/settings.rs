@@ -114,7 +114,7 @@ impl WorldGenSettings {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if self.chunk_size == 0 || self.size == 0 || self.size % self.chunk_size != 0 {
+        if self.chunk_size == 0 || self.size == 0 || !self.size.is_multiple_of(self.chunk_size) {
             return Err(format!(
                 "size {} must be a positive multiple of chunk_size {}",
                 self.size, self.chunk_size

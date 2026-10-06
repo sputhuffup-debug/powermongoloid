@@ -30,6 +30,15 @@ M1 (M0 complete 2026-10-05; update this line as milestones complete)
 - Bench:          cargo bench -p sim_headless
 - Record replay:  cargo run --release -p sim_headless -- --ticks 10000 --commands 200 --record run.ron
 - Verify replay:  cargo run --release -p sim_headless -- --replay run.ron [--single-threaded]
+- Map image:      cargo run --release -p sim_headless -- --seed 42 --ticks 1 --map-ppm map.ppm
+- Low-memory build (4-core cloud box): add `-j 3` to cargo build/test/clippy
+
+## World (ADR 0005)
+- Worldgen parameters live in assets/data/worldgen.ron (embedded at compile time).
+- Change tiles only through `WorldMap::set_terrain`; it bumps chunk revisions
+  (the renderer rebuilds only those chunks) and keeps the state hash current.
+- Rendering and UI never write to sim entities, not even marker components;
+  track render-side state in render-side resources or `Local`s.
 
 ## Determinism harness (ADR 0003, ADR 0004)
 - Every new sim component or resource is registered with `register_hashed` /

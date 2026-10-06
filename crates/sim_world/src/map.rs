@@ -92,7 +92,7 @@ impl WorldMap {
         assert!(
             height.len() == n && terrain.len() == n && fertility.len() == n && region.len() == n
         );
-        assert!(size % chunk_size == 0);
+        assert!(size.is_multiple_of(chunk_size));
         let chunks = (size / chunk_size).pow(2) as usize;
         let mut map = Self {
             size,

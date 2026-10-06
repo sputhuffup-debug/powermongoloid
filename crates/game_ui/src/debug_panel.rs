@@ -34,6 +34,7 @@ struct WorldInfo<'w, 's> {
     rig: Query<'w, 's, &'static CameraRig>,
 }
 
+#[allow(clippy::too_many_arguments)] // Bevy system parameters.
 fn debug_panel(
     mut contexts: EguiContexts,
     world: WorldInfo,

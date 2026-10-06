@@ -21,8 +21,8 @@ pub(crate) fn links(centers: &[IVec2], s: &WorldGenSettings) -> Vec<(usize, usiz
         let mut in_tree = vec![false; n];
         let mut best = vec![(f32::INFINITY, 0usize); n];
         in_tree[0] = true;
-        for j in 1..n {
-            best[j] = (dist(0, j), 0);
+        for (j, b) in best.iter_mut().enumerate().skip(1) {
+            *b = (dist(0, j), 0);
         }
         for _ in 1..n {
             let next = (0..n)

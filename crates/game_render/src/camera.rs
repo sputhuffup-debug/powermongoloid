@@ -1,17 +1,19 @@
 //! RND-02: perspective orbit camera. Pan with WASD/arrows, screen edges or
 //! right/middle-drag; zoom with the wheel; Q/E tap to rotate 90 degrees, hold
-//! to rotate freely. Every motion eases toward its target.
+//! to rotate freely; N / Shift+N jump to the next / previous settlement.
+//! Every motion eases toward its target.
 
 use std::f32::consts::{FRAC_PI_2, PI};
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use sim_world::WorldMap;
+use sim_core::SpawnId;
+use sim_world::{Settlement, WorldMap};
 
 use crate::terrain::{surface_height_at, tile_to_world};
 
-pub const MIN_DISTANCE: f32 = 12.0;
+pub const MIN_DISTANCE: f32 = 20.0;
 pub const MAX_DISTANCE: f32 = 3200.0;
 /// Pitch (radians above the horizon) when fully zoomed in / out.
 const PITCH_NEAR: f32 = 0.45;
@@ -28,7 +30,7 @@ pub struct CameraRigPlugin;
 impl Plugin for CameraRigPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_camera)
-            .add_systems(Update, (rig_input, apply_rig).chain());
+            .add_systems(Update, (rig_input, jump_to_settlement, apply_rig).chain());
     }
 }
 
@@ -120,7 +122,7 @@ pub fn pan_delta(dir: Vec2, yaw: f32, distance: f32, dt: f32) -> Vec2 {
 
 /// Zooms the target distance by wheel `lines` (positive = in).
 pub fn zoom(target: f32, lines: f32) -> f32 {
-    (target * 0.85f32.powf(lines)).clamp(MIN_DISTANCE, MAX_DISTANCE)
+    (target * 0.9f32.powf(lines)).clamp(MIN_DISTANCE, MAX_DISTANCE)
 }
 
 /// The next 90-degree yaw from `target` in direction `dir` (+1 or -1),
@@ -257,6 +259,41 @@ fn rig_input(
         let ground = surface_height_at(&map, rig.focus.x, rig.focus.y);
         rig.focus_height = damp(rig.focus_height, ground, dt);
     }
+}
+
+/// Distance the camera settles at when jumping to a settlement.
+const SETTLEMENT_VIEW_DISTANCE: f32 = 110.0;
+
+/// N / Shift+N: cycle the camera through settlements in stable ID order.
+fn jump_to_settlement(
+    keys: Res<ButtonInput<KeyCode>>,
+    settlements: Query<(&SpawnId, &Settlement)>,
+    mut rigs: Query<&mut CameraRig>,
+    mut index: Local<Option<usize>>,
+) {
+    if !keys.just_pressed(KeyCode::KeyN) {
+        return;
+    }
+    let Ok(mut rig) = rigs.single_mut() else {
+        return;
+    };
+    let mut list: Vec<(SpawnId, IVec2)> =
+        settlements.iter().map(|(id, s)| (*id, s.center)).collect();
+    if list.is_empty() {
+        return;
+    }
+    list.sort_unstable_by_key(|(id, _)| *id);
+    let back = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let n = list.len();
+    let next = match (*index, back) {
+        (None, false) => 0,
+        (None, true) => n - 1,
+        (Some(i), false) => (i + 1) % n,
+        (Some(i), true) => (i + n - 1) % n,
+    };
+    *index = Some(next);
+    rig.target_focus = list[next].1.as_vec2() + 0.5;
+    rig.target_distance = SETTLEMENT_VIEW_DISTANCE;
 }
 
 fn apply_rig(time: Res<Time>, mut q: Query<(&mut CameraRig, &mut Transform)>) {

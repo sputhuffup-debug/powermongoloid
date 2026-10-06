@@ -2992,7 +2992,9 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_egui",
+ "game_render",
  "sim_core",
+ "sim_world",
 ]
 
 [[package]]
