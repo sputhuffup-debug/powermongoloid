@@ -1,13 +1,13 @@
 # M3 Plan: Armies (go/no-go)
 
-Status: **draft for discussion**. No code written yet.
+Status: **decisions made 2026-10-06; awaiting go-ahead to implement**. No code written yet.
 Spec: `docs/SEED.md` § "M3: Armies". M3 is the go/no-go point: if marching an army through living villages isn't interesting, the design changes before M4.
 
 ## Requirements covered
 
 | ID | Requirement | Where |
 | --- | --- | --- |
-| GP-01 | One warlord captain; up to 8 lieutenants later | `sim_military` |
+| GP-01 | The player starts with one captain (their champion) and may appoint up to 8 more; abstract command view, so the warlord is the player, not a unit | `sim_military` |
 | GP-02 | Orders: move to, attack settlement, recruit, gather food, trade, equip, scout, return | `sim_military::orders` |
 | GP-03 | Posture: passive, neutral or aggressive, changing how followers treat civilians and enemies | `sim_military` + `sim_agents` |
 | GP-04 | Followers are individual entities acting autonomously within the posture | `sim_military::followers` |
@@ -26,13 +26,15 @@ Spec: `docs/SEED.md` § "M3: Armies". M3 is the go/no-go point: if marching an a
 | Posture visibly changes how followers treat villagers | **Scenario `posture`:** the same army passes the same village three times, once per posture. Passive: no food seized, no villager harmed, and villagers mostly carry on. Aggressive: food seized, villagers flee or fight, and the panel and event log show it. Neutral sits between the two. The test asserts the counts order passive < neutral < aggressive. Xvfb screenshots show villagers scattering from an aggressive army. |
 | An army without food loses morale and starts deserting within the specified days | **Scenario `starving_army`:** an army with no food and no village to forage from. Checks: morale falls from day 1; the first desertion happens within the limit set in `army.ron` (proposed: by the end of day 2); starvation damage only after desertions have begun. A fed control army in the same run doesn't desert. |
 | 20,000 visible agents at 60 fps on the reference machine | This can't be measured here, because the container renders in software. I'll add a `--stress 20000` mode to `game_app` that fills view with agents and logs frame times. **You run it on the reference machine** (8 cores, RTX 3060 class) and send me the numbers. Headless NFR-03 and NFR-04 at 20,000 agents are benchmarked here, and optimised until they pass on 8 cores. |
-| **Go/no-go playtest** | A playable start: your warlord with about 50 followers at the edge of the populated region, 2–3 days of food, and a hostile captain's band nearby (driven by scripted commands, since real rival AI is M5). **You play it**, and I'll provide a short checklist of what to look for. |
+| **Go/no-go playtest** | A playable start: your first captain with about 50 followers at the edge of the populated region, 2–3 days of food, and a hostile captain's band nearby (driven by scripted commands, since real rival AI is M5). **You play it**, and I'll provide a short checklist of what to look for. |
 
 ## Design
 
 ### Factions and captains (GP-01, GP-02, GP-03)
 - **`Factions` resource:** faction 0 is "independent" (settlements). Faction 1 is the player. In M3, faction 2 is a scripted hostile band for testing and the playtest.
-- **`Captain`** follows SEED.md: `{ faction, posture, orders: VecDeque<Order> }`. Your warlord is a captain marked `Warlord`. Lieutenants are recruited later; the structure allows up to 8.
+- **`Captain`** follows SEED.md: `{ faction, posture, orders: VecDeque<Order> }`.
+- **Abstract command view:** there is no warlord unit; you command your captains from above. You start with one captain, your champion, and the structure allows appointing up to 8 more (`AppointCaptain` is a command). Losing a captain hurts that army's morale; losing them all doesn't end the game in M3. Win and lose conditions are M6.
+- **Your seat:** in M5, orders travel from your seat by messenger (GP-07). M3 records a seat (your starting camp) so that hook exists.
 - **Orders arrive only as `SimCommand::IssueOrder { captain, order }`,** with the queue rules `Replace` and `Append`. This keeps the player and future AI warlords on one code path and keeps replays working.
   - `MoveTo(tile)`, `Return`.
   - `Recruit(settlement)`: villagers join as followers. Idle adults come first, then workers. A posture-dependent willingness check uses food and safety now; loyalty is added in M4.
@@ -66,7 +68,7 @@ Spec: `docs/SEED.md` § "M3: Armies". M3 is the go/no-go point: if marching an a
 - **Resolution:** damage requests are applied serially in SpawnId order, the same pattern as the M2 transfer resolver.
 - **Morale:** it drops with nearby casualties, outnumbering, hunger and losing the captain, and rises with victories and the captain nearby. Below the rout threshold, a unit flees from enemies. Routed units regroup or desert.
 - **Villagers (SIM-13):** they gain Flee, Hide (indoors at home) and Fight actions, scored from the `safety` need. Safety drops near hostile or aggressive armies, scaled by posture. Fight requires an adult with high morale; M4 adds a loyalty weight.
-- **Combat depth** is an open question below; the design above is the "duels with equipment" option.
+- **Combat depth (decided):** duels with equipment. Weapons and tools from the smithy change damage and defense, so the M2 economy matters in war.
 
 ### UI (UI-01) and rendering (RND-04)
 - **Selecting and ordering:**
@@ -85,9 +87,9 @@ At 20,000 villagers, a tick costs 5.1 ms on this 4-core box. Targets on the 8-co
 
 Benchmarks are added for armies too (`tick/army/2000`).
 
-## New feature (requested 2026-10-06): faith, piety and heroes
+## New feature (requested 2026-10-06): faith, piety and heroes, built in M4
 
-Proposed requirements, to be added to SEED.md once agreed:
+Scheduled for **M4**, next to loyalty, since both are settlement moods with the same inputs and both use the M4 event feed. SEED.md now lists:
 
 | ID | Requirement |
 | --- | --- |
@@ -97,18 +99,20 @@ Proposed requirements, to be added to SEED.md once agreed:
 | UI-08 | The settlement panel shows faith and piety. Heroes are visibly distinct, and their inspector explains their decisions like any villager's. |
 
 How it fits the existing design:
-- **The settlement's soldiers** are its militia: villagers who take up arms to defend it (the SIM-13 Fight action, organised). Militia arrive with M3 combat, so heroes have someone to lead.
-- **Hero behaviour** is the follower AI plus a leadership aura (morale and attack bonus, rally) and its own decisions about engaging and falling back. Captains get the same aura mechanism, so it's shared code.
+- **The settlement's soldiers** are its militia: villagers who take up arms to defend it (the SIM-13 Fight action, organised). **M3 builds the militia**, so heroes have someone to lead in M4.
+- **A hero leads only its own settlement's militia (decided).** Villagers you recruit from that settlement stay under your captain, so a hero never commands your units.
+- **Hero behaviour** is the follower AI plus a leadership aura (morale and attack bonus, rally) and its own decisions about engaging and falling back. **M3 builds the leadership aura for captains**, so heroes reuse it in M4.
 - **Determinism:** piety is hashed state, and a hero's emergence is drawn from a seeded stream, so it replays exactly.
 - **Commands:** the "never controllable" rule is enforced where commands are validated. An order targeting a hero, or a hero's units, is rejected, and a test checks it.
 
-## Decisions needed (see the questions in chat)
-1. **Warlord avatar** (SEED.md open question, due before M3): your warlord as a unit on the map, or an abstract command view only?
-2. **Combat depth** (SEED.md, during M3): duels with equipment, or simpler morale-dominant clashes?
-3. **When to build faith and heroes:** in M3, or in M4 next to loyalty?
-4. **Who a hero leads:** only its settlement's militia, or also that settlement's people serving in other armies?
+## Decisions (answered 2026-10-06)
+1. **Warlord:** abstract command view. You command captains from above; no warlord unit.
+2. **Combat depth:** duels with equipment, with morale-driven routing.
+3. **Faith and heroes:** built in M4, next to loyalty. M3 builds the militia and leadership aura they rely on.
+4. **Who a hero leads:** only its own settlement's militia.
 
 ## Out of scope for M3
+- Faith, piety and heroes (SIM-50 to 52, UI-08; M4). M3 builds the militia and leadership aura they need.
 - Conquest and allegiance transfer (GP-05/06, M4)
 - Real trade and currency (M4)
 - Faction knowledge and messengers (M5)
