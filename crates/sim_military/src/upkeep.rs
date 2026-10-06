@@ -43,7 +43,6 @@ pub(crate) fn eat(
 ) {
     let _span = tracing::info_span!("sim_military::eat").entered();
     let n = &villagers.data.needs;
-    let radius = army.data.upkeep.forage_radius;
     q.par_iter_mut().for_each(
         |(e, pos, motion, mut needs, mut inv, mut transfers, follower, is_captain)| {
             if needs.hunger < n.hungry {
@@ -58,9 +57,15 @@ pub(crate) fn eat(
             } else {
                 follower.and_then(|f| index.get(f.captain))
             };
+            // The baggage reaches the whole formation.
             if let Some(a) = source
                 && a.food > 0.0
-                && a.pos.distance(p) <= radius
+                && a.pos.distance(p)
+                    <= army
+                        .data
+                        .upkeep
+                        .forage_radius
+                        .max(army.formation_radius(a.followers) + army.data.formation.catch_up)
             {
                 let units = (((needs.hunger - army.data.upkeep.sated) / 0.3).ceil() as u16).max(1);
                 transfers.post(a.entity, vec![TransferOp::TakeMeal { max: units }]);
@@ -134,11 +139,13 @@ pub(crate) fn soldier_upkeep(
                     (morale - fed_gain).max(target)
                 };
             }
+            let mut shock = 0.0;
             for (q, f, _) in &fallen.fallen {
                 if *f == allegiance.0 && q.distance(p) <= c.casualty_radius {
-                    morale -= c.casualty_morale;
+                    shock += c.casualty_morale;
                 }
             }
+            morale -= shock.min(c.casualty_morale_cap);
             morale = morale.clamp(0.0, 1.0);
             if morale != cs.morale {
                 cs.morale = morale;
@@ -186,11 +193,13 @@ pub(crate) fn civilian_morale(
         let mut morale = cs.morale;
         if !fallen.fallen.is_empty() {
             let p = world_pos(pos, Some(motion));
+            let mut shock = 0.0;
             for (q, _, militia) in &fallen.fallen {
                 if *militia && q.distance(p) <= c.casualty_radius {
-                    morale -= c.casualty_morale;
+                    shock += c.casualty_morale;
                 }
             }
+            morale -= shock.min(c.casualty_morale_cap);
         }
         if morale < base {
             morale = (morale + gain).min(base);
@@ -210,6 +219,7 @@ pub(crate) fn anyone_deserting(d: Res<Deserters>) -> bool {
     !d.0.is_empty()
 }
 
+#[allow(clippy::type_complexity)]
 /// Needs set: tallies starvation (whole counts per faction, so the sum is
 /// exact) and lists deserters.
 pub(crate) fn tally(

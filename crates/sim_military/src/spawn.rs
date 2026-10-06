@@ -196,7 +196,7 @@ pub fn spawn_army(world: &mut World, spec: &ArmySpec) -> Entity {
             .id()
     };
     let captain = person(world, start, army.data.captain);
-    let mut baggage = Stockpile::with_capacity(army.data.baggage_capacity);
+    let mut baggage = Stockpile::with_capacity(army.baggage_capacity(spec.followers + 1));
     let need = villagers.data.needs.hunger_per_day * (spec.followers + 1) as f32 * spec.food_days;
     if let Some(&grain) = econ.foods_by_value().last() {
         let v = econ.food_value(grain).max(0.01);
@@ -226,6 +226,39 @@ pub fn spawn_army(world: &mut World, spec: &ArmySpec) -> Entity {
 pub struct Skirmish {
     pub player: Entity,
     pub raiders: Entity,
+}
+
+/// A battle for benchmarks and stress tests: the skirmish start plus two
+/// armed armies of `per_side` at war, already ordered onto the midpoint of
+/// their camps. Orders are queued as player commands for the first tick.
+pub fn setup_battle(world: &mut World, per_side: u32) -> Option<[Entity; 2]> {
+    use sim_core::{CommandKind, OrderSpec, SimCommand, SpawnId};
+    let s = setup_skirmish(world)?;
+    let at = |world: &World, e| world.get::<Position>(e).expect("position").0;
+    let (a, b) = (at(world, s.player), at(world, s.raiders));
+    let mid = (a + b) / 2;
+    let mut out = [s.player; 2];
+    for (i, (faction, from)) in [(1u16, a), (2u16, b)].into_iter().enumerate() {
+        let captain = spawn_army(
+            world,
+            &ArmySpec {
+                food_days: 5.0,
+                armed: true,
+                ..ArmySpec::new(FactionId(faction), from, per_side)
+            },
+        );
+        let id = world.get::<SpawnId>(captain).expect("id").0;
+        world.write_message(SimCommand::player(
+            FactionId(faction),
+            CommandKind::IssueOrder {
+                captain: id,
+                order: OrderSpec::MoveTo { x: mid.x, y: mid.y },
+                queue: false,
+            },
+        ));
+        out[i] = captain;
+    }
+    Some(out)
 }
 
 pub fn setup_skirmish(world: &mut World) -> Option<Skirmish> {

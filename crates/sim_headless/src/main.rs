@@ -29,7 +29,8 @@ usage: sim_headless [options]
   --replay <file.ron>       re-run a replay file and check its hashes
   --timings                 print the mean wall-clock time of each sim stage
   --skirmish                set up the M3 playtest armies (with --commands:
-                            random military orders for them)";
+                            random military orders for them)
+  --battle <n>              the skirmish plus two armies of n meeting in battle";
 
 struct Args {
     seed: u64,
@@ -85,6 +86,7 @@ fn parse_args() -> Result<Args, String> {
             "--map-ppm" => args.map_ppm = Some(value()?),
             "--stats-every" => args.stats_every = num(&flag, value()?)?,
             "--skirmish" => args.scenario = Scenario::Skirmish,
+            "--battle" => args.scenario = Scenario::Battle(num(&flag, value()?)?),
             "--timings" => args.timings = true,
             "-h" | "--help" => return Err(USAGE.to_string()),
             other => return Err(format!("unknown argument {other}\n{USAGE}")),
@@ -246,7 +248,7 @@ fn main() -> ExitCode {
     {
         let mut app = sim_headless::headless_app(config);
         print_world_summary(&app);
-        commands = if args.scenario == Scenario::Skirmish {
+        commands = if args.scenario != Scenario::Villages {
             sim_headless::sample_orders(&mut app, args.seed, args.ticks, args.commands)
         } else {
             sample_commands(args.seed, args.ticks, args.commands)

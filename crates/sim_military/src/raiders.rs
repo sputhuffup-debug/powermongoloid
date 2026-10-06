@@ -17,7 +17,7 @@ const THINK_EVERY: u64 = 300;
 /// Raiders with less food than this (days) raid a village first.
 const RAID_BELOW_DAYS: f32 = 2.0;
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)] // Bevy system parameters.
 pub(crate) fn think(
     tick: Res<SimTick>,
     army: Res<Army>,

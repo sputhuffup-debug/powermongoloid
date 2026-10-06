@@ -148,12 +148,16 @@ impl FlowField {
 /// Cache key: goal and window corners.
 pub type FlowKey = (IVec2, IVec2, IVec2);
 
+/// The same, as plain integers (ordered for the cache).
+type FieldKey = (i32, i32, i32, i32, i32, i32);
+
 /// Built fields by (goal, window). Cleared when the map changes; when full,
 /// the least recently used field goes. A field missing from the cache is
 /// rebuilt identically, so the cache never changes outcomes.
 #[derive(Resource, Debug, Default)]
 pub struct FlowCache {
-    fields: BTreeMap<(i32, i32, i32, i32, i32, i32), (Arc<FlowField>, u64)>,
+    /// Field and the use count when it was last asked for.
+    fields: BTreeMap<FieldKey, (Arc<FlowField>, u64)>,
     map_revision: u64,
     uses: u64,
     pub builds: u64,

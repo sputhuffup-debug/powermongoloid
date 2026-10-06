@@ -6,8 +6,8 @@
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
 use sim_agents::{
-    ActionKind, Activity, CombatStats, DecisionTrace, Enlisted, ScoredOption, Stage, Strike,
-    Villagers,
+    ActionKind, Activity, CombatStats, DecisionTrace, Enlisted, Factors, ScoredOption, Stage,
+    Strike, Villagers,
 };
 use sim_core::{Allegiance, Motion, Position, SimTick, SpawnId};
 use sim_world::{SpatialGrid, TravelCosts, WorldMap, world_pos};
@@ -134,21 +134,21 @@ pub(crate) fn decide(
                     ScoredOption {
                         kind: ActionKind::Rout,
                         score: (1.0 - stats.morale / c.rout_morale.max(1e-3)).max(0.0),
-                        factors: vec![("morale", stats.morale)],
+                        factors: Factors::new(&[("morale", stats.morale)]),
                     },
                     ScoredOption {
                         kind: ActionKind::Fight,
                         score: if near.enemies > 0 { stats.morale } else { 0.0 },
-                        factors: vec![
+                        factors: Factors::new(&[
                             ("enemies near", near.enemies as f32),
                             ("odds", 1.0 - odds),
                             ("morale", stats.morale),
-                        ],
+                        ]),
                     },
                     ScoredOption {
                         kind: ActionKind::Follow,
                         score: 0.3,
-                        factors: vec![("baseline", 1.0)],
+                        factors: Factors::new(&[("baseline", 1.0)]),
                     },
                 ];
                 options.sort_by(|a, b| b.score.total_cmp(&a.score).then(a.kind.cmp(&b.kind)));
@@ -182,14 +182,17 @@ fn passable(map: &WorldMap, costs: &TravelCosts, p: Vec2) -> bool {
     map.in_bounds(t) && costs.per_terrain[map.terrain(t) as usize].is_some()
 }
 
-/// Moves `p` by `v`, sliding along walls of impassable terrain.
+/// Moves `p` by `v`, sliding along walls of impassable terrain. When every
+/// way is blocked (an off-centre spot on a narrow strip), it steps toward
+/// the middle of its own tile, from where the next tile is reachable.
 fn step(map: &WorldMap, costs: &TravelCosts, p: Vec2, v: Vec2) -> Vec2 {
     for cand in [v, Vec2::new(v.x, 0.0), Vec2::new(0.0, v.y)] {
         if cand != Vec2::ZERO && passable(map, costs, p + cand) {
             return p + cand;
         }
     }
-    p
+    let center = p.floor() + Vec2::splat(0.5);
+    p + (center - p).clamp_length_max(v.length())
 }
 
 fn place(pos: &mut Position, motion: &mut Motion, from: Vec2, to: Vec2) {
@@ -214,7 +217,6 @@ fn speed_at(villagers: &Villagers, map: &WorldMap, p: Vec2) -> f32 {
 #[allow(clippy::type_complexity)]
 pub(crate) fn move_captains(
     map: Res<WorldMap>,
-    army: Res<Army>,
     villagers: Res<Villagers>,
     index: Res<ArmyIndex>,
     mut q: Query<(
@@ -229,7 +231,6 @@ pub(crate) fn move_captains(
 ) {
     let _span = tracing::info_span!("sim_military::move_captains").entered();
     let costs = &villagers.travel_costs;
-    let range = army.data.combat.attack_range;
     for (e, mut pos, mut motion, captain, act, strike, stats) in &mut q {
         let p = world_pos(&pos, Some(&motion));
         if !stats.alive() {
@@ -237,14 +238,9 @@ pub(crate) fn move_captains(
         }
         let speed = speed_at(&villagers, &map, p);
         let v = match act.kind {
-            ActionKind::Fight => {
-                let d = strike.at - p;
-                if d.length() > range * 0.8 {
-                    d.normalize() * speed
-                } else {
-                    Vec2::ZERO
-                }
-            }
+            // The army halts to fight; the captain holds its ground in the
+            // middle of it and strikes whoever comes within reach.
+            ActionKind::Fight => Vec2::ZERO,
             ActionKind::Rout => (p - strike.at).normalize_or_zero() * speed,
             _ => match captain.goal {
                 Some(goal) => {

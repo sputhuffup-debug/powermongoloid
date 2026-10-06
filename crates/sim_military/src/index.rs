@@ -67,6 +67,31 @@ impl Side {
         }
     }
 
+    /// This side's bit in a cell's mask: soldiers by faction (bits 0..32),
+    /// militia by the faction they fight (bits 32..64).
+    fn bit(self) -> u64 {
+        match self.against {
+            None => 1 << (self.faction.0 as u64 & 31),
+            Some(f) => 1 << (32 + (f.0 as u64 & 31)),
+        }
+    }
+
+    /// Bits of every side this side could fight.
+    fn hostile_mask(self, army: &Army) -> u64 {
+        match self.against {
+            None => {
+                let mut m = 1u64 << (32 + (self.faction.0 as u64 & 31));
+                for g in 0..32u16 {
+                    if army.at_war(self.faction, FactionId(g)) {
+                        m |= 1 << g;
+                    }
+                }
+                m
+            }
+            Some(f) => 1 << (f.0 as u64 & 31),
+        }
+    }
+
     pub fn of(allegiance: &Allegiance, stats: &CombatStats) -> Option<Side> {
         match stats.stance {
             Stance::Civilian => None,
@@ -97,6 +122,8 @@ pub struct FighterEntry {
 pub struct FighterGrid {
     per_side: i32,
     cells: Vec<Vec<FighterEntry>>,
+    /// Sides present in each cell (see `Side::bit`).
+    masks: Vec<u64>,
     used: Vec<u32>,
     pub count: usize,
     /// Every fighter, in SpawnId order.
@@ -138,8 +165,60 @@ impl FighterGrid {
     }
 
     /// The nearest fighter hostile to `side` within `radius` (ties by
-    /// SpawnId), with how many hostiles and friends are that close.
+    /// SpawnId), with how many hostiles and friends are that close. Cells
+    /// holding no possible foe are skipped (so friends are counted only
+    /// where there are foes).
     pub fn nearest_hostile(
+        &self,
+        me: Entity,
+        p: Vec2,
+        side: Side,
+        radius: f32,
+        army: &Army,
+    ) -> Nearby {
+        let mut out = Nearby::default();
+        if self.per_side == 0 {
+            return out;
+        }
+        let hostile = side.hostile_mask(army);
+        let lo = ((p - radius) / CELL).floor().as_ivec2().max(IVec2::ZERO);
+        let hi = ((p + radius) / CELL)
+            .floor()
+            .as_ivec2()
+            .min(IVec2::splat(self.per_side - 1));
+        let r2 = radius * radius;
+        for cy in lo.y..=hi.y {
+            for cx in lo.x..=hi.x {
+                let c = (cy * self.per_side + cx) as usize;
+                if self.masks[c] & hostile == 0 {
+                    continue;
+                }
+                for e in &self.cells[c] {
+                    let d2 = e.pos.distance_squared(p);
+                    if d2 > r2 || e.entity == me {
+                        continue;
+                    }
+                    let d = d2.sqrt();
+                    if side.hostile_to(e.side, army) {
+                        out.enemies += 1;
+                        let better = match out.nearest {
+                            None => true,
+                            Some((_, _, bd, bid)) => d < bd || (d == bd && e.id < bid),
+                        };
+                        if better {
+                            out.nearest = Some((e.entity, e.pos, d, e.id));
+                        }
+                    } else if e.side == side {
+                        out.friends += 1;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Like [`Self::nearest_hostile`], visiting every cell (tests).
+    pub fn nearest_hostile_slow(
         &self,
         me: Entity,
         p: Vec2,
@@ -288,11 +367,13 @@ pub(crate) fn build_index(
     if grid.per_side != per_side {
         grid.per_side = per_side;
         grid.cells = vec![Vec::new(); (per_side * per_side) as usize];
+        grid.masks = vec![0; (per_side * per_side) as usize];
         grid.used.clear();
     }
     let used = std::mem::take(&mut grid.used);
     for c in used {
         grid.cells[c as usize].clear();
+        grid.masks[c as usize] = 0;
     }
     let mut count = 0;
     grid.fighters.clear();
@@ -309,6 +390,7 @@ pub(crate) fn build_index(
             if grid.cells[c].is_empty() {
                 grid.used.push(c as u32);
             }
+            grid.masks[c] |= side.bit();
             grid.cells[c].push(FighterEntry {
                 id: *id,
                 entity: e,
@@ -340,6 +422,58 @@ mod tests {
 
     fn army() -> Army {
         Army::default_data(&Calendar::default_data(), &Economy::default_data())
+    }
+
+    #[test]
+    fn skipping_cells_without_foes_finds_the_same_foe() {
+        use bevy_app::App;
+        use bevy_ecs::system::RunSystemOnce;
+        use sim_world::Terrain;
+        let a = army();
+        let mut app = App::new();
+        app.insert_resource(WorldMap::flat(128, 64, Terrain::Grass))
+            .insert_resource(a.clone())
+            .insert_resource(Economy::default_data())
+            .init_resource::<FlowCache>()
+            .init_resource::<ArmyIndex>()
+            .init_resource::<FighterGrid>();
+        let world = app.world_mut();
+        let soldier = || CombatStats {
+            health: 10.0,
+            max_health: 10.0,
+            attack: 1.0,
+            defense: 0.0,
+            morale: 1.0,
+            stance: Stance::Soldier,
+        };
+        let mut people = Vec::new();
+        for i in 0..400u64 {
+            let f = 1 + (i % 3 == 0) as u16;
+            let p = IVec2::new((i * 37 % 120) as i32, (i * 53 % 120) as i32);
+            let e = world
+                .spawn((
+                    SpawnId(i),
+                    Allegiance(FactionId(f)),
+                    soldier(),
+                    Position(p),
+                    Motion::default(),
+                    Activity::default(),
+                ))
+                .id();
+            people.push((e, p, f));
+        }
+        world.run_system_once(build_index).unwrap();
+        let grid = world.resource::<FighterGrid>();
+        for (e, p, f) in people {
+            let side = Side {
+                faction: FactionId(f),
+                against: None,
+            };
+            let fast = grid.nearest_hostile(e, p.as_vec2() + 0.5, side, 8.0, &a);
+            let slow = grid.nearest_hostile_slow(e, p.as_vec2() + 0.5, side, 8.0, &a);
+            assert_eq!(fast.nearest.map(|n| n.0), slow.nearest.map(|n| n.0));
+            assert_eq!(fast.enemies, slow.enemies);
+        }
     }
 
     #[test]

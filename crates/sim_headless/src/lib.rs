@@ -82,13 +82,17 @@ pub enum Scenario {
     /// The M3 playtest start: the player's captain and a raiding band
     /// (`sim_military::setup_skirmish`).
     Skirmish,
+    /// The skirmish plus two armed armies of this many each, marching on
+    /// each other (`sim_military::setup_battle`; benchmarks, stress).
+    Battle(u32),
 }
 
 impl Scenario {
-    pub fn name(self) -> &'static str {
+    pub fn name(self) -> String {
         match self {
-            Scenario::Villages => "",
-            Scenario::Skirmish => "skirmish",
+            Scenario::Villages => String::new(),
+            Scenario::Skirmish => "skirmish".into(),
+            Scenario::Battle(n) => format!("battle:{n}"),
         }
     }
 
@@ -96,7 +100,10 @@ impl Scenario {
         match s {
             "" | "villages" => Some(Scenario::Villages),
             "skirmish" => Some(Scenario::Skirmish),
-            _ => None,
+            _ => s
+                .strip_prefix("battle:")
+                .and_then(|n| n.parse().ok())
+                .map(Scenario::Battle),
         }
     }
 }
@@ -142,8 +149,14 @@ pub fn headless_app(config: HeadlessConfig) -> App {
         });
     }
     app.prepare_sim();
-    if config.scenario == Scenario::Skirmish {
-        sim_military::setup_skirmish(app.world_mut());
+    match config.scenario {
+        Scenario::Villages => {}
+        Scenario::Skirmish => {
+            sim_military::setup_skirmish(app.world_mut());
+        }
+        Scenario::Battle(n) => {
+            sim_military::setup_battle(app.world_mut(), n);
+        }
     }
     app
 }
@@ -222,7 +235,7 @@ pub fn record_replay(
         seed: config.seed,
         population: config.population,
         world_size: config.world_size,
-        scenario: config.scenario.name().to_string(),
+        scenario: config.scenario.name(),
         ticks,
         checkpoint_every,
         commands: result.log,

@@ -189,7 +189,9 @@ fn succeed(world: &mut World, fallen: Entity, captain: Captain, loss: f32, tick:
             f.captain = heir;
         }
     }
-    let capacity = world.resource::<Army>().data.baggage_capacity;
+    let capacity = world
+        .resource::<Army>()
+        .baggage_capacity(members.len() as u32);
     let baggage = world
         .get::<Stockpile>(fallen)
         .cloned()

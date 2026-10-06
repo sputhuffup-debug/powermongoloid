@@ -315,6 +315,13 @@ pub fn armies(app: &mut App) -> Vec<String> {
         })
         .collect();
     caps.sort_unstable_by_key(|c| c.0);
+    let rallies: Vec<(Entity, Option<std::sync::Arc<sim_world::FlowField>>)> = world
+        .resource::<sim_military::ArmyIndex>()
+        .armies
+        .iter()
+        .map(|a| (a.entity, a.rally.clone()))
+        .collect();
+    let map = world.resource::<sim_world::WorldMap>().clone();
     let mut fq = world.query::<(
         &Follower,
         &CombatStats,
@@ -339,9 +346,22 @@ pub fn armies(app: &mut App) -> Vec<String> {
             let d = world_pos(p, Some(m)).distance(pos);
             if d > spread {
                 spread = d;
+                let wp = world_pos(p, Some(m));
+                let rally = rallies
+                    .iter()
+                    .find(|(c, _)| *c == e)
+                    .and_then(|(_, r)| r.clone());
                 far = format!(
-                    "farthest at {:?} slot {} {:?} hunger {:.2} morale {:.2} v {:?}",
-                    p.0, f.slot, act.kind, needs.hunger, cs.morale, m.velocity
+                    "farthest at {:?} ({}) slot {} {:?} hunger {:.2} morale {:.2} v {:?} rally cost {:?} dir {:?}",
+                    p.0,
+                    map.terrain(p.0).name(),
+                    f.slot,
+                    act.kind,
+                    needs.hunger,
+                    cs.morale,
+                    m.velocity,
+                    rally.as_ref().and_then(|r| r.cost(wp.floor().as_ivec2())),
+                    rally.as_ref().and_then(|r| r.direction(wp)),
                 );
             }
             match act.kind {

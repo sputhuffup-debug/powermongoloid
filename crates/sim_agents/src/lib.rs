@@ -18,8 +18,8 @@ use sim_economy::EconomySet;
 
 pub use act::eat_from;
 pub use components::{
-    ActionKind, Activity, CombatStats, DecisionTrace, Employment, Enlisted, Needs, NextDecision,
-    ScoredOption, Stage, Stance, Strike, Threat, Travel, TravelState, Villager,
+    ActionKind, Activity, CombatStats, DecisionTrace, Employment, Enlisted, Factors, Needs,
+    NextDecision, ScoredOption, Stage, Stance, Strike, Threat, Travel, TravelState, Villager,
 };
 pub use data::Villagers;
 pub use food::FoodSecurity;

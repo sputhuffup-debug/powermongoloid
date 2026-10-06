@@ -15,7 +15,7 @@ use sim_economy::{
 use sim_world::{Terrain, WorldMap};
 
 use crate::components::{
-    ActionKind, Activity, CombatStats, DecisionTrace, Employment, Needs, NextDecision,
+    ActionKind, Activity, CombatStats, DecisionTrace, Employment, Factors, Needs, NextDecision,
     ScoredOption, Stage, Threat, Travel, TravelState, Villager,
 };
 use crate::data::Villagers;
@@ -142,11 +142,11 @@ impl AiWorld<'_, '_> {
                 option: ScoredOption {
                     kind: ActionKind::Eat,
                     score: ai.eat.weight * hunger * source * dist,
-                    factors: vec![
+                    factors: Factors::new(&[
                         ("hunger", hunger),
                         ("food available", source),
                         ("distance", dist),
-                    ],
+                    ]),
                 },
                 target,
                 dropoff: None,
@@ -172,12 +172,12 @@ impl AiWorld<'_, '_> {
                 option: ScoredOption {
                     kind: ActionKind::Fetch,
                     score: ai.fetch.weight * low * avail * daytime * dist,
-                    factors: vec![
+                    factors: Factors::new(&[
                         ("home stock low", low),
                         ("storehouse has food", avail),
                         ("time of day", daytime),
                         ("distance", dist),
-                    ],
+                    ]),
                 },
                 target: store,
                 dropoff: Some(me.villager.home),
@@ -204,11 +204,11 @@ impl AiWorld<'_, '_> {
                 option: ScoredOption {
                     kind: ActionKind::Sleep,
                     score: ai.sleep.weight * tired * time * dist,
-                    factors: vec![
+                    factors: Factors::new(&[
                         ("tiredness", tired),
                         ("time of day", time),
                         ("distance", dist),
-                    ],
+                    ]),
                 },
                 target: Some(me.villager.home),
                 dropoff: None,
@@ -237,12 +237,12 @@ impl AiWorld<'_, '_> {
                     option: ScoredOption {
                         kind: ActionKind::Haul,
                         score: w.weight * time * fit * has_job * dist,
-                        factors: vec![
+                        factors: Factors::new(&[
                             ("time of day", time),
                             ("fit to work", fit),
                             ("goods waiting", has_job.min(value)),
                             ("distance", dist),
-                        ],
+                        ]),
                     },
                     target: job.map(|j| j.0),
                     dropoff: job.map(|j| j.1),
@@ -270,12 +270,12 @@ impl AiWorld<'_, '_> {
                 option: ScoredOption {
                     kind,
                     score: w.weight * time * fit * possible * dist,
-                    factors: vec![
+                    factors: Factors::new(&[
                         ("time of day", time),
                         ("fit to work", fit),
                         ("work possible", possible),
                         ("distance", dist),
-                    ],
+                    ]),
                 },
                 target,
                 dropoff,
@@ -293,7 +293,7 @@ impl AiWorld<'_, '_> {
                 option: ScoredOption {
                     kind: ActionKind::GoHome,
                     score: g.weight * time * away,
-                    factors: vec![("time of day", time), ("away from home", away)],
+                    factors: Factors::new(&[("time of day", time), ("away from home", away)]),
                 },
                 target: Some(me.villager.home),
                 dropoff: None,
@@ -316,7 +316,7 @@ impl AiWorld<'_, '_> {
                 option: ScoredOption {
                     kind: ActionKind::Hide,
                     score: ai.hide.weight * f,
-                    factors: vec![("fear", f)],
+                    factors: Factors::new(&[("fear", f)]),
                 },
                 target: Some(me.villager.home),
                 dropoff: None,
@@ -336,7 +336,7 @@ impl AiWorld<'_, '_> {
                 option: ScoredOption {
                     kind: ActionKind::Flee,
                     score: ai.flee.weight * f * near,
-                    factors: vec![("fear", f), ("army close", near)],
+                    factors: Factors::new(&[("fear", f), ("army close", near)]),
                 },
                 target: None,
                 dropoff: None,
@@ -360,7 +360,7 @@ impl AiWorld<'_, '_> {
                 option: ScoredOption {
                     kind: ActionKind::Fight,
                     score: fight.weight * courage * able,
-                    factors: vec![("courage", courage), ("able to fight", able)],
+                    factors: Factors::new(&[("courage", courage), ("able to fight", able)]),
                 },
                 target: None,
                 dropoff: None,
@@ -374,7 +374,7 @@ impl AiWorld<'_, '_> {
             option: ScoredOption {
                 kind: ActionKind::Idle,
                 score: ai.idle.weight,
-                factors: vec![("baseline", 1.0)],
+                factors: Factors::new(&[("baseline", 1.0)]),
             },
             target: None,
             dropoff: None,
@@ -602,12 +602,16 @@ pub(crate) fn decide(
             let current = (!done).then_some(activity.kind);
             let pick = choose(&candidates, current, inertia);
 
-            let mut ranked: Vec<ScoredOption> =
-                candidates.iter().map(|c| c.option.clone()).collect();
-            ranked.sort_by(|a, b| b.score.total_cmp(&a.score).then(a.kind.cmp(&b.kind)));
-            ranked.truncate(3);
+            let mut order: Vec<usize> = (0..candidates.len()).collect();
+            order.sort_by(|&a, &b| {
+                let (a, b) = (&candidates[a].option, &candidates[b].option);
+                b.score.total_cmp(&a.score).then(a.kind.cmp(&b.kind))
+            });
             trace.tick = tick;
-            trace.options = ranked;
+            trace.options.clear();
+            trace
+                .options
+                .extend(order.iter().take(3).map(|&i| candidates[i].option.clone()));
 
             let c = &candidates[pick];
             if Some(c.option.kind) == current {
@@ -640,7 +644,7 @@ mod tests {
             option: ScoredOption {
                 kind,
                 score,
-                factors: vec![],
+                factors: Factors::new(&[]),
             },
             target: None,
             dropoff: None,

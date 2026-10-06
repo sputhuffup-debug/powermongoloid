@@ -30,7 +30,7 @@ pub use data::Army;
 pub use index::{ArmyIndex, ArmyInfo, FighterGrid, Side};
 pub use orders::{CommandInbox, arm_followers, enlist, find_settlement, provoke};
 pub use soldiers::slot_offset;
-pub use spawn::{ArmySpec, Skirmish, nearest_passable, setup_skirmish, spawn_army};
+pub use spawn::{ArmySpec, Skirmish, nearest_passable, setup_battle, setup_skirmish, spawn_army};
 
 /// Military systems, in tick order within their `SimSet`s.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]

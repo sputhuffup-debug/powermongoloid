@@ -135,6 +135,8 @@ pub struct PathCache {
 impl PathCache {
     /// Search margin around the endpoints, in tiles.
     pub const MARGIN: i32 = 48;
+    /// Hops up to this many tiles may go straight.
+    pub const SHORT: i32 = 8;
 
     pub fn get_or_find(
         &mut self,
@@ -167,6 +169,80 @@ impl PathCache {
         .map(|p| SharedPath::from(p.into_boxed_slice()));
         self.paths.insert(key, found.clone());
         found
+    }
+
+    /// Clears the cache if the map changed since it was filled.
+    pub fn sync(&mut self, map: &WorldMap) {
+        let revision = map.total_revision();
+        if revision != self.map_revision {
+            self.paths.clear();
+            self.map_revision = revision;
+        }
+    }
+
+    /// A cached result for (from, to), without searching. Call [`Self::sync`]
+    /// first. `Some(None)` means "known to have no path".
+    pub fn peek(&self, from: IVec2, to: IVec2) -> Option<Option<SharedPath>> {
+        self.paths.get(&((from.x, from.y), (to.x, to.y))).cloned()
+    }
+
+    /// A straight path for a short hop (within `SHORT` tiles) when every
+    /// tile on the line is passable: no search needed.
+    pub fn straight(
+        map: &WorldMap,
+        costs: &TravelCosts,
+        from: IVec2,
+        to: IVec2,
+    ) -> Option<SharedPath> {
+        let d = to - from;
+        let n = d.x.abs().max(d.y.abs());
+        if n > Self::SHORT {
+            return None;
+        }
+        for i in 0..=n {
+            let t = from.as_vec2() + d.as_vec2() * (i as f32 / n.max(1) as f32);
+            let t = t.round().as_ivec2();
+            costs.per_terrain[map.terrain(t) as usize]?;
+        }
+        Some(SharedPath::from(vec![from, to].into_boxed_slice()))
+    }
+
+    /// Searches without touching the cache (safe to call in parallel).
+    /// Short clear hops take [`Self::straight`].
+    pub fn search(
+        map: &WorldMap,
+        costs: &TravelCosts,
+        from: IVec2,
+        to: IVec2,
+    ) -> Option<SharedPath> {
+        if let Some(p) = Self::straight(map, costs, from, to) {
+            return Some(p);
+        }
+        Self::search_full(map, costs, from, to)
+    }
+
+    fn search_full(
+        map: &WorldMap,
+        costs: &TravelCosts,
+        from: IVec2,
+        to: IVec2,
+    ) -> Option<SharedPath> {
+        find_path(
+            map.terrain_slice(),
+            map.height_slice(),
+            map.size() as usize,
+            from,
+            to,
+            costs,
+            Some(Self::MARGIN),
+        )
+        .map(|p| SharedPath::from(p.into_boxed_slice()))
+    }
+
+    /// Stores results found by [`Self::search`].
+    pub fn insert(&mut self, from: IVec2, to: IVec2, path: Option<SharedPath>) {
+        self.searches += 1;
+        self.paths.insert(((from.x, from.y), (to.x, to.y)), path);
     }
 
     pub fn len(&self) -> usize {

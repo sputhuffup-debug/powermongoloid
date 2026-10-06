@@ -37,6 +37,7 @@ pub struct CombatData {
     pub rout_morale: f32,
     pub rally_morale: f32,
     pub casualty_morale: f32,
+    pub casualty_morale_cap: f32,
     pub casualty_radius: f32,
     pub kill_morale: f32,
 }
@@ -104,13 +105,14 @@ pub struct ArmyData {
     pub leadership: LeadershipData,
     pub upkeep: UpkeepData,
     pub formation: FormationData,
-    pub baggage_capacity: u32,
+    pub baggage_per_head: u32,
     pub carry: u16,
     pub max_captains: u32,
     pub recruit: RecruitData,
     pub threat: ThreatData,
     pub gather_keep_days: KeepDays,
     pub gather_target_days: f32,
+    pub trade_keep_days: f32,
     pub trade_value: Vec<(String, f32)>,
 }
 
@@ -190,6 +192,11 @@ impl Army {
             Posture::Neutral => w.neutral,
             Posture::Aggressive => w.aggressive,
         }
+    }
+
+    /// Baggage capacity for an army of `people` (followers and captain).
+    pub fn baggage_capacity(&self, people: u32) -> u32 {
+        self.data.baggage_per_head * people.max(10)
     }
 
     /// Loose-formation radius for an army of `n` followers (tiles).

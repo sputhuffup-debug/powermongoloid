@@ -182,7 +182,7 @@ fn appoint(world: &mut World, issuer: FactionId, follower: u64) -> Result<(), &'
         return Err("not your follower");
     }
     let army = world.resource::<Army>();
-    let (max, capacity) = (army.data.max_captains, army.data.baggage_capacity);
+    let max = army.data.max_captains;
     let mut q = world.query::<&Captain>();
     let captains = q.iter(world).filter(|c| c.faction == issuer).count() as u32;
     if captains >= max {
@@ -196,9 +196,12 @@ fn appoint(world: &mut World, issuer: FactionId, follower: u64) -> Result<(), &'
         .map(|(e, id, _)| (*id, e))
         .collect();
     members.sort_unstable();
+    let mut moved = 0;
     for (_, e) in members.iter().skip(1).step_by(2) {
         world.get_mut::<Follower>(*e).expect("follower").captain = f;
+        moved += 1;
     }
+    let capacity = world.resource::<Army>().baggage_capacity(moved + 1);
     let mut baggage = Stockpile::with_capacity(capacity);
     if let Some(mut old_bag) = world.get_mut::<Stockpile>(old) {
         let goods: Vec<(GoodId, u32)> = old_bag.goods.iter().map(|(g, q)| (*g, *q)).collect();
@@ -372,10 +375,9 @@ fn baggage_room(world: &mut World, captain: Entity) -> f32 {
     (days * daily_need(world, people) - held).max(0.0)
 }
 
-/// GatherFood (GP-02) by posture: passive buys; neutral is given some and
-/// takes the rest of what it needs when hungry; aggressive takes freely
-/// and provokes the settlement. Nobody takes more than the army needs for
-/// `gather_target_days`.
+/// GatherFood (GP-02) by posture: passive buys; neutral is given some and,
+/// when hungry, takes a day's food; aggressive takes freely (up to
+/// `gather_target_days` for the army) and provokes the settlement.
 fn gather_food(world: &mut World, captain: Entity, s: Entity, hungry: bool) {
     let c = world.get::<Captain>(captain).expect("captain").clone();
     let army = world.resource::<Army>().clone();
@@ -395,10 +397,16 @@ fn gather_food(world: &mut World, captain: Entity, s: Entity, hungry: bool) {
             }
         }
         Posture::Neutral => {
+            // Asks for a share of what the village can spare...
             let spare = spare_food(world, s, keep).min(room);
             let given = move_food(world, store, captain, spare * 0.5);
+            // ...and when hungry takes a day's food for the army, even from
+            // the village's reserve.
             let seized = if hungry {
-                move_food(world, store, captain, spare - given)
+                let people = army_size(world, captain);
+                let need = (daily_need(world, people) - given).max(0.0);
+                let reserve = spare_food(world, s, 0.0);
+                move_food(world, store, captain, need.min(reserve))
             } else {
                 0.0
             };
@@ -553,6 +561,9 @@ fn recruit(world: &mut World, captain: Entity, s: Entity, count: u16) {
     }
     for &e in &joined {
         enlist(world, e, captain, c.faction, &army);
+    }
+    if let Some(mut bag) = world.get_mut::<Stockpile>(captain) {
+        bag.capacity += army.data.baggage_per_head * joined.len() as u32;
     }
     if let Some(mut se) = world.get_mut::<SettlementEconomy>(s) {
         se.population = se.population.saturating_sub(joined.len() as u32);
@@ -734,7 +745,8 @@ fn step_order(world: &mut World, e: Entity, tick: u64) {
                     OrderSpec::Equip { .. } => equip(world, e, s),
                     OrderSpec::Trade { .. } => {
                         let room = baggage_room(world, e);
-                        let bought = barter(world, e, s, 2.0, room);
+                        let keep = world.resource::<Army>().data.trade_keep_days;
+                        let bought = barter(world, e, s, keep, room);
                         world.resource_mut::<ArmyStats>().of(c.faction).bought += bought;
                     }
                     _ => {}
@@ -762,6 +774,11 @@ fn forage(world: &mut World, e: Entity, tick: u64) {
     let tpd = world.resource::<Calendar>().ticks_per_day;
     let c = world.get::<Captain>(e).expect("captain").clone();
     if tick < c.last_forage + tpd / 4 && c.last_forage != 0 {
+        return;
+    }
+    // Looked at twice a minute of game time, not every tick.
+    let id = world.get::<SpawnId>(e).map_or(0, |s| s.0);
+    if !(tick + id).is_multiple_of(30) {
         return;
     }
     let days = baggage_days(world, e);

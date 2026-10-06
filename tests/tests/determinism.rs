@@ -5,8 +5,8 @@ use sim_core::{
     CommandKind, CommandLog, FactionId, Replay, SimCommand, SimStepper, unhashed_state,
 };
 use sim_headless::{
-    HeadlessConfig, RunResult, Threading, headless_app, record_replay, run, sample_commands,
-    verify_replay,
+    HeadlessConfig, RunResult, Scenario, Threading, headless_app, record_replay, run,
+    sample_commands, sample_orders, verify_replay,
 };
 
 /// SEED.md "Testing requirements": 10,000 ticks with a command log.
@@ -137,10 +137,12 @@ fn hashing_does_not_change_state() {
 /// crate must be hashed or explicitly exempted (ADR 0004).
 #[test]
 fn state_hash_covers_every_sim_component() {
-    let commands = sample_commands(42, 100, 10);
-    let mut app = headless_app(config(42));
+    // With armies fighting, so every military component exists.
+    let config = skirmish(42);
+    let mut app = headless_app(config);
+    let commands = sample_orders(&mut app, 42, 600, 30);
     app.insert_resource(sim_core::CommandScript::from_log(&commands));
-    app.step(100);
+    app.step(1_500);
     let missing = unhashed_state(app.world_mut());
     assert!(
         missing.is_empty(),
@@ -148,4 +150,39 @@ fn state_hash_covers_every_sim_component() {
          register_hashed_resource, or exempt_from_hash with a reason:\n  {}",
         missing.join("\n  ")
     );
+}
+
+fn skirmish(seed: u64) -> HeadlessConfig {
+    HeadlessConfig {
+        scenario: Scenario::Skirmish,
+        ..config(seed)
+    }
+}
+
+/// NFR-08 with armies (M3): the playtest start plus 200 random orders of
+/// every kind (some invalid) gives the same hashes run in parallel or
+/// serially, and replays from its recorded log.
+#[test]
+fn armies_with_orders_are_deterministic_and_replay() {
+    const ARMY_TICKS: u64 = 6_000;
+    let commands = {
+        let mut probe = headless_app(skirmish(5));
+        sample_orders(&mut probe, 5, ARMY_TICKS, COMMANDS)
+    };
+    let multi = run(skirmish(5), ARMY_TICKS, &commands, CHECKPOINT_EVERY);
+    let single = run(
+        HeadlessConfig {
+            threading: Threading::Single,
+            ..skirmish(5)
+        },
+        ARMY_TICKS,
+        &commands,
+        CHECKPOINT_EVERY,
+    );
+    assert_same(&multi, &single, "armies: multi- vs single-threaded");
+    assert_eq!(multi.log.len(), COMMANDS, "every player order is logged");
+    let replay = record_replay(skirmish(5), ARMY_TICKS, &commands, CHECKPOINT_EVERY);
+    assert_eq!(replay.scenario, "skirmish");
+    let reloaded = Replay::from_ron(&replay.to_ron()).expect("replay parses");
+    verify_replay(&reloaded, Threading::Multi).expect("army replay reproduces");
 }

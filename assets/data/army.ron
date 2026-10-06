@@ -22,13 +22,14 @@
         roll_max: 1.3,
         rout_morale: 0.25,       // break and flee below this
         rally_morale: 0.5,       // stop fleeing above this, with no enemy near
-        casualty_morale: 0.04,   // morale lost when a nearby ally falls
+        casualty_morale: 0.01,   // morale lost when a nearby ally falls,
+        casualty_morale_cap: 0.05, // at most this much per tick
         casualty_radius: 10.0,
         kill_morale: 0.02,       // morale gained for a kill
     ),
 
     // Captains steady nearby followers; heroes (M4) reuse this.
-    leadership: (radius: 14.0, morale_per_day: 0.6, attack_bonus: 0.15, captain_loss_morale: 0.3),
+    leadership: (radius: 14.0, morale_per_day: 0.6, attack_bonus: 0.15, captain_loss_morale: 0.15),
 
     // SIM-31: unfed followers lose morale, then desert, then starve.
     // Followers eat (from what they carry, then the baggage) once hunger
@@ -48,7 +49,8 @@
     ),
 
     formation: (spacing: 1.4, separation: 0.75, arrive_radius: 3.0, catch_up: 8.0),
-    baggage_capacity: 4000,
+    // Baggage holds this many units per head (followers and captain).
+    baggage_per_head: 60,
     carry: 8,
     max_captains: 9,
     // Recruiting (GP-02): each adult asked joins with this chance by
@@ -68,6 +70,8 @@
     // and fills the baggage up to `gather_target_days` for the army.
     gather_keep_days: (passive: 2.0, neutral: 1.0, aggressive: 0.0),
     gather_target_days: 4.0,
-    // Trade: food value given per unit of each non-food good.
+    // Trade: villages sell food beyond this many days for themselves, at
+    // this food value per unit of each non-food good.
+    trade_keep_days: 1.0,
     trade_value: [("wood", 0.2), ("ore", 0.3), ("tools", 1.5), ("weapons", 2.5)],
 )

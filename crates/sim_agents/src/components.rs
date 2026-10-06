@@ -248,13 +248,40 @@ impl StateHash for NextDecision {
     }
 }
 
+/// The considerations behind a score, as (name, value); up to four, held
+/// inline so scoring allocates nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Factors {
+    items: [(&'static str, f32); 4],
+    len: u8,
+}
+
+impl Factors {
+    pub fn new(list: &[(&'static str, f32)]) -> Self {
+        debug_assert!(list.len() <= 4, "at most four factors");
+        let mut f = Self::default();
+        for (slot, item) in f.items.iter_mut().zip(list) {
+            *slot = *item;
+        }
+        f.len = list.len().min(4) as u8;
+        f
+    }
+}
+
+impl std::ops::Deref for Factors {
+    type Target = [(&'static str, f32)];
+    fn deref(&self) -> &Self::Target {
+        &self.items[..self.len as usize]
+    }
+}
+
 /// One scored option in a decision.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ScoredOption {
     pub kind: ActionKind,
     pub score: f32,
     /// The considerations that produced the score, as (name, value).
-    pub factors: Vec<(&'static str, f32)>,
+    pub factors: Factors,
 }
 
 /// Why the villager is doing what it's doing (UI-03): the best options at
