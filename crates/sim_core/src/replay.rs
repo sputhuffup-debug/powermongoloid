@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::command::LoggedCommand;
 
 /// Bump when the replay format or the meaning of a command changes.
-pub const REPLAY_FORMAT: u32 = 1;
+pub const REPLAY_FORMAT: u32 = 2;
 
 /// The state hash at a given tick (after `tick` ticks have run).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,6 +21,8 @@ pub struct Replay {
     pub seed: u64,
     /// M0 placeholder wanderer count; goes away with the demo in M2.
     pub demo_agents: u32,
+    /// Map size in tiles (worldgen settings otherwise come from the build).
+    pub world_size: u32,
     pub ticks: u64,
     /// Ticks between checkpoints (0 = only the final state).
     pub checkpoint_every: u64,
@@ -92,6 +94,7 @@ mod tests {
             format: REPLAY_FORMAT,
             seed: 42,
             demo_agents: 8,
+            world_size: 256,
             ticks: 100,
             checkpoint_every: 50,
             commands: vec![LoggedCommand {

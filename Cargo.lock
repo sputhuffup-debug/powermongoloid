@@ -2983,6 +2983,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "sim_core",
+ "sim_world",
 ]
 
 [[package]]
@@ -3552,8 +3553,10 @@ dependencies = [
 name = "integration_tests"
 version = "0.1.0"
 dependencies = [
+ "bevy_math",
  "sim_core",
  "sim_headless",
+ "sim_world",
 ]
 
 [[package]]
@@ -5302,6 +5305,7 @@ version = "0.1.0"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
+ "bevy_math",
  "criterion",
  "rand",
  "sim_agents",
@@ -5347,7 +5351,13 @@ version = "0.1.0"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
+ "bevy_math",
+ "rand",
+ "rand_chacha",
+ "ron",
+ "serde",
  "sim_core",
+ "tracing",
 ]
 
 [[package]]

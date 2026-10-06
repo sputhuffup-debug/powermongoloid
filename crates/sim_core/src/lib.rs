@@ -7,6 +7,7 @@ pub mod command;
 pub mod components;
 pub mod demo;
 pub mod hash;
+pub mod names;
 pub mod replay;
 pub mod rng;
 pub mod schedule;
@@ -22,6 +23,7 @@ pub use command::{
 };
 pub use components::{Allegiance, DetailLevel, FactionId, Motion, NextSpawnId, Position, SpawnId};
 pub use hash::{AppHashExt, StateHash, StateHasher, compute_state_hash, unhashed_state};
+pub use names::{NameId, NameTable};
 pub use replay::{Checkpoint, REPLAY_FORMAT, Replay};
 pub use rng::{SimRng, SimSeed};
 pub use schedule::{SIM_TICK_HZ, SimSet, SimTick};
@@ -44,6 +46,7 @@ impl Plugin for SimCorePlugin {
             .init_resource::<CommandsProcessed>()
             .init_resource::<CommandLog>()
             .init_resource::<CommandScript>()
+            .init_resource::<NameTable>()
             .add_message::<SimCommand>();
 
         schedule::configure_sets(app);
@@ -71,6 +74,7 @@ impl Plugin for SimCorePlugin {
             .register_hashed_resource::<SimRng>()
             .register_hashed_resource::<NextSpawnId>()
             .register_hashed_resource::<CommandsProcessed>()
+            .register_hashed_resource::<NameTable>()
             .register_hashed::<SpawnId>()
             .register_hashed::<Position>()
             .register_hashed::<Motion>()

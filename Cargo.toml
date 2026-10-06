@@ -54,5 +54,10 @@ opt-level = 3
 # Dependency debug info made target/ exceed 20 GB; our crates keep theirs.
 debug = false
 
+# World generation runs millions of noise samples; keep it fast in debug
+# builds and tests (otherwise a 2048 map takes tens of seconds).
+[profile.dev.package.sim_world]
+opt-level = 3
+
 [profile.release]
 debug = "line-tables-only"

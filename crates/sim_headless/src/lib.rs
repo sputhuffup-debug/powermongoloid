@@ -2,6 +2,8 @@
 //! integration tests, benchmarks and `game_app`; plus the determinism
 //! harness (NFR-08, ADR 0004).
 
+use std::time::{Duration, Instant};
+
 use bevy_app::{App, FixedUpdate, PluginGroup, PluginGroupBuilder, TaskPoolPlugin};
 use bevy_ecs::schedule::SingleThreadedExecutor;
 use rand::RngExt;
@@ -11,6 +13,7 @@ use sim_core::{
     Checkpoint, CommandKind, CommandLog, CommandScript, FactionId, LoggedCommand, REPLAY_FORMAT,
     Replay, SimCommand, SimCorePlugin, SimSeed, SimStepper, compute_state_hash,
 };
+use sim_world::WorldGenSettings;
 
 /// Default number of M0 placeholder wanderers.
 pub const DEFAULT_DEMO_AGENTS: u32 = 256;
@@ -19,13 +22,28 @@ pub const DEFAULT_DEMO_AGENTS: u32 = 256;
 pub struct SimPlugins {
     pub seed: u64,
     pub demo_agents: u32,
+    pub worldgen: WorldGenSettings,
+}
+
+impl SimPlugins {
+    /// The shipped world settings (`assets/data/worldgen.ron`).
+    pub fn new(seed: u64, demo_agents: u32) -> Self {
+        Self {
+            seed,
+            demo_agents,
+            worldgen: WorldGenSettings::default_data(),
+        }
+    }
 }
 
 impl PluginGroup for SimPlugins {
     fn build(self) -> PluginGroupBuilder {
         PluginGroupBuilder::start::<Self>()
             .add(SimCorePlugin { seed: self.seed })
-            .add(sim_world::WorldPlugin)
+            .add(sim_world::WorldPlugin {
+                settings: self.worldgen,
+                threads: sim_world::worldgen::default_threads(),
+            })
             .add(sim_agents::AgentsPlugin)
             .add(sim_economy::EconomyPlugin)
             .add(sim_military::MilitaryPlugin)
@@ -53,6 +71,8 @@ pub struct HeadlessConfig {
     pub seed: u64,
     pub demo_agents: u32,
     pub threading: Threading,
+    /// Map size in tiles; the shipped settings' size (2048) by default.
+    pub world_size: u32,
 }
 
 impl HeadlessConfig {
@@ -61,7 +81,12 @@ impl HeadlessConfig {
             seed,
             demo_agents: DEFAULT_DEMO_AGENTS,
             threading: Threading::Multi,
+            world_size: WorldGenSettings::default_data().size,
         }
+    }
+
+    pub fn worldgen(&self) -> WorldGenSettings {
+        WorldGenSettings::default_data().with_size(self.world_size)
     }
 }
 
@@ -72,6 +97,7 @@ pub fn headless_app(config: HeadlessConfig) -> App {
         .add_plugins(SimPlugins {
             seed: config.seed,
             demo_agents: config.demo_agents,
+            worldgen: config.worldgen(),
         });
     if config.threading == Threading::Single {
         app.edit_schedule(FixedUpdate, |s| {
@@ -89,6 +115,10 @@ pub struct RunResult {
     pub checkpoints: Vec<Checkpoint>,
     /// Every command the sim applied, in order.
     pub log: Vec<LoggedCommand>,
+    /// Wall-clock time to build the app (including world generation) and to
+    /// run the ticks. Diagnostics only.
+    pub setup_time: Duration,
+    pub tick_time: Duration,
 }
 
 impl RunResult {
@@ -105,7 +135,10 @@ pub fn run(
     commands: &[LoggedCommand],
     checkpoint_every: u64,
 ) -> RunResult {
+    let start = Instant::now();
     let mut app = headless_app(config);
+    let setup_time = start.elapsed();
+    let start = Instant::now();
     app.insert_resource(CommandScript::from_log(commands));
     let mut checkpoints = Vec::new();
     for tick in 1..=ticks {
@@ -117,8 +150,14 @@ pub fn run(
             });
         }
     }
+    let tick_time = start.elapsed();
     let log = app.world().resource::<CommandLog>().0.clone();
-    RunResult { checkpoints, log }
+    RunResult {
+        checkpoints,
+        log,
+        setup_time,
+        tick_time,
+    }
 }
 
 /// Runs `ticks` ticks from `seed` and returns the final state hash.
@@ -142,6 +181,7 @@ pub fn record_replay(
         format: REPLAY_FORMAT,
         seed: config.seed,
         demo_agents: config.demo_agents,
+        world_size: config.world_size,
         ticks,
         checkpoint_every,
         commands: result.log,
@@ -175,6 +215,7 @@ pub fn verify_replay(replay: &Replay, threading: Threading) -> Result<RunResult,
         seed: replay.seed,
         demo_agents: replay.demo_agents,
         threading,
+        world_size: replay.world_size,
     };
     let result = run(
         config,
