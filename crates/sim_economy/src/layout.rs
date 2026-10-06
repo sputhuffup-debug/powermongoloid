@@ -8,9 +8,11 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct Occupied(BTreeSet<(i32, i32)>);
 
 impl Occupied {
+    /// Whether tile `p` is built on.
     pub fn contains(&self, p: &IVec2) -> bool {
         self.0.contains(&(p.x, p.y))
     }
+    /// Marks `p` built on; false if it already was.
     pub fn insert(&mut self, p: IVec2) -> bool {
         self.0.insert((p.x, p.y))
     }
@@ -32,6 +34,7 @@ pub enum BuildingKind {
 }
 
 impl BuildingKind {
+    /// Display name.
     pub fn name(self) -> &'static str {
         match self {
             BuildingKind::House => "house",
@@ -40,6 +43,7 @@ impl BuildingKind {
     }
 }
 
+/// A building: what it is, whose it is and where.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Building {
     pub kind: BuildingKind,

@@ -1,6 +1,16 @@
-//! The full simulation as one plugin group, shared by the headless binary,
-//! integration tests, benchmarks and `game_app`; plus the determinism
-//! harness (NFR-08, ADR 0004).
+//! The full simulation as one plugin group ([`SimPlugins`]), shared by the
+//! headless binary, integration tests, benchmarks and `game_app`, plus the
+//! determinism harness (NFR-08, ADR 0004).
+//!
+//! # Main pieces
+//! - [`headless_app`] and [`HeadlessConfig`]: a windowless sim, with an
+//!   optional [`Scenario`] (villages, skirmish, battle).
+//! - [`run`], [`record_replay`], [`verify_replay`]: run and check hashes.
+//! - [`sample_commands`] and [`sample_orders`]: deterministic command streams
+//!   for tests.
+//! - [`stats`]: population and army summaries (`--stats-every`).
+//!
+//! The CLI (`src/main.rs`) wraps these; run it with `--help`.
 
 pub mod stats;
 
@@ -88,6 +98,7 @@ pub enum Scenario {
 }
 
 impl Scenario {
+    /// Name stored in replay files ("" for villages).
     pub fn name(self) -> String {
         match self {
             Scenario::Villages => String::new(),
@@ -96,6 +107,7 @@ impl Scenario {
         }
     }
 
+    /// Parses a replay file's scenario name.
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "" | "villages" => Some(Scenario::Villages),
@@ -108,6 +120,7 @@ impl Scenario {
     }
 }
 
+/// How to build a headless simulation.
 #[derive(Debug, Clone, Copy)]
 pub struct HeadlessConfig {
     pub seed: u64,
@@ -119,6 +132,7 @@ pub struct HeadlessConfig {
 }
 
 impl HeadlessConfig {
+    /// The shipped settings with `seed`: default population and map size, villages scenario, parallel.
     pub fn new(seed: u64) -> Self {
         Self {
             seed,
@@ -129,6 +143,7 @@ impl HeadlessConfig {
         }
     }
 
+    /// World generation settings at this map size.
     pub fn worldgen(&self) -> WorldGenSettings {
         WorldGenSettings::default_data().with_size(self.world_size)
     }
@@ -175,6 +190,7 @@ pub struct RunResult {
 }
 
 impl RunResult {
+    /// The state hash at the end of the run.
     pub fn final_hash(&self) -> u64 {
         self.checkpoints.last().map_or(0, |c| c.hash)
     }

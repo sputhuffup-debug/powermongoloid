@@ -19,6 +19,7 @@ pub struct Order {
 }
 
 impl Order {
+    /// A fresh order, not yet started.
     pub fn new(spec: OrderSpec) -> Self {
         Self {
             spec,
@@ -100,6 +101,7 @@ pub struct Captain {
 }
 
 impl Captain {
+    /// A captain with no orders.
     pub fn new(faction: FactionId, posture: Posture) -> Self {
         Self {
             faction,
@@ -216,10 +218,12 @@ pub struct Factions {
 }
 
 impl Factions {
+    /// The faction's seat (where `Return` goes), if set.
     pub fn seat(&self, f: FactionId) -> Option<IVec2> {
         self.seats.get(f.0 as usize).copied().flatten()
     }
 
+    /// Sets the faction's seat.
     pub fn set_seat(&mut self, f: FactionId, at: IVec2) {
         let i = f.0 as usize;
         if self.seats.len() <= i {
@@ -266,16 +270,19 @@ pub struct FactionStats {
     pub rejected_commands: u32,
 }
 
+/// Totals for every faction, by faction id. Hashed.
 #[derive(Resource, Debug, Clone, PartialEq, Default)]
 pub struct ArmyStats {
     pub factions: Vec<FactionStats>,
 }
 
 impl ArmyStats {
+    /// A faction's totals (zero if none yet).
     pub fn get(&self, f: FactionId) -> FactionStats {
         self.factions.get(f.0 as usize).copied().unwrap_or_default()
     }
 
+    /// A faction's totals, to update.
     pub fn of(&mut self, f: FactionId) -> &mut FactionStats {
         let i = f.0 as usize;
         if self.factions.len() <= i {
@@ -315,6 +322,7 @@ pub struct MilitaryLog {
 impl MilitaryLog {
     const MAX: usize = 64;
 
+    /// Adds an entry, dropping the oldest when full.
     pub fn push(&mut self, tick: u64, text: impl Into<String>) {
         if self.entries.len() >= Self::MAX {
             self.entries.pop_front();

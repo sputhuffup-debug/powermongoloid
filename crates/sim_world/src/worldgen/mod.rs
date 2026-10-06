@@ -35,6 +35,7 @@ pub struct RoadLink {
     pub path: Vec<IVec2>,
 }
 
+/// A generated world, ready to install: map, settlement sites, roads, stage timings.
 #[derive(Debug, Clone)]
 pub struct GeneratedWorld {
     pub map: WorldMap,
@@ -49,6 +50,7 @@ pub fn default_threads() -> usize {
     std::thread::available_parallelism().map_or(1, |n| n.get())
 }
 
+/// Generates the world for `seed` (SIM-01, SIM-02). The result doesn't depend on `threads`.
 pub fn generate_world(seed: u64, s: &WorldGenSettings, threads: usize) -> GeneratedWorld {
     let _span = tracing::info_span!("sim_world::generate_world", seed, size = s.size).entered();
     let seed = SimSeed(seed);

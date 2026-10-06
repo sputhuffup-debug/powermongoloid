@@ -10,6 +10,7 @@ use bevy_ecs::prelude::*;
 
 use crate::schedule::SimSet;
 
+/// Wall-clock cost of each tick phase, for the debug panel and `--timings`. Diagnostics only; never read by the sim.
 #[derive(Resource, Debug, Default, Clone)]
 pub struct SimTimings {
     /// Duration of each set in the last tick, indexed like [`SimSet::ALL`].

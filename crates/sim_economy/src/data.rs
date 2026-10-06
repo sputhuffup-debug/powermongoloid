@@ -4,9 +4,10 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 use sim_core::{StateHash, StateHasher};
 
+/// `assets/data/economy.ron`, embedded at compile time.
 pub const DEFAULT_ECONOMY_RON: &str = include_str!("../../../assets/data/economy.ron");
 
-/// Index into [`Economy::goods`].
+/// A good: an index into `economy.ron`'s goods list (see [`Economy`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct GoodId(pub u8);
 
@@ -31,6 +32,7 @@ pub enum Occupation {
 }
 
 impl Occupation {
+    /// Every occupation, in id order.
     pub const ALL: [Occupation; 9] = [
         Occupation::Farmer,
         Occupation::Fisher,
@@ -43,6 +45,7 @@ impl Occupation {
         Occupation::Idle,
     ];
 
+    /// Display name.
     pub fn name(self) -> &'static str {
         match self {
             Occupation::Farmer => "farmer",
@@ -79,6 +82,7 @@ impl StateHash for Occupation {
     }
 }
 
+/// Kinds of workplace (economy.ron `workplaces`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum WorkplaceKind {
     Farm,
@@ -92,6 +96,7 @@ pub enum WorkplaceKind {
 }
 
 impl WorkplaceKind {
+    /// Display name.
     pub fn name(self) -> &'static str {
         match self {
             WorkplaceKind::Farm => "farm",
@@ -125,12 +130,14 @@ pub enum SiteRule {
     Centre,
 }
 
+/// A good as written in economy.ron.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GoodDef {
     pub name: String,
     pub food: f32,
 }
 
+/// A recipe as written in economy.ron (goods by name).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecipeDef {
     pub name: String,
@@ -141,6 +148,7 @@ pub struct RecipeDef {
     pub duration: u32,
 }
 
+/// Workplace placement and staffing, from economy.ron.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkplaceDef {
     pub kind: WorkplaceKind,
@@ -185,11 +193,13 @@ pub struct Economy {
 }
 
 impl Economy {
+    /// Parses economy.ron text and resolves names to ids.
     pub fn from_ron(text: &str) -> Result<Self, String> {
         let data: EconomyData = ron::from_str(text).map_err(|e| e.to_string())?;
         Self::resolve(data)
     }
 
+    /// The shipped economy.
     pub fn default_data() -> Self {
         Self::from_ron(DEFAULT_ECONOMY_RON).expect("assets/data/economy.ron is valid")
     }
@@ -259,10 +269,12 @@ impl Economy {
         })
     }
 
+    /// Number of goods.
     pub fn good_count(&self) -> usize {
         self.data.goods.len()
     }
 
+    /// The good's name.
     pub fn good_name(&self, g: GoodId) -> &str {
         self.data
             .goods
@@ -270,10 +282,12 @@ impl Economy {
             .map_or("?", |d| d.name.as_str())
     }
 
+    /// Hunger one unit removes (0 if not food).
     pub fn food_value(&self, g: GoodId) -> f32 {
         self.data.goods.get(g.0 as usize).map_or(0.0, |d| d.food)
     }
 
+    /// Whether the good is food.
     pub fn is_food(&self, g: GoodId) -> bool {
         self.food_value(g) > 0.0
     }
@@ -292,6 +306,7 @@ impl Economy {
         foods
     }
 
+    /// Placement and staffing for a workplace kind.
     pub fn workplace(&self, kind: WorkplaceKind) -> &WorkplaceDef {
         self.data
             .workplaces
@@ -310,6 +325,7 @@ impl Economy {
             .collect()
     }
 
+    /// A resolved recipe by id.
     pub fn recipe(&self, id: RecipeId) -> &Recipe {
         &self.recipes[id.0 as usize]
     }

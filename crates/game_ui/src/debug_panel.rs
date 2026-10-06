@@ -147,7 +147,7 @@ fn debug_panel(
                     ui.end_row();
                 }
                 if let Some(agents) = &world.agents {
-                    ui.label("Villagers by band");
+                    ui.label("People by band");
                     ui.monospace(format!(
                         "tex {} · flat {} · board {} · dot {}",
                         agents.per_band[0],

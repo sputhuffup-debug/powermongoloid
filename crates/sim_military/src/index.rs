@@ -37,6 +37,7 @@ pub struct ArmyInfo {
     pub food: f32,
 }
 
+/// Every army this tick, by SpawnId, with a lookup by captain entity.
 #[derive(Resource, Debug, Default)]
 pub struct ArmyIndex {
     pub armies: Vec<ArmyInfo>,
@@ -46,6 +47,7 @@ pub struct ArmyIndex {
 }
 
 impl ArmyIndex {
+    /// The army led by `captain`.
     pub fn get(&self, captain: Entity) -> Option<&ArmyInfo> {
         self.by_entity.get(&captain).map(|&i| &self.armies[i])
     }
@@ -60,6 +62,7 @@ pub struct Side {
 }
 
 impl Side {
+    /// Whether these sides fight each other.
     pub fn hostile_to(self, other: Side, army: &Army) -> bool {
         match (self.against, other.against) {
             (None, None) => army.at_war(self.faction, other.faction),
@@ -94,6 +97,7 @@ impl Side {
         }
     }
 
+    /// The side of someone who can fight; `None` for civilians.
     pub fn of(allegiance: &Allegiance, stats: &CombatStats) -> Option<Side> {
         match stats.stance {
             Stance::Civilian => None,
@@ -109,6 +113,7 @@ impl Side {
     }
 }
 
+/// One fighter in the grid.
 #[derive(Debug, Clone, Copy)]
 pub struct FighterEntry {
     pub id: SpawnId,
@@ -250,6 +255,7 @@ impl FighterGrid {
     }
 }
 
+/// What a fighter sees around it.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Nearby {
     /// (entity, position, distance, id)

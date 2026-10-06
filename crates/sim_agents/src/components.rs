@@ -100,6 +100,7 @@ pub enum ActionKind {
 }
 
 impl ActionKind {
+    /// Every action, in a fixed order (used for tables and stats).
     pub const ALL: [ActionKind; 12] = [
         ActionKind::Idle,
         ActionKind::Eat,
@@ -115,6 +116,7 @@ impl ActionKind {
         ActionKind::Rout,
     ];
 
+    /// Present-tense description for the inspector ("hauling goods").
     pub fn name(self) -> &'static str {
         match self {
             ActionKind::Idle => "idling",
@@ -204,12 +206,14 @@ pub enum TravelState {
     Failed,
 }
 
+/// Walking toward a tile: path planning and progress (see `movement`).
 #[derive(Component, Debug, Clone, PartialEq, Default)]
 pub struct Travel {
     pub state: TravelState,
 }
 
 impl Travel {
+    /// Asks for a path to `goal`; `plan_paths` fills it in this tick.
     pub fn go_to(&mut self, goal: IVec2) {
         self.state = TravelState::Pending { goal };
     }
@@ -257,6 +261,7 @@ pub struct Factors {
 }
 
 impl Factors {
+    /// Up to four `(name, value)` factors; extra entries are ignored.
     pub fn new(list: &[(&'static str, f32)]) -> Self {
         debug_assert!(list.len() <= 4, "at most four factors");
         let mut f = Self::default();
@@ -327,6 +332,7 @@ pub struct CombatStats {
 }
 
 impl CombatStats {
+    /// Whether health remains.
     pub fn alive(&self) -> bool {
         self.health > 0.0
     }

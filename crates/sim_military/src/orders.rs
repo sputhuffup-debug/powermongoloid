@@ -25,7 +25,7 @@ use crate::components::{
 use crate::data::Army;
 use crate::index::FighterGrid;
 
-/// Commands read this tick, waiting to be applied by [`apply_commands`].
+/// Commands read this tick, waiting to be applied by `apply_commands`.
 /// Always empty between ticks.
 #[derive(Resource, Debug, Default)]
 pub struct CommandInbox(pub Vec<SimCommand>);

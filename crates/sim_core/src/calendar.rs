@@ -6,8 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::hash::{StateHash, StateHasher};
 
+/// `assets/data/calendar.ron`, embedded at compile time.
 pub const DEFAULT_CALENDAR_RON: &str = include_str!("../../../assets/data/calendar.ron");
 
+/// Phases of the day (SIM-04).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Phase {
     Morning,
@@ -17,6 +19,7 @@ pub enum Phase {
 }
 
 impl Phase {
+    /// Display name.
     pub fn name(self) -> &'static str {
         match self {
             Phase::Morning => "Morning",
@@ -27,12 +30,14 @@ impl Phase {
     }
 }
 
+/// A phase and its share of the day.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PhaseSpan {
     pub phase: Phase,
     pub fraction: f32,
 }
 
+/// Day length, phases and seasons (calendar.ron). Hashed.
 #[derive(Resource, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Calendar {
     pub ticks_per_day: u64,
@@ -71,16 +76,19 @@ impl ClockReading {
 }
 
 impl Calendar {
+    /// Parses and validates calendar.ron text.
     pub fn from_ron(text: &str) -> Result<Self, String> {
         let c: Self = ron::from_str(text).map_err(|e| e.to_string())?;
         c.validate()?;
         Ok(c)
     }
 
+    /// The shipped calendar.
     pub fn default_data() -> Self {
         Self::from_ron(DEFAULT_CALENDAR_RON).expect("assets/data/calendar.ron is valid")
     }
 
+    /// Checks for a positive day length and phases whose fractions are positive and sum to 1.
     pub fn validate(&self) -> Result<(), String> {
         if self.ticks_per_day == 0 || self.phases.is_empty() {
             return Err("calendar: need ticks_per_day > 0 and at least one phase".into());
@@ -94,14 +102,17 @@ impl Calendar {
         Ok(())
     }
 
+    /// Ticks in a year.
     pub fn ticks_per_year(&self) -> u64 {
         self.ticks_per_day * (self.days_per_season * self.seasons_per_year) as u64
     }
 
+    /// Days in a year.
     pub fn days_per_year(&self) -> u32 {
         self.days_per_season * self.seasons_per_year
     }
 
+    /// Day, season, phase and time of day at `tick`.
     pub fn at(&self, tick: u64) -> ClockReading {
         let day = tick / self.ticks_per_day;
         let tick_of_day = tick % self.ticks_per_day;

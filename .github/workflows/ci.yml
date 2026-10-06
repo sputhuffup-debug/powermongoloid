@@ -39,6 +39,12 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      # M3b: API docs build cleanly (no broken intra-doc links).
+      - name: Docs
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps
+
       - name: Replay smoke run (NFR-08)
         run: |
           cargo build -q --release -p sim_headless

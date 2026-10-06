@@ -44,6 +44,7 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 }
 
 impl Perlin {
+    /// Perlin noise with a permutation table shuffled by `rng`.
     pub fn new(rng: &mut ChaCha8Rng) -> Self {
         let mut p: [u8; 256] = std::array::from_fn(|i| i as u8);
         for i in (1..256).rev() {
@@ -64,6 +65,7 @@ impl Perlin {
         gx * dx + gy * dy
     }
 
+    /// Perlin noise at `(x, y)`, roughly -1..1; zero on lattice points.
     pub fn get(&self, x: f32, y: f32) -> f32 {
         let x0 = x.floor();
         let y0 = y.floor();

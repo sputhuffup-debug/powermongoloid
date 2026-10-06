@@ -21,6 +21,7 @@ pub struct SimCommand {
 }
 
 impl SimCommand {
+    /// A command from the player; recorded in replays.
     pub fn player(issuer: FactionId, kind: CommandKind) -> Self {
         Self {
             issuer,
@@ -29,6 +30,7 @@ impl SimCommand {
         }
     }
 
+    /// A command from the sim's own AI; not recorded (the AI issues it again on replay).
     pub fn ai(issuer: FactionId, kind: CommandKind) -> Self {
         Self {
             issuer,
@@ -62,6 +64,7 @@ pub enum Posture {
 }
 
 impl Posture {
+    /// Display name.
     pub fn name(self) -> &'static str {
         match self {
             Posture::Passive => "passive",
@@ -153,10 +156,12 @@ pub struct CommandScript {
 }
 
 impl CommandScript {
+    /// Schedules `command` for `tick`.
     pub fn push(&mut self, tick: u64, command: SimCommand) {
         self.by_tick.entry(tick).or_default().push(command);
     }
 
+    /// A script that replays a command log.
     pub fn from_log(log: &[LoggedCommand]) -> Self {
         let mut script = Self::default();
         for entry in log {
@@ -165,10 +170,12 @@ impl CommandScript {
         script
     }
 
+    /// Commands still scheduled.
     pub fn len(&self) -> usize {
         self.by_tick.values().map(Vec::len).sum()
     }
 
+    /// Whether nothing is scheduled.
     pub fn is_empty(&self) -> bool {
         self.by_tick.is_empty()
     }

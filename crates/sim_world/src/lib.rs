@@ -1,7 +1,22 @@
-//! Terrain, worldgen, regions (M1); the spatial grid (M2) and flow fields
-//! for crowds (M3).
+//! The world: terrain, world generation, settlements and roads (M1), paths
+//! and the spatial grid (M2), and flow fields for crowds (M3).
 //!
-//! Never depends on rendering, windowing, audio or asset crates.
+//! # Main pieces
+//! - [`WorldMap`]: terrain, height, fertility and region arrays in 64-tile
+//!   chunks. Change tiles only through [`WorldMap::set_terrain`], which bumps
+//!   chunk revisions (for the renderer) and keeps the hash current.
+//! - [`generate_world`] and [`WorldGenSettings`]: deterministic generation
+//!   from the seed (`worldgen.ron`, ADR 0005).
+//! - [`Settlement`] and [`RoadNetwork`].
+//! - [`find_path`] and [`PathCache`]: integer A* for villagers.
+//! - [`FlowField`] and [`FlowCache`]: Dijkstra fields that armies descend
+//!   (ADR 0011).
+//! - [`SpatialGrid`]: moving entities in 8-tile cells, rebuilt in
+//!   Bookkeeping.
+//!
+//! The caches and the grid are pure functions of hashed state, so they are
+//! exempt from the hash. Never depends on rendering, windowing, audio or
+//! asset crates.
 
 pub mod flow;
 pub mod map;

@@ -1,5 +1,17 @@
-//! Goods, inventories, recipes and stockpiles (SIM-20, SIM-21); trade
-//! between settlements arrives in M4.
+//! The economy: goods, recipes, workplaces, stockpiles and inventories
+//! (SIM-20, SIM-21), buildings and settlement layout. Trade between
+//! settlements arrives in M4b.
+//!
+//! # Main pieces
+//! - [`Economy`]: goods, recipes and workplaces from `economy.ron`.
+//! - [`Stockpile`] on buildings (and on captains, as baggage) and
+//!   [`Inventory`] on people.
+//! - [`Transfers`] and [`goods::resolve_transfers`]: agents post goods orders
+//!   on themselves in [`EconomySet::Post`], and the resolver applies them in
+//!   SpawnId order in [`EconomySet::Resolve`]. This is the only way an agent
+//!   touches a building's stock (ADR 0007).
+//! - [`Building`], [`Workplace`], [`Home`], [`SettlementEconomy`], and
+//!   [`layout::build_settlement`], which places them.
 //!
 //! Never depends on rendering, windowing, audio or asset crates.
 
@@ -24,6 +36,7 @@ pub enum EconomySet {
     Resolve,
 }
 
+/// Goods, buildings and the transfer resolver.
 pub struct EconomyPlugin;
 
 impl Plugin for EconomyPlugin {

@@ -8,6 +8,7 @@ use sim_core::{StateHash, StateHasher};
 /// world without depending on the working directory.
 pub const DEFAULT_WORLDGEN_RON: &str = include_str!("../../../assets/data/worldgen.ron");
 
+/// The whole of worldgen.ron. See docs/dev/DATA.md.
 #[derive(Resource, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorldGenSettings {
     pub size: u32,
@@ -21,6 +22,7 @@ pub struct WorldGenSettings {
     pub names: NameSettings,
 }
 
+/// Continent shape, coastline and mountains.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HeightSettings {
     pub octaves: u32,
@@ -38,6 +40,7 @@ pub struct HeightSettings {
     pub coast_frequency: f32,
 }
 
+/// Fractal noise parameters.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FbmSettings {
     pub octaves: u32,
@@ -46,6 +49,7 @@ pub struct FbmSettings {
     pub gain: f32,
 }
 
+/// Terrain proportions.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TerrainSettings {
     pub water_fraction: f32,
@@ -56,6 +60,7 @@ pub struct TerrainSettings {
     pub forest_lowland_fraction: f32,
 }
 
+/// Settlement placement and farmland.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SettlementSettings {
     pub target: u32,
@@ -69,6 +74,7 @@ pub struct SettlementSettings {
     pub spread_weight: f32,
 }
 
+/// Road network costs and links.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoadSettings {
     pub nearest_neighbours: u32,
@@ -84,6 +90,7 @@ pub struct RoadSettings {
     pub search_margin_tiles: i32,
 }
 
+/// Syllables for settlement names.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NameSettings {
     pub prefixes: Vec<String>,
@@ -91,6 +98,7 @@ pub struct NameSettings {
 }
 
 impl WorldGenSettings {
+    /// Parses and validates worldgen.ron text.
     pub fn from_ron(text: &str) -> Result<Self, String> {
         let s: Self = ron::from_str(text).map_err(|e| e.to_string())?;
         s.validate()?;
@@ -113,6 +121,7 @@ impl WorldGenSettings {
         tiles_at_2048 * self.size as f32 / 2048.0
     }
 
+    /// Checks sizes and fractions are consistent.
     pub fn validate(&self) -> Result<(), String> {
         if self.chunk_size == 0 || self.size == 0 || !self.size.is_multiple_of(self.chunk_size) {
             return Err(format!(

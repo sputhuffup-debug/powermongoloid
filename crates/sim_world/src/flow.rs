@@ -115,6 +115,7 @@ impl FlowField {
             .filter(|c| *c != u32::MAX)
     }
 
+    /// Whether `p` is inside the window.
     pub fn contains(&self, p: IVec2) -> bool {
         self.local(p).is_some()
     }
@@ -166,6 +167,7 @@ pub struct FlowCache {
 impl FlowCache {
     const MAX: usize = 64;
 
+    /// The field for `key`, built if missing.
     pub fn get_or_build(
         &mut self,
         map: &WorldMap,

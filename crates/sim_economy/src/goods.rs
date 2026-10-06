@@ -22,6 +22,7 @@ pub struct Stockpile {
 }
 
 impl Stockpile {
+    /// An empty stockpile holding up to `capacity` units.
     pub fn with_capacity(capacity: u32) -> Self {
         Self {
             goods: BTreeMap::new(),
@@ -29,14 +30,17 @@ impl Stockpile {
         }
     }
 
+    /// Units held.
     pub fn total(&self) -> u32 {
         self.goods.values().sum()
     }
 
+    /// Units of `g` held.
     pub fn get(&self, g: GoodId) -> u32 {
         self.goods.get(&g).copied().unwrap_or(0)
     }
 
+    /// Units of space left.
     pub fn room(&self) -> u32 {
         self.capacity.saturating_sub(self.total())
     }
@@ -70,6 +74,7 @@ impl Stockpile {
             .sum()
     }
 
+    /// Whether any food is held.
     pub fn has_food(&self, econ: &Economy) -> bool {
         self.goods.keys().any(|g| econ.is_food(*g))
     }
@@ -86,6 +91,7 @@ impl StateHash for Stockpile {
     }
 }
 
+/// Different goods an inventory can hold at once.
 pub const INVENTORY_SLOTS: usize = 4;
 
 /// Goods carried by an agent: up to four kinds, `capacity` units in all.
@@ -96,6 +102,7 @@ pub struct Inventory {
 }
 
 impl Inventory {
+    /// An empty inventory carrying up to `capacity` units.
     pub fn with_capacity(capacity: u16) -> Self {
         Self {
             slots: [(GoodId(0), 0); INVENTORY_SLOTS],
@@ -103,18 +110,22 @@ impl Inventory {
         }
     }
 
+    /// Units carried.
     pub fn total(&self) -> u16 {
         self.slots.iter().map(|s| s.1).sum()
     }
 
+    /// Units of space left.
     pub fn room(&self) -> u16 {
         self.capacity.saturating_sub(self.total())
     }
 
+    /// Whether nothing is carried.
     pub fn is_empty(&self) -> bool {
         self.total() == 0
     }
 
+    /// Units of `g` carried.
     pub fn get(&self, g: GoodId) -> u16 {
         self.slots
             .iter()
@@ -157,6 +168,7 @@ impl Inventory {
         0
     }
 
+    /// Removes up to `qty` of `g`; returns how many were removed.
     pub fn take(&mut self, g: GoodId, qty: u16) -> u16 {
         let mut left = qty;
         for slot in self.slots.iter_mut().filter(|s| s.0 == g) {
@@ -172,6 +184,7 @@ impl Inventory {
         self.slots.iter().copied().filter(|s| s.1 > 0)
     }
 
+    /// Whether every `(good, quantity)` in `needs` is carried.
     pub fn has_all(&self, needs: &[(GoodId, u16)]) -> bool {
         needs.iter().all(|(g, q)| self.get(*g) >= *q)
     }
@@ -213,6 +226,7 @@ pub struct Transfers {
     pub order: Option<TransferOrder>,
 }
 
+/// A posted transfer: the building to deal with and the steps, applied in order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TransferOrder {
     pub store: Entity,
@@ -220,6 +234,7 @@ pub struct TransferOrder {
 }
 
 impl Transfers {
+    /// Posts an order for the resolver to apply this tick.
     pub fn post(&mut self, store: Entity, ops: Vec<TransferOp>) {
         self.order = Some(TransferOrder { store, ops });
     }

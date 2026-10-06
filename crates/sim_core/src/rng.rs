@@ -36,6 +36,7 @@ impl StateHash for SimSeed {
 pub struct SimRng(pub ChaCha8Rng);
 
 impl SimRng {
+    /// The shared RNG seeded from the world seed.
     pub fn from_seed(seed: u64) -> Self {
         SimRng(ChaCha8Rng::seed_from_u64(seed))
     }

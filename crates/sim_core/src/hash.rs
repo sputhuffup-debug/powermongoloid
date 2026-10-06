@@ -30,6 +30,7 @@ pub const fn fnv1a_64(bytes: &[u8]) -> u64 {
 /// the world state. Floats hash by bit pattern; entity references must go
 /// through [`StateHasher::entity`] so they hash as stable [`SpawnId`]s.
 pub trait StateHash {
+    /// Feeds every field that is simulation state to `h`, in a fixed order.
     fn hash_state(&self, h: &mut StateHasher);
 }
 
@@ -40,6 +41,7 @@ pub struct StateHasher<'a> {
 }
 
 impl<'a> StateHasher<'a> {
+    /// A hasher that writes `Entity` references as their SpawnIds from `spawn_ids`.
     pub fn new(spawn_ids: &'a HashMap<Entity, SpawnId>) -> Self {
         Self {
             state: FNV_OFFSET,
@@ -47,10 +49,12 @@ impl<'a> StateHasher<'a> {
         }
     }
 
+    /// The hash so far.
     pub fn finish(&self) -> u64 {
         self.state
     }
 
+    /// Hashes raw bytes.
     pub fn bytes(&mut self, bytes: &[u8]) {
         for &b in bytes {
             self.state ^= b as u64;
@@ -58,34 +62,44 @@ impl<'a> StateHasher<'a> {
         }
     }
 
+    /// Hashes a bool.
     pub fn bool(&mut self, v: bool) {
         self.bytes(&[v as u8]);
     }
+    /// Hashes a u8.
     pub fn u8(&mut self, v: u8) {
         self.bytes(&[v]);
     }
+    /// Hashes a u16.
     pub fn u16(&mut self, v: u16) {
         self.bytes(&v.to_le_bytes());
     }
+    /// Hashes a u32.
     pub fn u32(&mut self, v: u32) {
         self.bytes(&v.to_le_bytes());
     }
+    /// Hashes a u64.
     pub fn u64(&mut self, v: u64) {
         self.bytes(&v.to_le_bytes());
     }
+    /// Hashes a u128.
     pub fn u128(&mut self, v: u128) {
         self.bytes(&v.to_le_bytes());
     }
+    /// Hashes an i32.
     pub fn i32(&mut self, v: i32) {
         self.bytes(&v.to_le_bytes());
     }
+    /// Hashes an f32 by its bit pattern.
     pub fn f32(&mut self, v: f32) {
         self.u32(v.to_bits());
     }
+    /// Hashes an integer vector.
     pub fn ivec2(&mut self, v: IVec2) {
         self.i32(v.x);
         self.i32(v.y);
     }
+    /// Hashes a float vector.
     pub fn vec2(&mut self, v: Vec2) {
         self.f32(v.x);
         self.f32(v.y);
@@ -119,9 +133,11 @@ pub struct HashRegistry {
 }
 
 impl HashRegistry {
+    /// Names of hashed resources, in hashing order.
     pub fn resource_names(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.resources.iter().map(|(n, _)| *n)
     }
+    /// Names of hashed components, in hashing order.
     pub fn component_names(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.components.iter().map(|(n, _)| *n)
     }
@@ -131,6 +147,7 @@ impl HashRegistry {
     }
 }
 
+/// Registers types in the state hash (or exempts them); every sim plugin uses it.
 pub trait AppHashExt {
     /// Includes component `T` in the state hash.
     fn register_hashed<T: Component + StateHash>(&mut self) -> &mut Self;

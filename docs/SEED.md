@@ -50,7 +50,14 @@ The player interacts only through captains, settlements and the map. Requirement
 | GP-10 | The world is divided into regions; the campaign is won by controlling a set fraction of a region's population | Must | M6 |
 | GP-11 | Time controls: pause, 1x, 2x, 4x, 8x; orders can be issued while paused | Must | M2 |
 | GP-12 | Save and load the full world state at any time | Must | M4 |
-| GP-13 | Multiplayer | Later | — |
+| GP-13 | Multiplayer, with diplomacy (truces, tribute, alliances) between players and AI warlords | Later | — |
+| GP-14 | Dilemma events arise from real sim state (a starving town, captured deserters) and offer a few choices with lasting effects on loyalty, morale and memory | Should | M5 |
+| GP-15 | Walled settlements can be besieged: blockaded until their food runs out, or assaulted with ladders and siege equipment (GP-08) | Must | M5 |
+| GP-16 | A pacing director spaces threats, calm and crises, with selectable personalities; auto-pause on chosen events and fast-forward to the next event | Must | M4 |
+| GP-17 | Captains take standing orders (defend a region, patrol roads, forage within a radius, retreat rules) and owned towns take policies (rationing, conscription, levies in kind) | Must | M4b |
+| GP-18 | Origins: the campaign can start as different kinds of warlord (exiled lord, bandit chief, prophet, merchant) with different men, goods and standing | Should | M6 |
+| GP-19 | The player designs their banner and colours and can name captains and settlements they found or take | Should | M6 |
+| GP-20 | Seeds, battles and whole campaigns can be shared as replay files and replayed exactly | Should | M6 |
 
 ## Simulation requirements
 
@@ -64,8 +71,9 @@ The simulation must run 250,000 people across a full world, with up to 20,000 at
 | SIM-02 | World generation is fully determined by a u64 seed | Must | M1 |
 | SIM-03 | Simulation runs on a fixed tick (10 ticks per game-second at 1x); rendering is decoupled and interpolates | Must | M0 |
 | SIM-04 | A game day lasts 4 real minutes at 1x; days have morning, work, evening and night phases | Must | M2 |
-| SIM-05 | Seasons (30 days each) change crop growth, food decay, movement speed and cold exposure | Should | M4 |
-| SIM-06 | Weather (clear, rain, storm, snow) varies by region and affects movement and farming | Later | — |
+| SIM-05 | Seasons (30 days each) change crop growth, food decay, movement speed and cold exposure | Should | M4b |
+| SIM-06 | Weather (clear, rain, storm, snow) varies by region and affects movement and farming | Should | M4b |
+| SIM-07 | Fire: plundered or attacked buildings can burn and spread to neighbours; burned buildings become ruins until rebuilt | Should | M4b |
 
 ### Villagers
 
@@ -76,7 +84,9 @@ The simulation must run 250,000 people across a full world, with up to 20,000 at
 | SIM-12 | Villagers choose actions with utility AI scoring needs, job and danger; no scripted schedules | Must | M2 |
 | SIM-13 | Villagers flee, hide or fight based on captain posture, local threat and loyalty | Must | M3 |
 | SIM-14 | Villagers remember notable events (home burned, family killed, fed by a captain) as decaying memories that affect loyalty | Should | M5 |
-| SIM-15 | Population changes through births, deaths (age, starvation, combat) and migration between settlements | Should | M4 |
+| SIM-15 | Population changes through births, deaths (age, starvation, combat) and migration between settlements | Should | M4b |
+| SIM-16 | Every settlement starts as a hamlet and grows through tiers (hamlet, village, town, city) by building on a master plan generated from its town style; it shrinks and leaves ruins when it loses people | Must | M4b |
+| SIM-17 | Builders construct planned buildings from wood, plus stone from quarries for town and city buildings; construction stalls without materials or workers | Must | M4b |
 | SIM-50 | Each settlement follows a faith (data-defined) and holds a piety level that rises with worship, offerings and feasts and falls with hunger, desecration and neglect | Must | M4 |
 | SIM-51 | Sustained high piety brings divine favour: one of the settlement's militia becomes a hero (at most one living hero per settlement; cooldown after a hero dies) | Must | M4 |
 | SIM-52 | Heroes are never controllable by the player or any AI warlord; a hero autonomously leads its settlement's militia within a radius (morale and combat bonus, rallying, engage or fall back) | Must | M4 |
@@ -87,8 +97,8 @@ The simulation must run 250,000 people across a full world, with up to 20,000 at
 | --- | --- | --- | --- |
 | SIM-20 | Goods are physical items held in inventories or stockpiles: grain, fish, mutton, bread, wood, ore, tools, weapons | Must | M2 |
 | SIM-21 | Production chains are data-driven recipes (inputs, outputs, workplace, worker, duration) loaded from RON files | Must | M2 |
-| SIM-22 | Food decays over time; decay rate depends on type and season | Should | M4 |
-| SIM-23 | Carters move surplus goods between nearby settlements along roads | Should | M4 |
+| SIM-22 | Food decays over time; decay rate depends on type and season | Should | M4b |
+| SIM-23 | Carters move surplus goods between nearby settlements along roads | Should | M4b |
 | SIM-24 | Settlements track food security (days of food at current consumption), which drives loyalty and migration | Must | M4 |
 
 ### Armies and combat
@@ -99,6 +109,7 @@ The simulation must run 250,000 people across a full world, with up to 20,000 at
 | SIM-31 | Each follower consumes food daily; unfed followers lose morale, then desert, then starve | Must | M3 |
 | SIM-32 | Combat resolves per individual with simple stats (health, attack, defense, equipment) and morale-driven routing | Must | M3 |
 | SIM-33 | Battles in aggregate regions resolve with a statistical model that produces the same expected outcome as per-agent combat | Must | M5 |
+| SIM-34 | Captains, heroes and long-serving soldiers earn traits from what they live through (brave, cruel, beloved, shaken); traits change their AI and morale, and veterans gain ranks | Must | M4 |
 
 ### Information
 
@@ -240,8 +251,10 @@ The look is a clean, low-poly 3D isometric-style world that stays readable with 
 | RND-02 | Camera: perspective with an orbit-style rig; pan (WASD, edge scroll, drag), zoom (wheel), rotate in 90-degree steps and freely (Q/E) | Must | M1 |
 | RND-03 | Agents render as GPU-instanced low-poly figures, tinted by faction and occupation; distant agents switch to billboards, then to density dots | Must | M2 |
 | RND-04 | 20,000 visible agents at 60 fps on the reference machine | Must | M3 |
-| RND-05 | Day and night lighting tied to sim time; seasonal palette shifts | Should | M4 |
+| RND-05 | Day and night lighting tied to sim time; seasonal palette shifts | Should | M4b |
 | RND-06 | Render positions interpolate between the last two sim ticks so motion is smooth at any sim speed | Must | M2 |
+| RND-07 | Each settlement has a town style drawn from a world building tradition (see docs/TOWNS_DESIGN.md), assigned per seed among styles that suit its site; a style sets layout and building looks, never building purpose | Must | M4b |
+| RND-08 | Follow-cam on any person, time-lapse of a settlement's growth, and a photo mode | Should | M4b |
 | UI-01 | Captain panel: orders, posture slider, follower count, food carried, morale | Must | M3 |
 | UI-02 | Settlement panel: population by occupation, stockpiles, food security in days, loyalty, owner | Must | M2 |
 | UI-03 | Click any villager to see name, job, needs, current action and memories ("why is this person doing that") | Must | M2 |
@@ -250,6 +263,7 @@ The look is a clean, low-poly 3D isometric-style world that stays readable with 
 | UI-06 | Strategic map view at max zoom-out showing regions, settlements and known armies as icons | Should | M5 |
 | UI-07 | Debug UI (egui): tick time per system set, entity counts by detail level, region LOD state, RNG seed | Must | M0 |
 | UI-08 | Settlement panel shows faith and piety; heroes are visibly distinct and their inspector explains their decisions | Must | M4 |
+| UI-09 | Chronicle: an automatic history of the island, short biographies of settlements and named characters, end-of-battle reports and an end-of-campaign timeline | Must | M4 |
 
 ## Non-functional requirements
 
@@ -286,7 +300,7 @@ Reference machine: 8-core desktop CPU from 2022 or later, 16 GB RAM, a mid-range
 
 ## Milestone roadmap
 
-Seven milestones take the project from an empty repo to a playable campaign; M3 is the go/no-go point for the core fantasy. Each milestone ends only when every acceptance criterion passes and the build is green.
+Seven milestones, plus M3b "Developer handbook" and M4b "Living towns" (added 2026-10-06), take the project from an empty repo to a playable campaign; M3 is the go/no-go point for the core fantasy. Each milestone ends only when every acceptance criterion passes and the build is green.
 
 ### M0: Skeleton
 
@@ -322,13 +336,35 @@ Captains, followers, orders, posture, flow-field movement, combat, food upkeep.
 - [ ] 20,000 visible agents at 60 fps on the reference machine (run `cargo run --release -p game_app -- --stress 20000` there; the container renders in software)
 - [ ] **Go/no-go**: playtest whether marching an army through living villages is interesting. If not, revise the design before M4 (checklist: `docs/M3_PLAYTEST.md`)
 
-### M4: Conquest and economy
+### M3b: Developer handbook
 
-Settlement conquest, loyalty, trade, food decay, seasons, overlays, event feed, save/load.
+Documentation so human developers can work alongside Claude Code. No gameplay. Plan: `docs/M3B_PLAN.md`.
+
+- [x] Following only `docs/dev/GETTING_STARTED.md` in a fresh container builds and runs the game, headless and the tests (2026-10-06: a fresh clone built and ran headless and passed every test with its own `target/`; the game was built from the same clone but reused the shared Bevy build cache because the box had no disk for a second copy, then ran under Xvfb)
+- [x] `cargo doc --workspace --no-deps` builds without warnings in CI, and every crate has an overview
+- [x] Every data field is documented and every HOWTO recipe points at code that exists (both checked by tests: `tests/tests/docs.rs`)
+
+### M4: Conquest and faith
+
+Settlement conquest, loyalty, faith, piety and heroes, overlays, event feed, save/load.
 
 - [ ] Conquering a settlement transfers it; loyalty responds to treatment and food security
-- [ ] Carters move surplus between settlements; overlays show food security and supply
+- [ ] Overlays show ownership, loyalty and food security; the event feed jumps to its stories
+- [ ] Sustained piety raises a hero who leads the militia and obeys no one
 - [ ] Save and load restore an identical state hash
+- [ ] The chronicle tells a battle, a famine and a hero's rise, each with its cause; captains and veterans carry traits earned in play
+- [ ] The pacing director keeps a playtest free of long dead stretches, and fast-forward stops at the next notable event
+
+### M4b: Living towns
+
+Settlements grow from hamlets to cities in their own town styles; population, construction, trade, seasons and food decay. Design: `docs/TOWNS_DESIGN.md`.
+
+- [ ] Every settlement starts as a hamlet; under good conditions one grows to a village and then a town within the configured days, stalls in famine and shrinks after a sack
+- [ ] Every town style produces a valid master plan on the sites it suits (no overlaps, every plot reachable), and a seed always yields the same styles and plans
+- [ ] Carters move surplus between settlements; the supply overlay shows the flows
+- [ ] Seasons change yields, decay and travel, and a year of play keeps villages alive without intervention
+- [ ] Captains on standing orders defend, patrol and forage without new commands; plundered buildings burn and leave ruins; weather slows marches
+- [ ] Follow-cam and a growth time-lapse work on any settlement
 
 ### M5: Scale and information
 
@@ -338,13 +374,17 @@ Simulation LOD across the full world, faction knowledge, messengers, rival AI wa
 - [ ] LOD consistency test passes; promotion causes no visible hitch below 30 fps
 - [ ] The player's map shows only known, aged information; orders to lieutenants arrive by messenger
 - [ ] Two AI warlords expand, fight each other and the player using the same command path
+- [ ] A walled city can be starved out by blockade or taken by assault
+- [ ] Dilemma events arise from sim state, and their choices visibly change loyalty and morale
 
 ### M6: Campaign
 
-Win and lose conditions, multiple regions, onboarding, audio, options, polish.
+Win and lose conditions, multiple regions, onboarding, audio, options, origins, heraldry, shareable replays, polish.
 
 - [ ] A complete campaign can be won or lost
 - [ ] A new player can learn the basics through a short guided first region
+- [ ] Each origin plays differently from the first day; banners and names are the player's own
+- [ ] A shared replay file reproduces a campaign exactly on another machine with the same build
 
 ## Claude Code bootstrap
 

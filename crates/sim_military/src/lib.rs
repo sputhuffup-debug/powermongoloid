@@ -1,7 +1,26 @@
-//! Captains, followers, orders, combat, morale (GP-01..04, SIM-13,
-//! SIM-30..32).
+//! Armies: captains, followers, orders, crowd movement, combat, morale and
+//! upkeep (GP-01..04, SIM-13, SIM-30..32). Design: ADR 0010 and ADR 0011.
 //!
-//! Systems go in [`sim_core::SimSet`]s; this crate never depends on
+//! # Tick order ([`MilitarySet`])
+//! 1. **Orders** (Input): [`orders`] applies validated commands, then each
+//!    captain works its first order and deals with settlements (the serial
+//!    logistics step).
+//! 2. **Index** (Knowledge): `index::build_index` builds the
+//!    [`ArmyIndex`] and [`FighterGrid`]; [`threat`] sets each settlement's
+//!    threat.
+//! 3. **Decide**: [`soldiers`] choose to follow, fight or rout, and aim
+//!    blows.
+//! 4. **Move**: captains walk the goal field; followers keep loose formation
+//!    and descend the rally field when far away.
+//! 5. **Combat** (Act): [`combat`] resolves blows serially by SpawnId and
+//!    removes the fallen.
+//! 6. **Upkeep** (Needs): [`upkeep`] covers eating, morale, starvation and
+//!    desertion.
+//!
+//! Also here: army data ([`Army`], `army.ron`), [`spawn::spawn_army`] and
+//! the playtest setup, and the scripted [`raiders`].
+//!
+//! Systems go in [`sim_core::SimSet`]s. This crate never depends on
 //! rendering, windowing, audio or asset crates.
 
 pub mod combat;
@@ -49,6 +68,7 @@ pub enum MilitarySet {
     Upkeep,
 }
 
+/// Captains, followers, orders, combat and morale.
 pub struct MilitaryPlugin;
 
 impl Plugin for MilitaryPlugin {
