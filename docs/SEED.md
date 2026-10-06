@@ -300,7 +300,7 @@ Reference machine: 8-core desktop CPU from 2022 or later, 16 GB RAM, a mid-range
 
 ## Milestone roadmap
 
-Seven milestones, plus M4b "Living towns" (added 2026-10-06), take the project from an empty repo to a playable campaign; M3 is the go/no-go point for the core fantasy. Each milestone ends only when every acceptance criterion passes and the build is green.
+Seven milestones, plus M3b "Developer handbook" and M4b "Living towns" (added 2026-10-06), take the project from an empty repo to a playable campaign; M3 is the go/no-go point for the core fantasy. Each milestone ends only when every acceptance criterion passes and the build is green.
 
 ### M0: Skeleton
 
@@ -335,6 +335,14 @@ Captains, followers, orders, posture, flow-field movement, combat, food upkeep.
 - [x] An army without food loses morale and starts deserting within the specified days (`tests/starving_army.rs`; deadline in `army.ron`)
 - [ ] 20,000 visible agents at 60 fps on the reference machine (run `cargo run --release -p game_app -- --stress 20000` there; the container renders in software)
 - [ ] **Go/no-go**: playtest whether marching an army through living villages is interesting. If not, revise the design before M4 (checklist: `docs/M3_PLAYTEST.md`)
+
+### M3b: Developer handbook
+
+Documentation so human developers can work alongside Claude Code. No gameplay. Plan: `docs/M3B_PLAN.md`.
+
+- [ ] Following only `docs/dev/GETTING_STARTED.md` in a fresh container builds and runs the game, headless and the tests
+- [ ] `cargo doc --workspace --no-deps` builds without warnings in CI, and every crate has an overview
+- [ ] Every data field is documented and every HOWTO recipe points at code that exists (both checked by tests)
 
 ### M4: Conquest and faith
 
