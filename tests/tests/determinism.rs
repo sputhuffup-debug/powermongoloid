@@ -74,10 +74,8 @@ fn live_commands_record_and_replay_identically() {
     let mut app = headless_app(config(11));
     for t in 0..1_000u64 {
         for _ in live_ticks.iter().filter(|&&lt| lt == t) {
-            app.world_mut().write_message(SimCommand {
-                issuer: FactionId(2),
-                kind: CommandKind::Noop,
-            });
+            app.world_mut()
+                .write_message(SimCommand::player(FactionId(2), CommandKind::Noop));
         }
         app.step(1);
     }

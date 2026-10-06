@@ -58,10 +58,8 @@ mod tests {
     #[test]
     fn commands_are_applied_exactly_once() {
         let mut app = app();
-        app.world_mut().write_message(SimCommand {
-            issuer: FactionId(0),
-            kind: CommandKind::Noop,
-        });
+        app.world_mut()
+            .write_message(SimCommand::player(FactionId(0), CommandKind::Noop));
         app.step(5);
         assert_eq!(app.world().resource::<CommandsProcessed>().0, 1);
     }

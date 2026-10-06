@@ -13,6 +13,8 @@ sim_headless.workspace = true
 sim_world.workspace = true
 sim_agents.workspace = true
 sim_economy.workspace = true
+sim_military.workspace = true
+bevy_ecs.workspace = true
 bevy_math.workspace = true
 
 [lints]

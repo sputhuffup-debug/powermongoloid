@@ -1,0 +1,366 @@
+//! Per-tick read-only summaries built serially at the start of each tick
+//! (Knowledge set), so the parallel per-soldier systems never read each
+//! other's components: one entry per army, and a grid of everyone who can
+//! fight. Both are derived from hashed state, so neither is hashed.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use bevy_ecs::prelude::*;
+use bevy_math::{IVec2, Vec2};
+use sim_agents::{ActionKind, Activity, CombatStats, Stance};
+use sim_core::{Allegiance, FactionId, Motion, Position, Posture, SpawnId};
+use sim_economy::{Economy, Stockpile};
+use sim_world::{FlowCache, FlowField, WorldMap, world_pos};
+
+use crate::components::{Captain, Follower};
+use crate::data::Army;
+
+/// One army, as the soldiers see it this tick.
+#[derive(Debug, Clone)]
+pub struct ArmyInfo {
+    pub entity: Entity,
+    pub id: SpawnId,
+    pub faction: FactionId,
+    pub posture: Posture,
+    pub pos: Vec2,
+    pub goal: Option<IVec2>,
+    /// Toward the goal (the captain walks it).
+    pub field: Option<Arc<FlowField>>,
+    /// Toward the captain (followers far from their place walk it).
+    pub rally: Option<Arc<FlowField>>,
+    pub followers: u32,
+    pub fighting: u32,
+    /// Followers well outside the formation.
+    pub stragglers: u32,
+    /// Food value in the baggage.
+    pub food: f32,
+}
+
+#[derive(Resource, Debug, Default)]
+pub struct ArmyIndex {
+    pub armies: Vec<ArmyInfo>,
+    by_entity: HashMap<Entity, usize>,
+}
+
+impl ArmyIndex {
+    pub fn get(&self, captain: Entity) -> Option<&ArmyInfo> {
+        self.by_entity.get(&captain).map(|&i| &self.armies[i])
+    }
+}
+
+/// Which side someone fights on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Side {
+    pub faction: FactionId,
+    /// Militia defending against this faction.
+    pub against: Option<FactionId>,
+}
+
+impl Side {
+    pub fn hostile_to(self, other: Side, army: &Army) -> bool {
+        match (self.against, other.against) {
+            (None, None) => army.at_war(self.faction, other.faction),
+            (Some(f), None) => other.faction == f,
+            (None, Some(f)) => self.faction == f,
+            (Some(_), Some(_)) => false,
+        }
+    }
+
+    pub fn of(allegiance: &Allegiance, stats: &CombatStats) -> Option<Side> {
+        match stats.stance {
+            Stance::Civilian => None,
+            Stance::Soldier => Some(Side {
+                faction: allegiance.0,
+                against: None,
+            }),
+            Stance::Militia { against } => Some(Side {
+                faction: allegiance.0,
+                against: Some(against),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FighterEntry {
+    pub id: SpawnId,
+    pub entity: Entity,
+    pub pos: Vec2,
+    pub side: Side,
+    pub routed: bool,
+}
+
+/// Everyone who can fight, bucketed in 8-tile cells, SpawnId order within
+/// a cell.
+#[derive(Resource, Debug, Default)]
+pub struct FighterGrid {
+    per_side: i32,
+    cells: Vec<Vec<FighterEntry>>,
+    used: Vec<u32>,
+    pub count: usize,
+    /// Every fighter, in SpawnId order.
+    pub fighters: Vec<(SpawnId, Entity)>,
+    /// Fighting villagers (militia), in SpawnId order.
+    pub militia: Vec<(SpawnId, Entity)>,
+}
+
+const CELL: f32 = 8.0;
+
+impl FighterGrid {
+    fn cell(&self, p: Vec2) -> Option<usize> {
+        let c = (p / CELL).floor().as_ivec2();
+        (self.per_side > 0 && c.x >= 0 && c.y >= 0 && c.x < self.per_side && c.y < self.per_side)
+            .then(|| (c.y * self.per_side + c.x) as usize)
+    }
+
+    /// Visits fighters within `radius` of `p` in a fixed order.
+    pub fn for_each_within(&self, p: Vec2, radius: f32, mut f: impl FnMut(&FighterEntry, f32)) {
+        if self.per_side == 0 {
+            return;
+        }
+        let lo = ((p - radius) / CELL).floor().as_ivec2().max(IVec2::ZERO);
+        let hi = ((p + radius) / CELL)
+            .floor()
+            .as_ivec2()
+            .min(IVec2::splat(self.per_side - 1));
+        let r2 = radius * radius;
+        for cy in lo.y..=hi.y {
+            for cx in lo.x..=hi.x {
+                for e in &self.cells[(cy * self.per_side + cx) as usize] {
+                    let d2 = e.pos.distance_squared(p);
+                    if d2 <= r2 {
+                        f(e, d2.sqrt());
+                    }
+                }
+            }
+        }
+    }
+
+    /// The nearest fighter hostile to `side` within `radius` (ties by
+    /// SpawnId), with how many hostiles and friends are that close.
+    pub fn nearest_hostile(
+        &self,
+        me: Entity,
+        p: Vec2,
+        side: Side,
+        radius: f32,
+        army: &Army,
+    ) -> Nearby {
+        let mut out = Nearby::default();
+        self.for_each_within(p, radius, |e, d| {
+            if e.entity == me {
+                return;
+            }
+            if side.hostile_to(e.side, army) {
+                out.enemies += 1;
+                let better = match out.nearest {
+                    None => true,
+                    Some((_, _, bd, bid)) => d < bd || (d == bd && e.id < bid),
+                };
+                if better {
+                    out.nearest = Some((e.entity, e.pos, d, e.id));
+                }
+            } else if e.side == side {
+                out.friends += 1;
+            }
+        });
+        out
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Nearby {
+    /// (entity, position, distance, id)
+    pub nearest: Option<(Entity, Vec2, f32, SpawnId)>,
+    pub enemies: u32,
+    pub friends: u32,
+}
+
+/// Knowledge set: formation slots, then the army index and fighter grid.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)] // Bevy system parameters.
+pub(crate) fn build_index(
+    map: Res<WorldMap>,
+    army: Res<Army>,
+    econ: Res<Economy>,
+    flows: Res<FlowCache>,
+    mut index: ResMut<ArmyIndex>,
+    mut grid: ResMut<FighterGrid>,
+    captains: Query<(
+        Entity,
+        &SpawnId,
+        &Captain,
+        &Position,
+        &Motion,
+        Option<&Stockpile>,
+    )>,
+    mut followers: Query<(&SpawnId, &mut Follower, &Position, &Motion, &Activity)>,
+    fighters: Query<(
+        Entity,
+        &SpawnId,
+        &Allegiance,
+        &CombatStats,
+        &Position,
+        &Motion,
+        &Activity,
+    )>,
+) {
+    let _span = tracing::info_span!("sim_military::build_index").entered();
+    // Armies, in SpawnId order.
+    let mut armies: Vec<ArmyInfo> = captains
+        .iter()
+        .map(|(e, id, c, pos, motion, baggage)| {
+            let field = c.goal.and_then(|g| flows.get((g, c.window.0, c.window.1)));
+            let rally = c
+                .rally
+                .and_then(|r| flows.get((r, c.rally_window.0, c.rally_window.1)));
+            let p = world_pos(pos, Some(motion));
+            ArmyInfo {
+                entity: e,
+                id: *id,
+                faction: c.faction,
+                posture: c.posture,
+                pos: p,
+                goal: c.goal,
+                field,
+                rally,
+                followers: 0,
+                fighting: 0,
+                stragglers: 0,
+                food: baggage.map_or(0.0, |s| s.food_value(&econ)),
+            }
+        })
+        .collect();
+    armies.sort_unstable_by_key(|a| a.id);
+    // Lookups only; never iterated (determinism rule).
+    index.by_entity = armies
+        .iter()
+        .enumerate()
+        .map(|(i, a)| (a.entity, i))
+        .collect();
+
+    // Formation slots: followers of each army in SpawnId order.
+    let mut members: Vec<(usize, SpawnId)> = followers
+        .iter()
+        .filter_map(|(id, f, ..)| index.by_entity.get(&f.captain).map(|&i| (i, *id)))
+        .collect();
+    members.sort_unstable();
+    let mut slots: HashMap<SpawnId, u16> = HashMap::new();
+    let mut current = usize::MAX;
+    let mut n = 0u16;
+    for (i, id) in &members {
+        if *i != current {
+            current = *i;
+            n = 0;
+        }
+        slots.insert(*id, n);
+        n = n.saturating_add(1);
+    }
+    for (id, mut f, pos, motion, act) in &mut followers {
+        let Some(&i) = index.by_entity.get(&f.captain) else {
+            continue;
+        };
+        if let Some(&slot) = slots.get(id)
+            && f.slot != slot
+        {
+            f.slot = slot;
+        }
+        let a = &mut armies[i];
+        a.followers += 1;
+        if act.kind == ActionKind::Fight {
+            a.fighting += 1;
+        }
+        let _ = (pos, motion);
+    }
+    for (_, f, pos, motion, _) in &followers {
+        if let Some(&i) = index.by_entity.get(&f.captain) {
+            let a = &mut armies[i];
+            let limit = army.formation_radius(a.followers) + army.data.formation.catch_up;
+            if world_pos(pos, Some(motion)).distance(a.pos) > limit {
+                a.stragglers += 1;
+            }
+        }
+    }
+    index.armies = armies;
+
+    // Fighter grid.
+    let per_side = (map.size() as f32 / CELL).ceil() as i32;
+    if grid.per_side != per_side {
+        grid.per_side = per_side;
+        grid.cells = vec![Vec::new(); (per_side * per_side) as usize];
+        grid.used.clear();
+    }
+    let used = std::mem::take(&mut grid.used);
+    for c in used {
+        grid.cells[c as usize].clear();
+    }
+    let mut count = 0;
+    grid.fighters.clear();
+    grid.militia.clear();
+    for (e, id, allegiance, stats, pos, motion, act) in &fighters {
+        if !stats.alive() {
+            continue;
+        }
+        let Some(side) = Side::of(allegiance, stats) else {
+            continue;
+        };
+        let p = world_pos(pos, Some(motion));
+        if let Some(c) = grid.cell(p) {
+            if grid.cells[c].is_empty() {
+                grid.used.push(c as u32);
+            }
+            grid.cells[c].push(FighterEntry {
+                id: *id,
+                entity: e,
+                pos: p,
+                side,
+                routed: act.kind == ActionKind::Rout,
+            });
+            count += 1;
+            grid.fighters.push((*id, e));
+            if side.against.is_some() {
+                grid.militia.push((*id, e));
+            }
+        }
+    }
+    grid.fighters.sort_unstable();
+    grid.militia.sort_unstable();
+    let used = std::mem::take(&mut grid.used);
+    for &c in &used {
+        grid.cells[c as usize].sort_unstable_by_key(|e| e.id);
+    }
+    grid.used = used;
+    grid.count = count;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sim_core::Calendar;
+
+    fn army() -> Army {
+        Army::default_data(&Calendar::default_data(), &Economy::default_data())
+    }
+
+    #[test]
+    fn hostility_rules() {
+        let a = army();
+        let p1 = Side {
+            faction: FactionId(1),
+            against: None,
+        };
+        let p2 = Side {
+            faction: FactionId(2),
+            against: None,
+        };
+        let militia_vs_1 = Side {
+            faction: FactionId(0),
+            against: Some(FactionId(1)),
+        };
+        assert!(p1.hostile_to(p2, &a) && p2.hostile_to(p1, &a));
+        assert!(militia_vs_1.hostile_to(p1, &a) && p1.hostile_to(militia_vs_1, &a));
+        assert!(!militia_vs_1.hostile_to(p2, &a) && !p2.hostile_to(militia_vs_1, &a));
+        assert!(!p1.hostile_to(p1, &a));
+        assert!(!militia_vs_1.hostile_to(militia_vs_1, &a));
+    }
+}

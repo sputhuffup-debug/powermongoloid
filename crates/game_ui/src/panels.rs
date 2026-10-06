@@ -88,7 +88,10 @@ fn describe_action(kind: ActionKind, stage: Stage, target: Option<String>) -> St
             match kind {
                 ActionKind::Eat => "eat",
                 ActionKind::Fetch => "fetch food",
-                ActionKind::Sleep | ActionKind::GoHome => "home",
+                ActionKind::Sleep | ActionKind::GoHome | ActionKind::Hide => "home",
+                ActionKind::Flee => "safety",
+                ActionKind::Fight => "the fight",
+                ActionKind::Follow | ActionKind::Rout => "the army",
                 ActionKind::Work => "work",
                 ActionKind::Haul => "pick up goods",
                 ActionKind::Idle => "stroll",

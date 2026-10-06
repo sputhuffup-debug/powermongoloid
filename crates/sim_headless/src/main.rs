@@ -10,7 +10,9 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use sim_core::Replay;
-use sim_headless::{HeadlessConfig, Threading, record_replay, run, sample_commands, verify_replay};
+use sim_headless::{
+    HeadlessConfig, Scenario, Threading, record_replay, run, sample_commands, verify_replay,
+};
 
 const USAGE: &str = "\
 usage: sim_headless [options]
@@ -24,7 +26,10 @@ usage: sim_headless [options]
   --stats-every <n>         print a population summary every n ticks
   --record <file.ron>       write a replay file
   --map-ppm <file.ppm>      write the generated terrain as an image
-  --replay <file.ron>       re-run a replay file and check its hashes";
+  --replay <file.ron>       re-run a replay file and check its hashes
+  --timings                 print the mean wall-clock time of each sim stage
+  --skirmish                set up the M3 playtest armies (with --commands:
+                            random military orders for them)";
 
 struct Args {
     seed: u64,
@@ -38,6 +43,8 @@ struct Args {
     replay: Option<String>,
     map_ppm: Option<String>,
     stats_every: u64,
+    scenario: Scenario,
+    timings: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -53,6 +60,8 @@ fn parse_args() -> Result<Args, String> {
         replay: None,
         map_ppm: None,
         stats_every: 0,
+        scenario: Scenario::Villages,
+        timings: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -75,6 +84,8 @@ fn parse_args() -> Result<Args, String> {
             "--replay" => args.replay = Some(value()?),
             "--map-ppm" => args.map_ppm = Some(value()?),
             "--stats-every" => args.stats_every = num(&flag, value()?)?,
+            "--skirmish" => args.scenario = Scenario::Skirmish,
+            "--timings" => args.timings = true,
             "-h" | "--help" => return Err(USAGE.to_string()),
             other => return Err(format!("unknown argument {other}\n{USAGE}")),
         }
@@ -225,14 +236,21 @@ fn main() -> ExitCode {
         population: args.population,
         threading: args.threading,
         world_size: args.world_size,
+        scenario: args.scenario,
     };
     if let Err(e) = config.worldgen().validate() {
         eprintln!("--world-size: {e}");
         return ExitCode::FAILURE;
     }
+    let commands;
     {
-        let app = sim_headless::headless_app(config);
+        let mut app = sim_headless::headless_app(config);
         print_world_summary(&app);
+        commands = if args.scenario == Scenario::Skirmish {
+            sim_headless::sample_orders(&mut app, args.seed, args.ticks, args.commands)
+        } else {
+            sample_commands(args.seed, args.ticks, args.commands)
+        };
         if let Some(path) = &args.map_ppm {
             if let Err(e) = write_map_ppm(&app, path) {
                 eprintln!("{path}: {e}");
@@ -241,7 +259,6 @@ fn main() -> ExitCode {
             eprintln!("wrote {path}");
         }
     }
-    let commands = sample_commands(args.seed, args.ticks, args.commands);
     let start = Instant::now();
 
     if let Some(path) = &args.record {
@@ -264,6 +281,28 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if args.timings {
+        use sim_core::{SimSet, SimStepper, SimTimings};
+        let mut app = sim_headless::headless_app(config);
+        app.insert_resource(sim_core::CommandScript::from_log(&commands));
+        let mut sums = [0.0f64; SimSet::ALL.len()];
+        let mut total = 0.0;
+        for _ in 0..args.ticks {
+            app.step(1);
+            let t = app.world().resource::<SimTimings>();
+            for (s, d) in sums.iter_mut().zip(t.per_set) {
+                *s += d.as_secs_f64();
+            }
+            total += t.total.as_secs_f64();
+        }
+        let n = args.ticks.max(1) as f64;
+        for (set, s) in SimSet::ALL.iter().zip(sums) {
+            println!("{:<12} {:>8.3} ms", set.name(), s / n * 1000.0);
+        }
+        println!("{:<12} {:>8.3} ms", "total", total / n * 1000.0);
+        return ExitCode::SUCCESS;
+    }
+
     if args.stats_every > 0 {
         use sim_core::SimStepper;
         let mut app = sim_headless::headless_app(config);
@@ -276,6 +315,9 @@ fn main() -> ExitCode {
             done += n;
             let st = sim_headless::stats::collect(&mut app);
             println!("{}", st.line());
+            for line in sim_headless::stats::armies(&mut app) {
+                println!("    {line}");
+            }
             if std::env::var_os("STATS_DETAIL").is_some() {
                 println!("    not working: {:?}", st.not_working);
                 println!("    restless: {:?}", st.restless);

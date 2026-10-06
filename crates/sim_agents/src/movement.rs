@@ -7,14 +7,14 @@ use bevy_math::{IVec2, Vec2};
 use sim_core::{Motion, Position, SpawnId};
 use sim_world::{PathCache, WorldMap};
 
-use crate::components::{Travel, TravelState};
+use crate::components::{Enlisted, Travel, TravelState};
 use crate::data::Villagers;
 
 pub(crate) fn plan_paths(
     map: Res<WorldMap>,
     villagers: Res<Villagers>,
     mut cache: ResMut<PathCache>,
-    mut q: Query<(&SpawnId, &Position, &mut Travel)>,
+    mut q: Query<(&SpawnId, &Position, &mut Travel), Without<Enlisted>>,
 ) {
     let _span = tracing::info_span!("sim_agents::plan_paths").entered();
     // Plan in SpawnId order so the cache fills the same way every run.
@@ -60,7 +60,7 @@ pub(crate) fn plan_paths(
 pub(crate) fn move_agents(
     map: Res<WorldMap>,
     villagers: Res<Villagers>,
-    mut q: Query<(&mut Position, &mut Motion, &mut Travel)>,
+    mut q: Query<(&mut Position, &mut Motion, &mut Travel), Without<Enlisted>>,
 ) {
     let _span = tracing::info_span!("sim_agents::move_agents").entered();
     let speeds = &villagers.data.movement.speed;

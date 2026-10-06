@@ -1,0 +1,73 @@
+// Armies (GP-01..04, SIM-30..32). Rates "per day" use the calendar's day.
+(
+    // Index = FactionId. 0 is the independent settlements; warlord factions
+    // (1 and up) are at war with each other.
+    factions: [
+        (name: "Independent", color: (0.75, 0.72, 0.65)),
+        (name: "Your warband", color: (0.2, 0.45, 0.9)),
+        (name: "Raiders", color: (0.85, 0.2, 0.2)),
+    ],
+
+    soldier: (health: 100.0, attack: 12.0, defense: 3.0, morale: 0.8),
+    captain: (health: 160.0, attack: 16.0, defense: 5.0, morale: 1.0),
+    // Equipment from smithies (SIM-32): a weapon adds attack, tools add a
+    // little defense (makeshift armour and shields).
+    equipment: (weapon_attack: 8.0, tools_defense: 2.0),
+
+    combat: (
+        engage_radius: 8.0,      // tiles: enemies this close are engaged
+        attack_range: 1.4,       // tiles
+        attack_cooldown: 12,     // ticks between blows
+        roll_min: 0.7,
+        roll_max: 1.3,
+        rout_morale: 0.25,       // break and flee below this
+        rally_morale: 0.5,       // stop fleeing above this, with no enemy near
+        casualty_morale: 0.04,   // morale lost when a nearby ally falls
+        casualty_radius: 10.0,
+        kill_morale: 0.02,       // morale gained for a kill
+    ),
+
+    // Captains steady nearby followers; heroes (M4) reuse this.
+    leadership: (radius: 14.0, morale_per_day: 0.6, attack_bonus: 0.15, captain_loss_morale: 0.3),
+
+    // SIM-31: unfed followers lose morale, then desert, then starve.
+    // Followers eat (from what they carry, then the baggage) once hunger
+    // passes villagers.ron's `hungry`. One who still can't eat is unfed.
+    upkeep: (
+        hungry: 0.6,                 // hunger at which a follower counts as unfed
+        sated: 0.15,                 // stop eating here (no food wasted)
+        unfed_morale_per_day: 1.2,
+        fed_morale_per_day: 0.25,    // recovery while fed (up to the base morale)
+        desert_below: 0.6,           // unfed or routed, below this morale: may desert
+        desert_chance_per_day: 2.0,
+        starving: 1.0,               // hunger at which starvation damage starts
+        starve_damage_per_day: 40.0,
+        forage_radius: 25.0,         // followers eat from the baggage within this
+        // Acceptance (M3): an army with no food starts deserting by then.
+        first_desertion_within_days: 2.0,
+    ),
+
+    formation: (spacing: 1.4, separation: 0.75, arrive_radius: 3.0, catch_up: 8.0),
+    baggage_capacity: 4000,
+    carry: 8,
+    max_captains: 9,
+    // Recruiting (GP-02): each adult asked joins with this chance by
+    // posture, plus bonuses when their village is short of food or the
+    // army is well fed. Loyalty joins these in M4.
+    recruit: (
+        radius: 14.0,
+        willing: (passive: 0.45, neutral: 0.35, aggressive: 0.25),
+        hungry_village_bonus: 0.3,
+        fed_army_bonus: 0.15,
+    ),
+
+    // How frightening an army is to a settlement within `radius` tiles,
+    // by posture (SIM-13). Attacking or plundering always provokes.
+    threat: (radius: 45.0, passive: 0.05, neutral: 0.3, aggressive: 0.9),
+    // GatherFood keeps the settlement this many days of food, by posture,
+    // and fills the baggage up to `gather_target_days` for the army.
+    gather_keep_days: (passive: 2.0, neutral: 1.0, aggressive: 0.0),
+    gather_target_days: 4.0,
+    // Trade: food value given per unit of each non-food good.
+    trade_value: [("wood", 0.2), ("ore", 0.3), ("tools", 1.5), ("weapons", 2.5)],
+)

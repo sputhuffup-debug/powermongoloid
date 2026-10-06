@@ -2,7 +2,7 @@
 
 use bevy_ecs::prelude::*;
 use bevy_math::IVec2;
-use sim_core::{NameId, StateHash, StateHasher};
+use sim_core::{FactionId, NameId, StateHash, StateHasher};
 use sim_economy::GoodId;
 use sim_world::SharedPath;
 
@@ -87,10 +87,20 @@ pub enum ActionKind {
     Work,
     Haul,
     GoHome,
+    /// Run from a nearby army (SIM-13).
+    Flee,
+    /// Shelter at home while an army is near (SIM-13).
+    Hide,
+    /// Defend the settlement as militia (SIM-13).
+    Fight,
+    /// A soldier keeping its place in the army (GP-04).
+    Follow,
+    /// A soldier whose morale broke, running from the enemy (SIM-32).
+    Rout,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 7] = [
+    pub const ALL: [ActionKind; 12] = [
         ActionKind::Idle,
         ActionKind::Eat,
         ActionKind::Fetch,
@@ -98,6 +108,11 @@ impl ActionKind {
         ActionKind::Work,
         ActionKind::Haul,
         ActionKind::GoHome,
+        ActionKind::Flee,
+        ActionKind::Hide,
+        ActionKind::Fight,
+        ActionKind::Follow,
+        ActionKind::Rout,
     ];
 
     pub fn name(self) -> &'static str {
@@ -109,6 +124,11 @@ impl ActionKind {
             ActionKind::Work => "working",
             ActionKind::Haul => "hauling goods",
             ActionKind::GoHome => "going home",
+            ActionKind::Flee => "fleeing",
+            ActionKind::Hide => "hiding",
+            ActionKind::Fight => "fighting",
+            ActionKind::Follow => "following the captain",
+            ActionKind::Rout => "routing",
         }
     }
 }
@@ -244,4 +264,116 @@ pub struct ScoredOption {
 pub struct DecisionTrace {
     pub tick: u64,
     pub options: Vec<ScoredOption>,
+}
+
+/// Under military command (a follower or captain): villager AI leaves this
+/// person alone; `sim_military` drives it.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Enlisted;
+
+impl StateHash for Enlisted {
+    fn hash_state(&self, _h: &mut StateHasher) {}
+}
+
+/// How a person takes part in fighting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Stance {
+    /// Never a target, never attacks.
+    #[default]
+    Civilian,
+    /// A villager defending their settlement against one faction (SIM-13).
+    Militia { against: FactionId },
+    /// A follower or captain.
+    Soldier,
+}
+
+/// Fighting state (SIM-32). Every person has one; most are civilians.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct CombatStats {
+    pub health: f32,
+    pub max_health: f32,
+    pub attack: f32,
+    pub defense: f32,
+    /// 0..1; routing below the army's rout threshold.
+    pub morale: f32,
+    pub stance: Stance,
+}
+
+impl CombatStats {
+    pub fn alive(&self) -> bool {
+        self.health > 0.0
+    }
+}
+
+impl StateHash for CombatStats {
+    fn hash_state(&self, h: &mut StateHasher) {
+        h.f32(self.health);
+        h.f32(self.max_health);
+        h.f32(self.attack);
+        h.f32(self.defense);
+        h.f32(self.morale);
+        match self.stance {
+            Stance::Civilian => h.u8(0),
+            Stance::Militia { against } => {
+                h.u8(1);
+                h.u16(against.0);
+            }
+            Stance::Soldier => h.u8(2),
+        }
+    }
+}
+
+/// Danger to a settlement from nearby armies, written by `sim_military`
+/// each tick and read by villagers (SIM-13).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
+pub struct Threat {
+    /// 0 (safe) .. 1 (terrifying).
+    pub level: f32,
+    /// Where the danger is.
+    pub from: bevy_math::IVec2,
+    /// Set when the settlement has been provoked (attacked or plundered):
+    /// its militia fights this faction until `provoked_until`.
+    pub provoked_by: Option<FactionId>,
+    pub provoked_until: u64,
+}
+
+impl StateHash for Threat {
+    fn hash_state(&self, h: &mut StateHasher) {
+        h.f32(self.level);
+        h.ivec2(self.from);
+        h.u16(self.provoked_by.map_or(u16::MAX, |f| f.0));
+        h.u64(self.provoked_until);
+    }
+}
+
+/// A person's next blow (SIM-32). The fighter's own parallel step picks a
+/// target and sets `swing`; `sim_military` resolves every swing serially in
+/// SpawnId order.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
+pub struct Strike {
+    pub target: Option<Entity>,
+    /// Where the target was when it was picked (tile coordinates).
+    pub at: bevy_math::Vec2,
+    /// Swinging this tick.
+    pub swing: bool,
+    /// Attack multiplier from a leader nearby.
+    pub bonus: f32,
+    /// No new swing before this tick.
+    pub ready_at: u64,
+}
+
+impl StateHash for Strike {
+    fn hash_state(&self, h: &mut StateHasher) {
+        match self.target {
+            Some(e) => {
+                h.u8(1);
+                h.entity(e);
+            }
+            None => h.u8(0),
+        }
+        h.vec2(self.at);
+        h.bool(self.swing);
+        h.f32(self.bonus);
+        h.u64(self.ready_at);
+    }
 }

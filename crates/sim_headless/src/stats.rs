@@ -103,6 +103,11 @@ fn short(k: ActionKind) -> &'static str {
         ActionKind::Work => "work",
         ActionKind::Haul => "haul",
         ActionKind::GoHome => "home",
+        ActionKind::Flee => "flee",
+        ActionKind::Hide => "hide",
+        ActionKind::Fight => "fight",
+        ActionKind::Follow => "follow",
+        ActionKind::Rout => "rout",
     }
 }
 
@@ -122,7 +127,8 @@ pub fn collect(app: &mut App) -> Stats {
     };
     let mut per_settlement: BTreeMap<u64, (f32, u32)> = BTreeMap::new();
     let mut occupations_by_settlement: BTreeMap<u64, BTreeMap<Occupation, u32>> = BTreeMap::new();
-    let mut q = world.query::<(
+    // Villagers at home in their villages (not those serving in an army).
+    let mut q = world.query_filtered::<(
         &Villager,
         &Occupation,
         &Activity,
@@ -130,7 +136,7 @@ pub fn collect(app: &mut App) -> Stats {
         &Position,
         &sim_agents::Employment,
         &sim_agents::DecisionTrace,
-    )>();
+    ), Without<sim_agents::Enlisted>>();
     let mut hunger_sum = 0.0;
     let mut rest_sum = 0.0;
     for (v, occ, act, needs, pos, job, trace) in q.iter(world) {
@@ -268,4 +274,115 @@ pub fn collect(app: &mut App) -> Stats {
         });
     }
     stats
+}
+
+/// One line per army and per faction, for tuning (M3).
+pub fn armies(app: &mut App) -> Vec<String> {
+    use sim_agents::CombatStats;
+    use sim_core::{Motion, SpawnId};
+    use sim_military::{Army, ArmyStats, Captain, Follower, describe};
+    use sim_world::world_pos;
+    let world = app.world_mut();
+    let Some(army) = world.get_resource::<Army>().cloned() else {
+        return Vec::new();
+    };
+    let econ = world.resource::<Economy>().clone();
+    let hunger_per_day = world
+        .resource::<sim_agents::Villagers>()
+        .data
+        .needs
+        .hunger_per_day;
+    let mut q = world.query::<(
+        Entity,
+        &SpawnId,
+        &Captain,
+        &Position,
+        &Motion,
+        &CombatStats,
+        Option<&Stockpile>,
+    )>();
+    let mut caps: Vec<_> = q
+        .iter(world)
+        .map(|(e, id, c, p, m, cs, s)| {
+            (
+                *id,
+                e,
+                c.clone(),
+                world_pos(p, Some(m)),
+                cs.morale,
+                s.map_or(0.0, |s| s.food_value(&econ)),
+            )
+        })
+        .collect();
+    caps.sort_unstable_by_key(|c| c.0);
+    let mut fq = world.query::<(
+        &Follower,
+        &CombatStats,
+        &Activity,
+        &Needs,
+        &Position,
+        &Motion,
+    )>();
+    let mut out = Vec::new();
+    for (id, e, c, pos, morale, food) in caps {
+        let mut n = 0;
+        let (mut fighting, mut routed, mut morale_sum, mut hunger_sum, mut spread) =
+            (0, 0, 0.0, 0.0, 0.0f32);
+        let mut far = String::new();
+        for (f, cs, act, needs, p, m) in fq.iter(world) {
+            if f.captain != e {
+                continue;
+            }
+            n += 1;
+            morale_sum += cs.morale;
+            hunger_sum += needs.hunger;
+            let d = world_pos(p, Some(m)).distance(pos);
+            if d > spread {
+                spread = d;
+                far = format!(
+                    "farthest at {:?} slot {} {:?} hunger {:.2} morale {:.2} v {:?}",
+                    p.0, f.slot, act.kind, needs.hunger, cs.morale, m.velocity
+                );
+            }
+            match act.kind {
+                ActionKind::Fight => fighting += 1,
+                ActionKind::Rout => routed += 1,
+                _ => {}
+            }
+        }
+        let people = (n + 1) as f32;
+        out.push(format!(
+            "{} captain {} ({}) at ({:.0},{:.0}) goal {:?} order {} | {} men, {} fighting, {} routed, max spread {:.0} | morale {:.2}/{:.2} hunger {:.2} | food {:.1} days",
+            army.faction_name(c.faction),
+            id.0,
+            c.posture.name(),
+            pos.x,
+            pos.y,
+            c.goal.map(|g| (g.x, g.y)),
+            c.orders.front().map_or("none".into(), |o| describe(&o.spec)),
+            n,
+            fighting,
+            routed,
+            spread,
+            morale,
+            morale_sum / n.max(1) as f32,
+            hunger_sum / n.max(1) as f32,
+            food / (hunger_per_day * people),
+        ));
+        if std::env::var_os("STATS_DETAIL").is_some() {
+            out.push(format!("  {far}; window {:?}", c.window));
+        }
+    }
+    let stats = world.resource::<ArmyStats>().clone();
+    for (i, s) in stats.factions.iter().enumerate() {
+        if *s == Default::default() {
+            continue;
+        }
+        out.push(format!(
+            "{}: {:?}",
+            army.faction_name(sim_core::FactionId(i as u16)),
+            s
+        ));
+    }
+    out
 }

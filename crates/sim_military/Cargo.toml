@@ -10,7 +10,15 @@ publish.workspace = true
 [dependencies]
 bevy_app.workspace = true
 bevy_ecs.workspace = true
+bevy_math.workspace = true
+rand.workspace = true
+ron.workspace = true
+serde.workspace = true
+sim_agents.workspace = true
 sim_core.workspace = true
+sim_economy.workspace = true
+sim_world.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

@@ -66,5 +66,8 @@ opt-level = 3
 [profile.dev.package.sim_economy]
 opt-level = 3
 
+[profile.dev.package.sim_military]
+opt-level = 3
+
 [profile.release]
 debug = "line-tables-only"

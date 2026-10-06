@@ -1,8 +1,9 @@
-//! Terrain, worldgen, regions (M1); spatial grid and flow fields arrive with
-//! M2 and M3.
+//! Terrain, worldgen, regions (M1); the spatial grid (M2) and flow fields
+//! for crowds (M3).
 //!
 //! Never depends on rendering, windowing, audio or asset crates.
 
+pub mod flow;
 pub mod map;
 pub mod noise;
 pub mod path;
@@ -18,6 +19,7 @@ use bevy_math::IVec2;
 use sim_core::{AppHashExt, NameId, NameTable, NextSpawnId, Position, SimSeed, SimSet, SpawnId};
 use sim_core::{StateHash, StateHasher};
 
+pub use flow::{FlowCache, FlowField, FlowKey};
 pub use map::{NO_REGION, RegionId, Terrain, WorldMap};
 pub use path::{PathCache, SharedPath, TravelCosts, find_path};
 pub use settings::WorldGenSettings;
@@ -106,6 +108,8 @@ impl Plugin for WorldPlugin {
             .register_hashed::<Mobile>()
             .exempt_from_hash::<WorldGenReport>("wall-clock diagnostics")
             .exempt_from_hash::<PathCache>("memoised pure function of the map and endpoints")
+            .init_resource::<FlowCache>()
+            .exempt_from_hash::<FlowCache>("memoised pure function of the map, goal and window")
             .exempt_from_hash::<SpatialGrid>("rebuilt from positions every tick")
             .add_systems(
                 FixedUpdate,

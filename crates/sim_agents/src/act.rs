@@ -9,7 +9,10 @@ use sim_core::rng::rng_key;
 use sim_core::{Calendar, Phase, SimSeed, SimTick, SpawnId};
 use sim_economy::{Building, Economy, Inventory, TransferOp, Transfers, Workplace};
 
-use crate::components::{ActionKind, Activity, Employment, Needs, Stage, Travel, TravelState};
+use crate::components::{
+    ActionKind, Activity, CombatStats, Employment, Needs, Stage, Stance, Threat, Travel,
+    TravelState, Villager,
+};
 use crate::data::Villagers;
 
 /// Eats carried food, best first, until sated or out of food. Returns
@@ -38,15 +41,21 @@ pub(crate) fn perform(
     seed: Res<SimSeed>,
     buildings: Query<&Building>,
     workplaces: Query<&Workplace>,
-    mut agents: Query<(
-        &SpawnId,
-        &mut Activity,
-        &mut Travel,
-        &mut Needs,
-        &mut Inventory,
-        &mut Transfers,
-        &mut Employment,
-    )>,
+    threats: Query<&Threat>,
+    mut agents: Query<
+        (
+            &SpawnId,
+            &Villager,
+            &mut CombatStats,
+            &mut Activity,
+            &mut Travel,
+            &mut Needs,
+            &mut Inventory,
+            &mut Transfers,
+            &mut Employment,
+        ),
+        Without<crate::components::Enlisted>,
+    >,
 ) {
     let _span = tracing::info_span!("sim_agents::perform").entered();
     let tick = tick.0;
@@ -54,7 +63,22 @@ pub(crate) fn perform(
     let needs_data = &villagers.data.needs;
     let idle = &villagers.data.idle;
     agents.par_iter_mut().for_each(
-        |(id, mut act, mut travel, mut needs, mut inv, mut transfers, mut job)| {
+        |(
+            id,
+            villager,
+            mut combat,
+            mut act,
+            mut travel,
+            mut needs,
+            mut inv,
+            mut transfers,
+            mut job,
+        )| {
+            // Only a villager who is fighting is militia (SIM-13).
+            let fighting = act.kind == ActionKind::Fight && act.stage != Stage::Done;
+            if !fighting && combat.stance != Stance::Civilian {
+                combat.stance = Stance::Civilian;
+            }
             match act.stage {
                 Stage::Done => {}
                 Stage::Travel => match travel.state {
@@ -209,6 +233,36 @@ pub(crate) fn perform(
                             }
                         }
                     }
+                    ActionKind::Hide => {
+                        if needs.safety > 0.8 {
+                            act.stage = Stage::Done;
+                        }
+                    }
+                    ActionKind::Flee => {
+                        if act.step == 0 {
+                            act.until_tick = tick + 200;
+                            act.step = 1;
+                        } else if tick >= act.until_tick && needs.safety > 0.6 {
+                            act.stage = Stage::Done;
+                        }
+                    }
+                    ActionKind::Fight => {
+                        // sim_military moves and strikes for militia.
+                        let threat = threats.get(villager.settlement).ok();
+                        match threat.and_then(|t| t.provoked_by) {
+                            Some(against)
+                                if combat.morale >= villagers.data.ai.fight.break_morale
+                                    && combat.alive() =>
+                            {
+                                combat.stance = Stance::Militia { against };
+                            }
+                            _ => {
+                                combat.stance = Stance::Civilian;
+                                act.stage = Stage::Done;
+                            }
+                        }
+                    }
+                    ActionKind::Follow | ActionKind::Rout => act.stage = Stage::Done,
                     ActionKind::GoHome | ActionKind::Idle => {
                         if act.step == 0 {
                             let ticks = if act.kind == ActionKind::Idle {
@@ -233,11 +287,16 @@ pub(crate) fn perform(
 }
 
 /// Needs change over time (SIM-10): hunger rises; rest falls while awake
-/// and recovers while asleep; safety recovers (threats arrive in M3).
-pub(crate) fn update_needs(villagers: Res<Villagers>, mut q: Query<(&Activity, &mut Needs)>) {
+/// and recovers while asleep; safety follows the settlement's threat level
+/// (SIM-13): it drops at once and recovers slowly.
+pub(crate) fn update_needs(
+    villagers: Res<Villagers>,
+    threats: Query<&Threat>,
+    mut q: Query<(&Villager, &Activity, &mut Needs), Without<crate::components::Enlisted>>,
+) {
     let _span = tracing::info_span!("sim_agents::update_needs").entered();
     let v = &*villagers;
-    q.par_iter_mut().for_each(|(act, mut needs)| {
+    q.par_iter_mut().for_each(|(villager, act, mut needs)| {
         needs.hunger = (needs.hunger + v.hunger_per_tick).min(1.0);
         let asleep = act.kind == ActionKind::Sleep && act.stage == Stage::Perform;
         needs.rest = if asleep {
@@ -245,7 +304,12 @@ pub(crate) fn update_needs(villagers: Res<Villagers>, mut q: Query<(&Activity, &
         } else {
             (needs.rest - v.rest_loss_per_tick).max(0.0)
         };
-        needs.safety = (needs.safety + 0.01).min(1.0);
+        let safe = 1.0 - threats.get(villager.settlement).map_or(0.0, |t| t.level);
+        needs.safety = if safe < needs.safety {
+            (needs.safety - 0.05).max(safe)
+        } else {
+            (needs.safety + 0.001).min(safe)
+        };
     });
 }
 

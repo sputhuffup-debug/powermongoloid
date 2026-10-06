@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::command::LoggedCommand;
 
 /// Bump when the replay format or the meaning of a command changes.
-pub const REPLAY_FORMAT: u32 = 3;
+pub const REPLAY_FORMAT: u32 = 4;
 
 /// The state hash at a given tick (after `tick` ticks have run).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,6 +23,10 @@ pub struct Replay {
     pub population: u32,
     /// Map size in tiles (worldgen settings otherwise come from the build).
     pub world_size: u32,
+    /// Scenario set up before the first tick ("" = villages only;
+    /// "skirmish" = the M3 playtest armies).
+    #[serde(default)]
+    pub scenario: String,
     pub ticks: u64,
     /// Ticks between checkpoints (0 = only the final state).
     pub checkpoint_every: u64,
@@ -95,14 +99,12 @@ mod tests {
             seed: 42,
             population: 8,
             world_size: 256,
+            scenario: String::new(),
             ticks: 100,
             checkpoint_every: 50,
             commands: vec![LoggedCommand {
                 tick: 7,
-                command: SimCommand {
-                    issuer: FactionId(1),
-                    kind: CommandKind::Noop,
-                },
+                command: SimCommand::player(FactionId(1), CommandKind::Noop),
             }],
             checkpoints: vec![
                 Checkpoint { tick: 50, hash: 1 },
