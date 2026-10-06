@@ -64,7 +64,7 @@ The simulation must run 250,000 people across a full world, with up to 20,000 at
 | SIM-02 | World generation is fully determined by a u64 seed | Must | M1 |
 | SIM-03 | Simulation runs on a fixed tick (10 ticks per game-second at 1x); rendering is decoupled and interpolates | Must | M0 |
 | SIM-04 | A game day lasts 4 real minutes at 1x; days have morning, work, evening and night phases | Must | M2 |
-| SIM-05 | Seasons (30 days each) change crop growth, food decay, movement speed and cold exposure | Should | M4 |
+| SIM-05 | Seasons (30 days each) change crop growth, food decay, movement speed and cold exposure | Should | M4b |
 | SIM-06 | Weather (clear, rain, storm, snow) varies by region and affects movement and farming | Later | — |
 
 ### Villagers
@@ -76,7 +76,9 @@ The simulation must run 250,000 people across a full world, with up to 20,000 at
 | SIM-12 | Villagers choose actions with utility AI scoring needs, job and danger; no scripted schedules | Must | M2 |
 | SIM-13 | Villagers flee, hide or fight based on captain posture, local threat and loyalty | Must | M3 |
 | SIM-14 | Villagers remember notable events (home burned, family killed, fed by a captain) as decaying memories that affect loyalty | Should | M5 |
-| SIM-15 | Population changes through births, deaths (age, starvation, combat) and migration between settlements | Should | M4 |
+| SIM-15 | Population changes through births, deaths (age, starvation, combat) and migration between settlements | Should | M4b |
+| SIM-16 | Every settlement starts as a hamlet and grows through tiers (hamlet, village, town, city) by building on a master plan generated from its town style; it shrinks and leaves ruins when it loses people | Must | M4b |
+| SIM-17 | Builders construct planned buildings from wood, plus stone from quarries for town and city buildings; construction stalls without materials or workers | Must | M4b |
 | SIM-50 | Each settlement follows a faith (data-defined) and holds a piety level that rises with worship, offerings and feasts and falls with hunger, desecration and neglect | Must | M4 |
 | SIM-51 | Sustained high piety brings divine favour: one of the settlement's militia becomes a hero (at most one living hero per settlement; cooldown after a hero dies) | Must | M4 |
 | SIM-52 | Heroes are never controllable by the player or any AI warlord; a hero autonomously leads its settlement's militia within a radius (morale and combat bonus, rallying, engage or fall back) | Must | M4 |
@@ -87,8 +89,8 @@ The simulation must run 250,000 people across a full world, with up to 20,000 at
 | --- | --- | --- | --- |
 | SIM-20 | Goods are physical items held in inventories or stockpiles: grain, fish, mutton, bread, wood, ore, tools, weapons | Must | M2 |
 | SIM-21 | Production chains are data-driven recipes (inputs, outputs, workplace, worker, duration) loaded from RON files | Must | M2 |
-| SIM-22 | Food decays over time; decay rate depends on type and season | Should | M4 |
-| SIM-23 | Carters move surplus goods between nearby settlements along roads | Should | M4 |
+| SIM-22 | Food decays over time; decay rate depends on type and season | Should | M4b |
+| SIM-23 | Carters move surplus goods between nearby settlements along roads | Should | M4b |
 | SIM-24 | Settlements track food security (days of food at current consumption), which drives loyalty and migration | Must | M4 |
 
 ### Armies and combat
@@ -240,8 +242,9 @@ The look is a clean, low-poly 3D isometric-style world that stays readable with 
 | RND-02 | Camera: perspective with an orbit-style rig; pan (WASD, edge scroll, drag), zoom (wheel), rotate in 90-degree steps and freely (Q/E) | Must | M1 |
 | RND-03 | Agents render as GPU-instanced low-poly figures, tinted by faction and occupation; distant agents switch to billboards, then to density dots | Must | M2 |
 | RND-04 | 20,000 visible agents at 60 fps on the reference machine | Must | M3 |
-| RND-05 | Day and night lighting tied to sim time; seasonal palette shifts | Should | M4 |
+| RND-05 | Day and night lighting tied to sim time; seasonal palette shifts | Should | M4b |
 | RND-06 | Render positions interpolate between the last two sim ticks so motion is smooth at any sim speed | Must | M2 |
+| RND-07 | Each settlement has a town style drawn from a world building tradition (see docs/TOWNS_DESIGN.md), assigned per seed among styles that suit its site; a style sets layout and building looks, never building purpose | Must | M4b |
 | UI-01 | Captain panel: orders, posture slider, follower count, food carried, morale | Must | M3 |
 | UI-02 | Settlement panel: population by occupation, stockpiles, food security in days, loyalty, owner | Must | M2 |
 | UI-03 | Click any villager to see name, job, needs, current action and memories ("why is this person doing that") | Must | M2 |
@@ -286,7 +289,7 @@ Reference machine: 8-core desktop CPU from 2022 or later, 16 GB RAM, a mid-range
 
 ## Milestone roadmap
 
-Seven milestones take the project from an empty repo to a playable campaign; M3 is the go/no-go point for the core fantasy. Each milestone ends only when every acceptance criterion passes and the build is green.
+Seven milestones, plus M4b "Living towns" (added 2026-10-06), take the project from an empty repo to a playable campaign; M3 is the go/no-go point for the core fantasy. Each milestone ends only when every acceptance criterion passes and the build is green.
 
 ### M0: Skeleton
 
@@ -322,13 +325,23 @@ Captains, followers, orders, posture, flow-field movement, combat, food upkeep.
 - [ ] 20,000 visible agents at 60 fps on the reference machine (run `cargo run --release -p game_app -- --stress 20000` there; the container renders in software)
 - [ ] **Go/no-go**: playtest whether marching an army through living villages is interesting. If not, revise the design before M4 (checklist: `docs/M3_PLAYTEST.md`)
 
-### M4: Conquest and economy
+### M4: Conquest and faith
 
-Settlement conquest, loyalty, trade, food decay, seasons, overlays, event feed, save/load.
+Settlement conquest, loyalty, faith, piety and heroes, overlays, event feed, save/load.
 
 - [ ] Conquering a settlement transfers it; loyalty responds to treatment and food security
-- [ ] Carters move surplus between settlements; overlays show food security and supply
+- [ ] Overlays show ownership, loyalty and food security; the event feed jumps to its stories
+- [ ] Sustained piety raises a hero who leads the militia and obeys no one
 - [ ] Save and load restore an identical state hash
+
+### M4b: Living towns
+
+Settlements grow from hamlets to cities in their own town styles; population, construction, trade, seasons and food decay. Design: `docs/TOWNS_DESIGN.md`.
+
+- [ ] Every settlement starts as a hamlet; under good conditions one grows to a village and then a town within the configured days, stalls in famine and shrinks after a sack
+- [ ] Every town style produces a valid master plan on the sites it suits (no overlaps, every plot reachable), and a seed always yields the same styles and plans
+- [ ] Carters move surplus between settlements; the supply overlay shows the flows
+- [ ] Seasons change yields, decay and travel, and a year of play keeps villages alive without intervention
 
 ### M5: Scale and information
 
