@@ -1,0 +1,55 @@
+name: Benchmarks
+
+# Nightly criterion run (NFR-03, NFR-04). Compares with the previous night's
+# results and fails if any benchmark is more than 10% slower.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bevy system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+
+      - name: Install Rust
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bench
+
+      # The previous night's baseline. A new key each run, restored by prefix.
+      - name: Restore benchmark baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: target/criterion
+          key: criterion-${{ github.run_id }}
+          restore-keys: criterion-
+
+      - name: Run benchmarks
+        run: |
+          # Only comparisons from this run count.
+          find target/criterion -type d -name change -prune -exec rm -rf {} + 2>/dev/null || true
+          cargo bench -p sim_headless -- --save-baseline nightly --noplot
+
+      - name: Save benchmark baseline
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: target/criterion
+          key: criterion-${{ github.run_id }}
+
+      - name: Check for regressions over 10%
+        run: python3 scripts/check_bench_regression.py target/criterion --threshold 0.10

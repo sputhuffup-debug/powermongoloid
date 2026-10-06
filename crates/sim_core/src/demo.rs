@@ -6,12 +6,17 @@ use bevy_ecs::prelude::*;
 use bevy_math::{IVec2, Vec2};
 use rand::RngExt;
 
+use crate::hash::{AppHashExt, StateHash, StateHasher};
 use crate::rng::rng_key;
 use crate::{Motion, NextSpawnId, Position, SimSeed, SimSet, SimTick, SpawnId, spawn_sim};
 
 /// Marks a placeholder wanderer.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct Wanderer;
+
+impl StateHash for Wanderer {
+    fn hash_state(&self, _h: &mut StateHasher) {}
+}
 
 pub struct DemoWanderersPlugin {
     pub count: u32,
@@ -20,17 +25,26 @@ pub struct DemoWanderersPlugin {
 #[derive(Resource)]
 struct DemoCount(u32);
 
+impl StateHash for DemoCount {
+    fn hash_state(&self, h: &mut StateHasher) {
+        h.u32(self.0);
+    }
+}
+
 impl Plugin for DemoWanderersPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(DemoCount(self.count)).add_systems(
-            FixedUpdate,
-            (
-                spawn_wanderers
-                    .in_set(SimSet::Input)
-                    .run_if(resource_equals(SimTick(0))),
-                wander.in_set(SimSet::Move),
-            ),
-        );
+        app.insert_resource(DemoCount(self.count))
+            .register_hashed::<Wanderer>()
+            .register_hashed_resource::<DemoCount>()
+            .add_systems(
+                FixedUpdate,
+                (
+                    spawn_wanderers
+                        .in_set(SimSet::Input)
+                        .run_if(resource_equals(SimTick(0))),
+                    wander.in_set(SimSet::Move),
+                ),
+            );
     }
 }
 

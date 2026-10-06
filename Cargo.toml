@@ -12,7 +12,8 @@ publish = false
 [workspace.dependencies]
 # Simulation crates use only these Bevy sub-crates (ADR 0002).
 bevy_app = "=0.19.1"
-bevy_ecs = "=0.19.1"
+# `debug` keeps type names, used by the state-hash coverage check (ADR 0004).
+bevy_ecs = { version = "=0.19.1", features = ["debug"] }
 bevy_math = "=0.19.1"
 # Full engine: game_* crates only.
 bevy = "=0.19.1"
@@ -50,6 +51,8 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+# Dependency debug info made target/ exceed 20 GB; our crates keep theirs.
+debug = false
 
 [profile.release]
 debug = "line-tables-only"

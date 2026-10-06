@@ -1,5 +1,6 @@
 use bevy_ecs::prelude::*;
 use bevy_math::{IVec2, Vec2};
+use serde::{Deserialize, Serialize};
 
 use crate::hash::{StateHash, StateHasher};
 
@@ -34,7 +35,7 @@ impl StateHash for NextSpawnId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct FactionId(pub u16);
 
 /// Tile coordinates. The sub-tile part of the position lives in [`Motion`].

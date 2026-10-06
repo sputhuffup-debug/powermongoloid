@@ -39,9 +39,10 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
-      - name: Headless determinism smoke run
+      - name: Replay smoke run (NFR-08)
         run: |
-          a=$(cargo run -q -p sim_headless -- --seed 42 --ticks 1000)
-          b=$(cargo run -q -p sim_headless -- --seed 42 --ticks 1000)
-          echo "$a"
-          test "$a" = "$b"
+          cargo build -q --release -p sim_headless
+          bin=target/release/sim_headless
+          $bin --seed 42 --ticks 10000 --commands 200 --record replay.ron
+          $bin --replay replay.ron
+          $bin --replay replay.ron --single-threaded
