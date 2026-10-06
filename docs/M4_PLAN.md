@@ -1,6 +1,6 @@
 # M4 Plan: Conquest and economy
 
-Status: **draft 2026-10-06; decisions below need answers before building**. No code written yet.
+Status: **decisions made 2026-10-06; building starts after the M3 playtest says go**. No code written yet.
 Spec: `docs/SEED.md` § "M4: Conquest and economy", plus faith, piety and heroes (SIM-50..52, UI-08), added on 2026-10-06.
 
 **Depends on the M3 go/no-go playtest** (`docs/M3_PLAYTEST.md`). If the playtest changes the core loop, this plan changes with it. Nothing below is built until you've played M3 and said go.
@@ -105,23 +105,13 @@ Spec: `docs/SEED.md` § "M4: Conquest and economy", plus faith, piety and heroes
 - Settlement-level work (loyalty targets, trade matching, piety, events) runs once per game hour, not per tick.
 - The 20,000-agent budgets from M3 (≤ 8 ms per tick, NFR-03) must hold, and the benchmarks gain `tick/year` (seasons, trade and births running).
 
-## Decisions needed
-1. **Loyalty: per villager or per settlement?** SEED.md's data model has per-villager `Loyalty`.
-   - **Per villager** (recommended): individuals then differ in who joins a revolt, who migrates and who volunteers. M5's dormant regions keep it as a field in each villager record. The panel shows the mean.
-   - **Per settlement:** simpler and cheaper, but every villager in a village acts alike.
-2. **Currency?**
-   - **No currency in M4** (recommended): goods trade at the values in `economy.ron`, carters bring back goods of equal value, and armies buy with goods as in M3.
-   - **A coin good:** adds taxes and markets, which is more to balance; it fits better alongside M5's rival warlords.
-3. **Do faiths differ in play?**
-   - **Small modifiers per faith** (recommended): three faiths in data, each with one difference, e.g. one gains more from feasts, one from offerings, and a sea faith gains from fishing.
-   - **Names and colours only.**
-4. **Cold exposure in winter?**
-   - **Firewood need** (recommended): as above.
-   - **Seasons change only crops, decay and speed**, and cold waits for later.
-5. **Whom does a hero fight?**
-   - **Anyone who provokes its village, its owner included** (recommended). If you plunder a village you conquered, its hero turns on you, and heroes lead revolts. "Never controllable" then means the hero answers only to the village.
-   - **Heroes defend only against the village's enemies,** never its owner.
-6. **Add `postcard` and `zstd`** for save files, as ADR 0001 planned? CLAUDE.md requires your approval for new dependencies.
+## Decisions (answered 2026-10-06)
+1. **Loyalty: per villager.** This follows SEED.md's data model; the settlement panel shows the average.
+2. **No currency in M4.** Goods trade at the values in `economy.ron`, and carters bring back goods of equal value. Coin can come with M5's rival warlords.
+3. **Faiths: small data-defined modifiers per faith.** This was the recommended default, and it is easy to reduce to names only.
+4. **Cold exposure: a firewood need in winter.** Recommended default; it can be dropped without touching the rest.
+5. **Heroes fight anyone who provokes their village, its owner included,** and lead revolts. The hero answers only to its village.
+6. **`postcard` and `zstd` approved** for save files (ADR 0001).
 
 ## Out of scope for M4
 - **Simulation LOD and the full 250,000-person island** (M5). Saves cover the populated region and armies now, and NFR-07 at full scale is measured in M5.
