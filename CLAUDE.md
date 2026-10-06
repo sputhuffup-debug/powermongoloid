@@ -6,7 +6,7 @@ Requirement IDs (GP-, SIM-, RND-, UI-, NFR-) are stable; reference them
 in commits, tests and comments.
 
 ## Current milestone
-M3 (M0 complete 2026-10-05, M1 and M2 complete 2026-10-06; update this line as milestones complete)
+M3 (M0 complete 2026-10-05, M1 and M2 complete 2026-10-06, M3b built 2026-10-06; M3 awaits its stress run and playtest; update this line as milestones complete)
 
 ## Hard rules
 - sim_* crates never depend on rendering, windowing, audio or asset crates.

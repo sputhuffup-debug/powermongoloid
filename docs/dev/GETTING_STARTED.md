@@ -81,6 +81,7 @@ Before you push, run the same steps as CI: fmt, clippy, test, and `cargo doc --w
 | `Unable to find libxkbcommon-x11` or a blank window on Linux | Install `libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2` |
 | `failed to find a suitable GPU adapter` | Install Vulkan drivers (`mesa-vulkan-drivers` for software rendering) |
 | The game runs at 1–5 fps in a VM or container | Software rendering. Expected; measure performance on a real GPU |
+| `ALSA lib ... No such file or directory` at startup | No sound card (common in containers and VMs). Harmless; the game has no audio yet |
 | `Error adding plugin ... already added` | Two plugins add the same Bevy plugin; guard with `app.is_plugin_added::<T>()` (see `game_app/src/main.rs`) |
 | A determinism test fails | Follow the checklist in [DETERMINISM.md](DETERMINISM.md#when-a-determinism-test-fails) |
 | `state_hash_covers_every_sim_component` fails | You added a component or resource without registering it; see [HOWTO.md](HOWTO.md#add-a-component-or-resource) |

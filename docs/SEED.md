@@ -340,9 +340,9 @@ Captains, followers, orders, posture, flow-field movement, combat, food upkeep.
 
 Documentation so human developers can work alongside Claude Code. No gameplay. Plan: `docs/M3B_PLAN.md`.
 
-- [ ] Following only `docs/dev/GETTING_STARTED.md` in a fresh container builds and runs the game, headless and the tests
-- [ ] `cargo doc --workspace --no-deps` builds without warnings in CI, and every crate has an overview
-- [ ] Every data field is documented and every HOWTO recipe points at code that exists (both checked by tests)
+- [x] Following only `docs/dev/GETTING_STARTED.md` in a fresh container builds and runs the game, headless and the tests (2026-10-06: a fresh clone built and ran headless and passed every test with its own `target/`; the game was built from the same clone but reused the shared Bevy build cache because the box had no disk for a second copy, then ran under Xvfb)
+- [x] `cargo doc --workspace --no-deps` builds without warnings in CI, and every crate has an overview
+- [x] Every data field is documented and every HOWTO recipe points at code that exists (both checked by tests: `tests/tests/docs.rs`)
 
 ### M4: Conquest and faith
 

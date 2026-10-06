@@ -132,7 +132,9 @@ fn every_data_field_is_documented() {
 
 /// Backticked repository paths such as `crates/sim_core/src/lib.rs`.
 fn named_paths(md: &str) -> Vec<String> {
-    const ROOTS: [&str; 6] = ["crates/", "tests/", "assets/", "scripts/", "docs/", ".github/"];
+    const ROOTS: [&str; 6] = [
+        "crates/", "tests/", "assets/", "scripts/", "docs/", ".github/",
+    ];
     md.split('`')
         .skip(1)
         .step_by(2)

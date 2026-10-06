@@ -1,6 +1,6 @@
 # M3b Plan: Developer handbook
 
-Status: **planned 2026-10-06; decisions made; build when asked** (you chose plan only for now). Requested: "add some code base documentation so humans can develop alongside easier".
+Status: **built 2026-10-06** (planned and built the same day; all three acceptance criteria in docs/SEED.md checked). Requested: "add some code base documentation so humans can develop alongside easier".
 
 M3b makes the codebase approachable for human developers working next to Claude Code. It adds no gameplay. The sim has grown to 11 crates, 6 data files and about 70 systems, and today the only guides are the spec, the milestone plans, ADRs, and CLAUDE.md, which is written for an agent. M3b runs alongside the M3 playtest, so it doesn't delay M4.
 
