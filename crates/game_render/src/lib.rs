@@ -8,7 +8,7 @@ pub mod settlements;
 pub mod terrain;
 
 use bevy::prelude::*;
-use sim_core::demo::Wanderer;
+use sim_agents::Villager;
 use sim_core::{Motion, Position};
 use sim_world::WorldMap;
 
@@ -31,7 +31,7 @@ impl Plugin for RenderPlugin {
                 settlements::SettlementVisualsPlugin,
             ))
             .add_systems(Startup, setup_light)
-            .add_systems(Update, draw_wanderers);
+            .add_systems(Update, draw_villagers);
     }
 }
 
@@ -48,8 +48,8 @@ fn setup_light(mut commands: Commands) {
     ));
 }
 
-fn draw_wanderers(
-    q: Query<(&Position, &Motion), With<Wanderer>>,
+fn draw_villagers(
+    q: Query<(&Position, &Motion), With<Villager>>,
     map: Option<Res<WorldMap>>,
     mut gizmos: Gizmos,
 ) {

@@ -2982,7 +2982,9 @@ name = "game_render"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "sim_agents",
  "sim_core",
+ "sim_economy",
  "sim_world",
 ]
 
@@ -3556,7 +3558,9 @@ name = "integration_tests"
 version = "0.1.0"
 dependencies = [
  "bevy_math",
+ "sim_agents",
  "sim_core",
+ "sim_economy",
  "sim_headless",
  "sim_world",
 ]
@@ -5266,7 +5270,15 @@ version = "0.1.0"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
+ "bevy_math",
+ "rand",
+ "rand_chacha",
+ "ron",
+ "serde",
  "sim_core",
+ "sim_economy",
+ "sim_world",
+ "tracing",
 ]
 
 [[package]]
@@ -5298,7 +5310,12 @@ version = "0.1.0"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
+ "bevy_math",
+ "ron",
+ "serde",
  "sim_core",
+ "sim_world",
+ "tracing",
 ]
 
 [[package]]

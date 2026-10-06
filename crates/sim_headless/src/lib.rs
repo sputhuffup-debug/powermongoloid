@@ -2,12 +2,13 @@
 //! integration tests, benchmarks and `game_app`; plus the determinism
 //! harness (NFR-08, ADR 0004).
 
+pub mod stats;
+
 use std::time::{Duration, Instant};
 
 use bevy_app::{App, FixedUpdate, PluginGroup, PluginGroupBuilder, TaskPoolPlugin};
 use bevy_ecs::schedule::SingleThreadedExecutor;
 use rand::RngExt;
-use sim_core::demo::DemoWanderersPlugin;
 use sim_core::rng::rng_key;
 use sim_core::{
     Checkpoint, CommandKind, CommandLog, CommandScript, FactionId, LoggedCommand, REPLAY_FORMAT,
@@ -15,22 +16,28 @@ use sim_core::{
 };
 use sim_world::WorldGenSettings;
 
-/// Default number of M0 placeholder wanderers.
-pub const DEFAULT_DEMO_AGENTS: u32 = 256;
+/// The population in `villagers.ron` (5,000 for M2).
+pub fn default_population() -> u32 {
+    sim_agents::Villagers::default_data(&sim_core::Calendar::default_data())
+        .data
+        .population
+        .total
+}
 
 /// Every `sim_*` plugin, in dependency order.
 pub struct SimPlugins {
     pub seed: u64,
-    pub demo_agents: u32,
+    /// Overrides the population in `villagers.ron`.
+    pub population: Option<u32>,
     pub worldgen: WorldGenSettings,
 }
 
 impl SimPlugins {
-    /// The shipped world settings (`assets/data/worldgen.ron`).
-    pub fn new(seed: u64, demo_agents: u32) -> Self {
+    /// The shipped data files.
+    pub fn new(seed: u64) -> Self {
         Self {
             seed,
-            demo_agents,
+            population: None,
             worldgen: WorldGenSettings::default_data(),
         }
     }
@@ -44,15 +51,14 @@ impl PluginGroup for SimPlugins {
                 settings: self.worldgen,
                 threads: sim_world::worldgen::default_threads(),
             })
-            .add(sim_agents::AgentsPlugin)
             .add(sim_economy::EconomyPlugin)
+            .add(sim_agents::AgentsPlugin {
+                population: self.population,
+            })
             .add(sim_military::MilitaryPlugin)
             .add(sim_knowledge::KnowledgePlugin)
             .add(sim_lod::LodPlugin)
             .add(sim_ai::AiPlugin)
-            .add(DemoWanderersPlugin {
-                count: self.demo_agents,
-            })
     }
 }
 
@@ -69,7 +75,7 @@ pub enum Threading {
 #[derive(Debug, Clone, Copy)]
 pub struct HeadlessConfig {
     pub seed: u64,
-    pub demo_agents: u32,
+    pub population: u32,
     pub threading: Threading,
     /// Map size in tiles; the shipped settings' size (2048) by default.
     pub world_size: u32,
@@ -79,7 +85,7 @@ impl HeadlessConfig {
     pub fn new(seed: u64) -> Self {
         Self {
             seed,
-            demo_agents: DEFAULT_DEMO_AGENTS,
+            population: default_population(),
             threading: Threading::Multi,
             world_size: WorldGenSettings::default_data().size,
         }
@@ -96,7 +102,7 @@ pub fn headless_app(config: HeadlessConfig) -> App {
     app.add_plugins(TaskPoolPlugin::default())
         .add_plugins(SimPlugins {
             seed: config.seed,
-            demo_agents: config.demo_agents,
+            population: Some(config.population),
             worldgen: config.worldgen(),
         });
     if config.threading == Threading::Single {
@@ -161,9 +167,9 @@ pub fn run(
 }
 
 /// Runs `ticks` ticks from `seed` and returns the final state hash.
-pub fn run_and_hash(seed: u64, ticks: u64, demo_agents: u32) -> u64 {
+pub fn run_and_hash(seed: u64, ticks: u64, population: u32) -> u64 {
     let config = HeadlessConfig {
-        demo_agents,
+        population,
         ..HeadlessConfig::new(seed)
     };
     run(config, ticks, &[], 0).final_hash()
@@ -180,7 +186,7 @@ pub fn record_replay(
     Replay {
         format: REPLAY_FORMAT,
         seed: config.seed,
-        demo_agents: config.demo_agents,
+        population: config.population,
         world_size: config.world_size,
         ticks,
         checkpoint_every,
@@ -213,7 +219,7 @@ impl std::fmt::Display for Divergence {
 pub fn verify_replay(replay: &Replay, threading: Threading) -> Result<RunResult, Divergence> {
     let config = HeadlessConfig {
         seed: replay.seed,
-        demo_agents: replay.demo_agents,
+        population: replay.population,
         threading,
         world_size: replay.world_size,
     };
@@ -244,4 +250,32 @@ pub fn sample_commands(seed: u64, ticks: u64, count: usize) -> Vec<LoggedCommand
         .collect();
     commands.sort_by_key(|c| c.tick);
     commands
+}
+
+/// Scenario helper (M2 famine criterion): turns every farmer in
+/// `settlement` idle, as if they had been cut off from their fields.
+/// Applied before the first tick, like any other scenario setup. Returns
+/// the number of farmers affected.
+pub fn cut_off_farmers(app: &mut App, settlement: bevy_ecs::entity::Entity) -> u32 {
+    use sim_agents::{Employment, Villager};
+    use sim_economy::{Occupation, Workplace};
+    let world = app.world_mut();
+    let mut q = world.query::<(&Villager, &mut Occupation, &mut Employment)>();
+    let mut n = 0;
+    let mut freed = Vec::new();
+    for (v, mut occ, mut job) in q.iter_mut(world) {
+        if v.settlement == settlement && *occ == Occupation::Farmer {
+            *occ = Occupation::Idle;
+            if let Some(w) = job.workplace.take() {
+                freed.push(w);
+            }
+            n += 1;
+        }
+    }
+    for w in freed {
+        if let Some(mut wp) = world.get_mut::<Workplace>(w) {
+            wp.workers.clear();
+        }
+    }
+    n
 }

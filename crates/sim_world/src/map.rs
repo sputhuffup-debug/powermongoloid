@@ -184,6 +184,11 @@ impl WorldMap {
         )
     }
 
+    /// Sum of all chunk revisions: changes whenever any tile changes.
+    pub fn total_revision(&self) -> u64 {
+        self.chunk_revision.iter().map(|r| *r as u64).sum()
+    }
+
     /// Incremented whenever any tile in the chunk changes.
     pub fn chunk_revision(&self, chunk: u32) -> u32 {
         self.chunk_revision[chunk as usize]
