@@ -112,6 +112,20 @@ impl WorldMap {
         map
     }
 
+    /// A level map of one terrain, in region 0 (tests and scenarios).
+    pub fn flat(size: u32, chunk_size: u32, terrain: Terrain) -> Self {
+        let n = (size * size) as usize;
+        Self::from_parts(
+            size,
+            chunk_size,
+            vec![0.5; n],
+            vec![terrain; n],
+            vec![100; n],
+            vec![0; n],
+            0.3,
+        )
+    }
+
     pub fn size(&self) -> u32 {
         self.size
     }

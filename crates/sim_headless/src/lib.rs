@@ -6,7 +6,8 @@ pub mod stats;
 
 use std::time::{Duration, Instant};
 
-use bevy_app::{App, FixedUpdate, PluginGroup, PluginGroupBuilder, TaskPoolPlugin};
+pub use bevy_app::App;
+use bevy_app::{FixedUpdate, PluginGroup, PluginGroupBuilder, TaskPoolPlugin};
 use bevy_ecs::schedule::SingleThreadedExecutor;
 use rand::RngExt;
 use sim_core::rng::rng_key;
@@ -72,6 +73,41 @@ pub enum Threading {
     Single,
 }
 
+/// What is set up before the first tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Scenario {
+    /// The populated region only (M2).
+    #[default]
+    Villages,
+    /// The M3 playtest start: the player's captain and a raiding band
+    /// (`sim_military::setup_skirmish`).
+    Skirmish,
+    /// The skirmish plus two armed armies of this many each, marching on
+    /// each other (`sim_military::setup_battle`; benchmarks, stress).
+    Battle(u32),
+}
+
+impl Scenario {
+    pub fn name(self) -> String {
+        match self {
+            Scenario::Villages => String::new(),
+            Scenario::Skirmish => "skirmish".into(),
+            Scenario::Battle(n) => format!("battle:{n}"),
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "" | "villages" => Some(Scenario::Villages),
+            "skirmish" => Some(Scenario::Skirmish),
+            _ => s
+                .strip_prefix("battle:")
+                .and_then(|n| n.parse().ok())
+                .map(Scenario::Battle),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct HeadlessConfig {
     pub seed: u64,
@@ -79,6 +115,7 @@ pub struct HeadlessConfig {
     pub threading: Threading,
     /// Map size in tiles; the shipped settings' size (2048) by default.
     pub world_size: u32,
+    pub scenario: Scenario,
 }
 
 impl HeadlessConfig {
@@ -88,6 +125,7 @@ impl HeadlessConfig {
             population: default_population(),
             threading: Threading::Multi,
             world_size: WorldGenSettings::default_data().size,
+            scenario: Scenario::Villages,
         }
     }
 
@@ -111,6 +149,15 @@ pub fn headless_app(config: HeadlessConfig) -> App {
         });
     }
     app.prepare_sim();
+    match config.scenario {
+        Scenario::Villages => {}
+        Scenario::Skirmish => {
+            sim_military::setup_skirmish(app.world_mut());
+        }
+        Scenario::Battle(n) => {
+            sim_military::setup_battle(app.world_mut(), n);
+        }
+    }
     app
 }
 
@@ -188,6 +235,7 @@ pub fn record_replay(
         seed: config.seed,
         population: config.population,
         world_size: config.world_size,
+        scenario: config.scenario.name(),
         ticks,
         checkpoint_every,
         commands: result.log,
@@ -222,6 +270,7 @@ pub fn verify_replay(replay: &Replay, threading: Threading) -> Result<RunResult,
         population: replay.population,
         threading,
         world_size: replay.world_size,
+        scenario: Scenario::parse(&replay.scenario).unwrap_or_default(),
     };
     let result = run(
         config,
@@ -242,14 +291,99 @@ pub fn sample_commands(seed: u64, ticks: u64, count: usize) -> Vec<LoggedCommand
     let mut commands: Vec<LoggedCommand> = (0..count)
         .map(|_| LoggedCommand {
             tick: rng.random_range(0..ticks.max(1)),
-            command: SimCommand {
-                issuer: FactionId(rng.random_range(0..4)),
-                kind: CommandKind::Noop,
-            },
+            command: SimCommand::player(FactionId(rng.random_range(0..4)), CommandKind::Noop),
         })
         .collect();
     commands.sort_by_key(|c| c.tick);
     commands
+}
+
+/// `count` deterministic military commands for the armies in `app` (after
+/// scenario setup), spread over `ticks`, from `seed`: orders of every kind,
+/// posture changes, appointments, and some invalid commands (another
+/// faction's captain, an unknown settlement) that must be refused. Issued
+/// by the player's faction (1). Used by tests and `sim_headless --commands`.
+pub fn sample_orders(app: &mut App, seed: u64, ticks: u64, count: usize) -> Vec<LoggedCommand> {
+    use bevy_ecs::prelude::*;
+    use sim_core::{OrderSpec, Posture, SpawnId};
+    use sim_economy::SettlementEconomy;
+    use sim_military::{Captain, Follower};
+    let world = app.world_mut();
+    let mut q = world.query::<(&SpawnId, &Captain, &sim_core::Position)>();
+    let mut captains: Vec<(u64, u16, bevy_math::IVec2)> = q
+        .iter(world)
+        .map(|(id, c, p)| (id.0, c.faction.0, p.0))
+        .collect();
+    captains.sort_unstable_by_key(|c| c.0);
+    let mut q = world.query_filtered::<&SpawnId, With<SettlementEconomy>>();
+    let mut settlements: Vec<u64> = q.iter(world).map(|s| s.0).collect();
+    settlements.sort_unstable();
+    let mut q = world.query::<(&SpawnId, &Follower)>();
+    let mut followers: Vec<u64> = q.iter(world).map(|(s, _)| s.0).collect();
+    followers.sort_unstable();
+    if captains.is_empty() || settlements.is_empty() {
+        return sample_commands(seed, ticks, count);
+    }
+    let mut rng = SimSeed(seed).stream(rng_key("sim_headless::sample_orders"), 0);
+    let mut out: Vec<LoggedCommand> = (0..count)
+        .map(|_| {
+            let (cid, _, at) = captains[rng.random_range(0..captains.len())];
+            let s = settlements[rng.random_range(0..settlements.len())];
+            let kind = match rng.random_range(0..12) {
+                0..=2 => {
+                    let (x, y) = near(&mut rng, at);
+                    OrderSpec::MoveTo { x, y }
+                }
+                3 => OrderSpec::GatherFood { settlement: s },
+                4 => OrderSpec::Recruit {
+                    settlement: s,
+                    count: rng.random_range(1..20),
+                },
+                5 => OrderSpec::Equip { settlement: s },
+                6 => OrderSpec::Trade { settlement: s },
+                7 => OrderSpec::Attack { settlement: s },
+                8 => {
+                    let (x, y) = near(&mut rng, at);
+                    OrderSpec::Scout { x, y }
+                }
+                9 => OrderSpec::Return,
+                10 => OrderSpec::GatherFood {
+                    settlement: u64::MAX,
+                },
+                _ => OrderSpec::MoveTo { x: -5, y: 3 },
+            };
+            let command = match rng.random_range(0..10) {
+                0 => CommandKind::SetPosture {
+                    captain: cid,
+                    posture: [Posture::Passive, Posture::Neutral, Posture::Aggressive]
+                        [rng.random_range(0..3)],
+                },
+                1 if !followers.is_empty() => CommandKind::AppointCaptain {
+                    follower: followers[rng.random_range(0..followers.len())],
+                },
+                2 => CommandKind::CancelOrders { captain: cid },
+                _ => CommandKind::IssueOrder {
+                    captain: cid,
+                    order: kind,
+                    queue: rng.random_bool(0.3),
+                },
+            };
+            LoggedCommand {
+                tick: rng.random_range(0..ticks.max(1)),
+                command: SimCommand::player(FactionId(1), command),
+            }
+        })
+        .collect();
+    out.sort_by_key(|c| c.tick);
+    out
+}
+
+/// A tile within 60 tiles of `at` (clamped at 0).
+fn near<R: rand::Rng + ?Sized>(rng: &mut R, at: bevy_math::IVec2) -> (i32, i32) {
+    (
+        (at.x + rng.random_range(-60..=60)).max(0),
+        (at.y + rng.random_range(-60..=60)).max(0),
+    )
 }
 
 /// Scenario helper (M2 famine criterion): turns every farmer in

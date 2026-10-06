@@ -12,7 +12,7 @@ pub mod terrain;
 
 use bevy::prelude::*;
 
-pub use agents::{AgentVisual, AgentVisuals, occupation_color};
+pub use agents::{AgentVisual, AgentVisuals, Look, faction_color, occupation_color};
 pub use bands::{Band, RenderSettings};
 pub use buildings::BuildingVisuals;
 pub use camera::CameraRig;

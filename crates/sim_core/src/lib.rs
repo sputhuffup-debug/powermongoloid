@@ -19,8 +19,8 @@ use bevy_ecs::prelude::*;
 
 pub use calendar::{Calendar, ClockReading, Phase};
 pub use command::{
-    CommandKind, CommandLog, CommandScript, CommandsProcessed, LoggedCommand, SimCommand,
-    SimInputSet,
+    CommandKind, CommandLog, CommandOrigin, CommandScript, CommandsProcessed, LoggedCommand,
+    OrderSpec, Posture, SimCommand, SimInputSet,
 };
 pub use components::{Allegiance, DetailLevel, FactionId, Motion, NextSpawnId, Position, SpawnId};
 pub use hash::{AppHashExt, StateHash, StateHasher, compute_state_hash, unhashed_state};

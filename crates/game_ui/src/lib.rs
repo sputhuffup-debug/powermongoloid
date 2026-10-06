@@ -3,6 +3,7 @@
 
 use bevy::prelude::*;
 
+pub mod army;
 #[cfg(feature = "debug_ui")]
 mod debug_panel;
 mod labels;
@@ -22,6 +23,7 @@ impl Plugin for UiPlugin {
             selection::SelectionPlugin,
             panels::PanelsPlugin,
             time_bar::TimeBarPlugin,
+            army::ArmyUiPlugin,
         ));
         #[cfg(feature = "debug_ui")]
         app.add_plugins(debug_panel::DebugPanelPlugin);

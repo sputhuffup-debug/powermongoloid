@@ -18,6 +18,9 @@ tracy = ["bevy/trace_tracy"]
 bevy.workspace = true
 sim_core.workspace = true
 sim_headless.workspace = true
+sim_military.workspace = true
+sim_agents.workspace = true
+sim_world.workspace = true
 game_render.workspace = true
 game_ui.workspace = true
 

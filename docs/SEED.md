@@ -77,6 +77,9 @@ The simulation must run 250,000 people across a full world, with up to 20,000 at
 | SIM-13 | Villagers flee, hide or fight based on captain posture, local threat and loyalty | Must | M3 |
 | SIM-14 | Villagers remember notable events (home burned, family killed, fed by a captain) as decaying memories that affect loyalty | Should | M5 |
 | SIM-15 | Population changes through births, deaths (age, starvation, combat) and migration between settlements | Should | M4 |
+| SIM-50 | Each settlement follows a faith (data-defined) and holds a piety level that rises with worship, offerings and feasts and falls with hunger, desecration and neglect | Must | M4 |
+| SIM-51 | Sustained high piety brings divine favour: one of the settlement's militia becomes a hero (at most one living hero per settlement; cooldown after a hero dies) | Must | M4 |
+| SIM-52 | Heroes are never controllable by the player or any AI warlord; a hero autonomously leads its settlement's militia within a radius (morale and combat bonus, rallying, engage or fall back) | Must | M4 |
 
 ### Economy
 
@@ -246,6 +249,7 @@ The look is a clean, low-poly 3D isometric-style world that stays readable with 
 | UI-05 | Event feed that surfaces notable simulation stories (famine in a village, desertion, revolt) with a click-to-jump | Must | M4 |
 | UI-06 | Strategic map view at max zoom-out showing regions, settlements and known armies as icons | Should | M5 |
 | UI-07 | Debug UI (egui): tick time per system set, entity counts by detail level, region LOD state, RNG seed | Must | M0 |
+| UI-08 | Settlement panel shows faith and piety; heroes are visibly distinct and their inspector explains their decisions | Must | M4 |
 
 ## Non-functional requirements
 
@@ -312,11 +316,11 @@ Villagers, needs, occupations, utility AI, goods and recipes, day phases.
 
 Captains, followers, orders, posture, flow-field movement, combat, food upkeep.
 
-- [ ] The player orders a captain with 200 followers across the region; they move as a crowd around obstacles
-- [ ] Posture visibly changes how followers treat villagers
-- [ ] An army without food loses morale and starts deserting within the specified days
-- [ ] 20,000 visible agents at 60 fps on the reference machine
-- [ ] **Go/no-go**: playtest whether marching an army through living villages is interesting. If not, revise the design before M4
+- [x] The player orders a captain with 200 followers across the region; they move as a crowd around obstacles (`tests/army_march.rs`)
+- [x] Posture visibly changes how followers treat villagers (`tests/posture.rs`; screenshots in the M3 report)
+- [x] An army without food loses morale and starts deserting within the specified days (`tests/starving_army.rs`; deadline in `army.ron`)
+- [ ] 20,000 visible agents at 60 fps on the reference machine (run `cargo run --release -p game_app -- --stress 20000` there; the container renders in software)
+- [ ] **Go/no-go**: playtest whether marching an army through living villages is interesting. If not, revise the design before M4 (checklist: `docs/M3_PLAYTEST.md`)
 
 ### M4: Conquest and economy
 
@@ -420,7 +424,7 @@ The biggest risk is design, not engineering: a huge simulation that the player c
 Open questions to decide before or during the noted milestone:
 
 - [x] Art direction: flat-shaded low-poly, or a stylized texture look? (before M2) **Decided 2026-10-06: both, by zoom level: flat-shaded low-poly beyond a detail distance, stylized textures closer in. See docs/M2_PLAN.md and ADR 0009.**
-- [ ] Should the player see and control a warlord avatar on the map, or only an abstract command view? (before M3)
-- [ ] Combat depth: individual duels with equipment, or simpler morale-dominant clashes? (during M3)
+- [x] Should the player see and control a warlord avatar on the map, or only an abstract command view? (before M3) **Decided 2026-10-06: abstract command view. The warlord is the player, not a unit; the player starts with one captain (their champion) and may appoint up to 8 more (GP-01). From M5, orders travel by messenger from the player's seat (GP-07).**
+- [x] Combat depth: individual duels with equipment, or simpler morale-dominant clashes? (during M3) **Decided 2026-10-06: duels with equipment, with morale-driven routing (SIM-32).**
 - [ ] Is the campaign one large island or a sequence of islands of increasing size? (before M6)
 - [ ] Final title and setting details (before M6)

@@ -1,12 +1,14 @@
-//! Clicking the world (UI-02, UI-03): a ray from the cursor to the terrain,
-//! then the nearest villager there (via the sim's `SpatialGrid`), else the
-//! nearest settlement. Esc clears the selection. Selection is UI state; it
-//! never touches the simulation.
+//! Clicking the world (UI-01..03): a ray from the cursor to the terrain,
+//! then the nearest person there (via the sim's `SpatialGrid`), else the
+//! nearest settlement. Clicking a captain or follower also selects its army.
+//! Esc clears the selection. Selection is UI state; it never touches the
+//! simulation.
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use game_render::CameraRig;
 use game_render::terrain::surface_height_at;
+use sim_military::{Captain, Follower};
 use sim_world::{Settlement, SpatialGrid, WorldMap};
 
 pub struct SelectionPlugin;
@@ -20,8 +22,12 @@ impl Plugin for SelectionPlugin {
 
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
 pub struct Selection {
+    /// The person in the inspector (villager or soldier).
     pub villager: Option<Entity>,
     pub settlement: Option<Entity>,
+    /// The selected army, by its captain. Kept while clicking villages and
+    /// villagers, so orders can follow.
+    pub army: Option<Entity>,
 }
 
 /// Where a ray from the camera first meets the terrain, in tile
@@ -69,6 +75,7 @@ fn pick(
     camera: Query<(&Camera, &GlobalTransform), With<CameraRig>>,
     ui: Query<&Interaction>,
     settlements: Query<(Entity, &Settlement)>,
+    soldiers: Query<(Option<&Follower>, Has<Captain>)>,
     mut selection: ResMut<Selection>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
@@ -108,10 +115,16 @@ fn pick(
         .as_ref()
         .and_then(|g| g.within(hit, radius).into_iter().next())
     {
-        info!("selected villager {villager} near tile {hit}");
+        info!("selected person {villager} near tile {hit}");
+        let army = match soldiers.get(villager) {
+            Ok((Some(f), _)) => Some(f.captain),
+            Ok((None, true)) => Some(villager),
+            _ => selection.army,
+        };
         *selection = Selection {
             villager: Some(villager),
             settlement: None,
+            army,
         };
         return;
     }
@@ -123,6 +136,7 @@ fn pick(
     *selection = Selection {
         villager: None,
         settlement: nearest.map(|(e, _)| e),
+        army: selection.army,
     };
 }
 
@@ -132,9 +146,24 @@ fn highlight(
     visuals: Option<Res<game_render::AgentVisuals>>,
     transforms: Query<&GlobalTransform>,
     settlements: Query<&Settlement>,
+    armies: Query<(&sim_core::Position, &sim_core::Motion)>,
     mut gizmos: Gizmos,
 ) {
     let Some(map) = map else { return };
+    if let Some(captain) = selection.army
+        && let Ok((pos, motion)) = armies.get(captain)
+    {
+        let p = sim_world::world_pos(pos, Some(motion));
+        let ground = surface_height_at(&map, p.x, p.y);
+        gizmos.circle(
+            Isometry3d::new(
+                game_render::tile_to_world(p.x, p.y, ground) + Vec3::Y * 0.1,
+                Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+            ),
+            3.0,
+            Color::srgb(0.4, 0.8, 1.0),
+        );
+    }
     if let (Some(v), Some(visuals)) = (selection.villager, visuals)
         && let Some((render, ..)) = visuals.by_sim.get(&v)
         && let Ok(gt) = transforms.get(*render)

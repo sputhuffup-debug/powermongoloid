@@ -19,6 +19,7 @@ sim_core.workspace = true
 sim_world.workspace = true
 sim_agents.workspace = true
 sim_economy.workspace = true
+sim_military.workspace = true
 game_render.workspace = true
 
 [lints]

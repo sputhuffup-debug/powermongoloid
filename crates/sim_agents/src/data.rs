@@ -117,6 +117,33 @@ pub struct IdleAi {
     pub weight: f32,
 }
 
+/// Reactions to armies (SIM-13).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FleeAi {
+    pub weight: f32,
+    pub fear: Curve,
+    /// Flee only from armies this close (tiles).
+    pub radius: f32,
+    /// How far to run (tiles).
+    pub distance: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HideAi {
+    pub weight: f32,
+    pub fear: Curve,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FightAi {
+    pub weight: f32,
+    pub courage: Curve,
+    /// Per-person spread of courage, +/- this much.
+    pub spread: f32,
+    /// Below this morale a defender gives up and flees.
+    pub break_morale: f32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiData {
     pub decision_interval: u64,
@@ -127,6 +154,9 @@ pub struct AiData {
     pub work: WorkAi,
     pub go_home: GoHomeAi,
     pub idle: IdleAi,
+    pub flee: FleeAi,
+    pub hide: HideAi,
+    pub fight: FightAi,
     pub distance_falloff: f32,
 }
 
@@ -170,6 +200,15 @@ pub struct IdleData {
     pub wander_radius: i32,
 }
 
+/// A civilian's fighting strength (SIM-13, SIM-32).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CivilianCombat {
+    pub health: f32,
+    pub attack: f32,
+    pub defense: f32,
+    pub morale: f32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NameData {
     pub given: Vec<String>,
@@ -185,6 +224,7 @@ pub struct VillagerData {
     pub ai: AiData,
     pub movement: MovementData,
     pub idle: IdleData,
+    pub combat: CivilianCombat,
     pub names: NameData,
 }
 

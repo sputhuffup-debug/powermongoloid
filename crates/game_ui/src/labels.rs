@@ -79,6 +79,7 @@ fn click_labels(
             *selection = crate::selection::Selection {
                 villager: None,
                 settlement: Some(label.settlement),
+                army: selection.army,
             };
         }
     }

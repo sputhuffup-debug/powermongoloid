@@ -20,7 +20,8 @@ use sim_economy::{
 use sim_world::{Mobile, RegionId, Settlement, Terrain, WorldMap};
 
 use crate::components::{
-    Activity, DecisionTrace, Employment, Needs, NextDecision, Travel, Villager,
+    Activity, CombatStats, DecisionTrace, Employment, Needs, NextDecision, Strike, Threat, Travel,
+    Villager,
 };
 use crate::data::{RegionChoice, Villagers, YearRange};
 use crate::food::FoodSecurity;
@@ -89,6 +90,19 @@ fn choose_region(
                 .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0)))
                 .map(|(r, _)| r)
         }
+    }
+}
+
+/// A civilian's fighting stats from `villagers.ron`.
+pub fn civilian_stats(villagers: &Villagers) -> CombatStats {
+    let c = &villagers.data.combat;
+    CombatStats {
+        health: c.health,
+        max_health: c.health,
+        attack: c.attack,
+        defense: c.defense,
+        morale: c.morale,
+        stance: crate::components::Stance::Civilian,
     }
 }
 
@@ -323,6 +337,8 @@ pub fn populate(world: &mut World) {
                             Allegiance(FactionId(0)),
                             DetailLevel { full: true },
                             Mobile,
+                            civilian_stats(&villagers),
+                            Strike::default(),
                         ),
                     ),
                 );
@@ -403,6 +419,7 @@ pub fn populate(world: &mut World) {
                 population: residents_total,
             },
             FoodSecurity::default(),
+            Threat::default(),
         ));
         report.settlements.push((*settlement, residents_total));
     }

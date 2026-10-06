@@ -16,13 +16,24 @@ use bevy_ecs::prelude::*;
 use sim_core::{AppHashExt, Calendar, SimSet};
 use sim_economy::EconomySet;
 
+pub use act::eat_from;
 pub use components::{
-    ActionKind, Activity, DecisionTrace, Employment, Needs, NextDecision, ScoredOption, Stage,
-    Travel, TravelState, Villager,
+    ActionKind, Activity, CombatStats, DecisionTrace, Employment, Enlisted, Factors, Needs,
+    NextDecision, ScoredOption, Stage, Stance, Strike, Threat, Travel, TravelState, Villager,
 };
 pub use data::Villagers;
 pub use food::FoodSecurity;
 pub use population::PopulationReport;
+pub use population::civilian_stats;
+
+/// Villager systems, for ordering other crates' systems around them.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AgentSet {
+    Decide,
+    Move,
+    Perform,
+    Needs,
+}
 
 /// Villagers. `population` overrides the total in `villagers.ron`.
 #[derive(Default)]
@@ -46,12 +57,17 @@ impl Plugin for AgentsPlugin {
             .add_systems(
                 FixedUpdate,
                 (
-                    ai::decide.in_set(SimSet::Decide),
+                    ai::decide.in_set(SimSet::Decide).in_set(AgentSet::Decide),
                     (movement::plan_paths, movement::move_agents)
                         .chain()
-                        .in_set(SimSet::Move),
-                    act::perform.in_set(EconomySet::Post),
-                    (act::update_needs, food::update_food_security).in_set(SimSet::Needs),
+                        .in_set(SimSet::Move)
+                        .in_set(AgentSet::Move),
+                    act::perform
+                        .in_set(EconomySet::Post)
+                        .in_set(AgentSet::Perform),
+                    (act::update_needs, food::update_food_security)
+                        .in_set(SimSet::Needs)
+                        .in_set(AgentSet::Needs),
                 ),
             )
             .register_hashed_resource::<Villagers>()
@@ -62,6 +78,10 @@ impl Plugin for AgentsPlugin {
             .register_hashed::<Travel>()
             .register_hashed::<NextDecision>()
             .register_hashed::<FoodSecurity>()
+            .register_hashed::<Enlisted>()
+            .register_hashed::<CombatStats>()
+            .register_hashed::<Threat>()
+            .register_hashed::<Strike>()
             .exempt_from_hash::<DecisionTrace>(
                 "explains the last decision; derived, never read by the sim",
             )

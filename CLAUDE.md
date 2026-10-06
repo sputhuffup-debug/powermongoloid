@@ -31,6 +31,9 @@ M3 (M0 complete 2026-10-05, M1 and M2 complete 2026-10-06; update this line as m
 - Record replay:  cargo run --release -p sim_headless -- --ticks 10000 --commands 200 --record run.ron
 - Verify replay:  cargo run --release -p sim_headless -- --replay run.ron [--single-threaded]
 - Map image:      cargo run --release -p sim_headless -- --seed 42 --ticks 1 --map-ppm map.ppm
+- Armies:         sim_headless --skirmish (playtest start) or --battle 1000 (two armies),
+                  with --stats-every 600 for army lines, --timings for per-stage cost
+- Stress (RND-04): cargo run --release -p game_app -- --stress 20000
 - Village stats:  cargo run --release -p sim_headless -- --ticks 7200 --stats-every 600
                   (STATS_DETAIL=1 adds who isn't working, restless sleepers, the hungriest villager)
 - Low-memory build (4-core cloud box): add `-j 3` to cargo build/test/clippy
@@ -51,6 +54,19 @@ M3 (M0 complete 2026-10-05, M1 and M2 complete 2026-10-06; update this line as m
   components; anything shared goes through a sorted, serial step.
 - Every decision records a `DecisionTrace`; use it (and the inspector) to
   debug behaviour before changing weights.
+
+## Armies (ADR 0010, ADR 0011)
+- Tuning lives in assets/data/army.ron; army_march, posture, starving_army and
+  orders tests guard it. Re-run them after any change.
+- Orders reach captains only as `SimCommand`s, validated against the issuer.
+  AI commands carry `CommandOrigin::Ai` and are not recorded in replays.
+- Settlement dealings (recruit, food, arms, trade) are the army's serial
+  logistics step in `orders::run_orders`; nothing else moves goods between
+  two stockpiles directly.
+- Per-soldier systems query `Enlisted` (or the fighter grid's militia list),
+  never all villagers; blows and deaths resolve serially in SpawnId order.
+- Followers rejoin along the rally field toward the captain; only the captain
+  walks the goal field.
 
 ## Rendering (ADR 0008, ADR 0009)
 - Detail bands come from assets/data/render.ron: stylized textures inside the
