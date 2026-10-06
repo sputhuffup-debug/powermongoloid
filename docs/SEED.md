@@ -304,9 +304,9 @@ Procedural island, terrain meshes, camera.
 
 Villagers, needs, occupations, utility AI, goods and recipes, day phases.
 
-- [ ] One region with 5,000 villagers runs a full day cycle: they go to work, produce goods, eat, return home and sleep
-- [ ] Clicking a villager shows name, job, needs and current action
-- [ ] Cutting off a village's farmers causes measurable hunger within 2 game-days
+- [x] One region with 5,000 villagers runs a full day cycle: they go to work, produce goods, eat, return home and sleep
+- [x] Clicking a villager shows name, job, needs and current action
+- [x] Cutting off a village's farmers causes measurable hunger within 2 game-days
 
 ### M3: Armies (go/no-go)
 
