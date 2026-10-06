@@ -316,11 +316,11 @@ Villagers, needs, occupations, utility AI, goods and recipes, day phases.
 
 Captains, followers, orders, posture, flow-field movement, combat, food upkeep.
 
-- [ ] The player orders a captain with 200 followers across the region; they move as a crowd around obstacles
-- [ ] Posture visibly changes how followers treat villagers
-- [ ] An army without food loses morale and starts deserting within the specified days
-- [ ] 20,000 visible agents at 60 fps on the reference machine
-- [ ] **Go/no-go**: playtest whether marching an army through living villages is interesting. If not, revise the design before M4
+- [x] The player orders a captain with 200 followers across the region; they move as a crowd around obstacles (`tests/army_march.rs`)
+- [x] Posture visibly changes how followers treat villagers (`tests/posture.rs`; screenshots in the M3 report)
+- [x] An army without food loses morale and starts deserting within the specified days (`tests/starving_army.rs`; deadline in `army.ron`)
+- [ ] 20,000 visible agents at 60 fps on the reference machine (run `cargo run --release -p game_app -- --stress 20000` there; the container renders in software)
+- [ ] **Go/no-go**: playtest whether marching an army through living villages is interesting. If not, revise the design before M4 (checklist: `docs/M3_PLAYTEST.md`)
 
 ### M4: Conquest and economy
 

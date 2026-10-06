@@ -1,6 +1,15 @@
 # M3 Plan: Armies (go/no-go)
 
-Status: **decisions made 2026-10-06; awaiting go-ahead to implement**. No code written yet.
+Status: **built 2026-10-06; awaiting the reference-machine stress run and the go/no-go playtest** (`docs/M3_PLAYTEST.md`).
+
+## Changes from the plan while building
+- **Followers use a rally field toward their captain, not the goal field.** With the goal field, followers on another route around a lake overtook the captain and never rejoined (ADR 0011).
+- **Neutral, when hungry, takes one day's food even from a village's reserve.** Asking alone got nothing from villages with under a day spare.
+- **Aggressive armies take at most four days of food** (`gather_target_days`). Uncapped, raiders emptied whole villages.
+- **Captains hold their ground in battle.** Losing a captain costs 15% morale (was 30%), and morale lost to nearby deaths is capped per tick: large battles used to collapse in a few ticks.
+- **Baggage capacity is per head.** A fixed 4,000 units couldn't feed a 1,000-man army.
+- **The game opens on the skirmish start by default;** `--villages` gives the M2 start. `--stress N` stages a battle so that about N agents run.
+- **The scripted raiders raid villages when short of food and otherwise hunt the nearest enemy army.**
 Spec: `docs/SEED.md` § "M3: Armies". M3 is the go/no-go point: if marching an army through living villages isn't interesting, the design changes before M4.
 
 ## Requirements covered
