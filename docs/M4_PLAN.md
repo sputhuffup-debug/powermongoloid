@@ -93,6 +93,21 @@ Spec: `docs/SEED.md` § "M4: Conquest and faith". On 2026-10-06 the economy half
 - **Heroes** get a halo, a distinct figure tint and their own banner.
 - **Day and night:** the sun's angle and colour follow the clock, with a moonlit night. The seasonal palette (RND-05) comes in M4b.
 
+### Added 2026-10-06 (docs/FUN_DESIGN.md)
+- **Chronicle (UI-09).**
+  - The `SimEvent`s behind the event feed are also written into a chronicle: an append-only, saved history.
+  - Each settlement and named character (captains, heroes, veterans) gets a short biography assembled from its entries. Every entry names its cause ("Dunworth starved: plundered by the Raiders on day 3").
+  - After a battle, a report gives the sides, losses, the turning point (a captain falling, a rout) and the traits earned.
+- **Traits and veterans (SIM-34).**
+  - Traits are defined in `traits.ron`, each with its trigger (holding a line, plundering, feeding a famine town, routing), its effects on AI weights and morale, and its chronicle phrasing.
+  - Soldiers who survive battles gain ranks with small stat gains, and veterans keep their names in the chronicle.
+  - Heroes start with a trait from how they rose.
+- **Pacing director (GP-16).**
+  - It watches tension: threats near the player, food, recent battles.
+  - It spaces raider bands (M3's scripted raiders, now spawned by the director), quiet stretches and crises.
+  - Personalities (steady, chaotic, harsh) are set in `director.ron` and chosen at game start. Its choices are seeded and replay exactly.
+  - In the UI: auto-pause on chosen event kinds, and "fast-forward until something happens" (8x and beyond, stopping at the next notable event).
+
 ### Performance
 - New per-villager work, prayer and loyalty drift, runs inside the existing decision and needs systems.
 - Settlement-level work (loyalty targets, trade matching, piety, events) runs once per game hour, not per tick.
