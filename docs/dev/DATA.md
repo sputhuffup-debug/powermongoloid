@@ -133,6 +133,7 @@ GP-01..04 and SIM-30..32 ([ADR 0010](../adr/0010-armies-orders-and-combat.md)). 
 | `formation.spacing`, `formation.separation` | Distance between formation slots; personal space for separation |
 | `formation.arrive_radius` | A move order is done within this distance |
 | `formation.catch_up` | Followers further than this from their slot descend the rally field |
+| `formation.max_per_tile` | A soldier or militiaman closing on a foe won't step into a tile already holding this many fighters, so ranks queue behind a melee instead of piling into it. Marching and captains ignore it |
 | `baggage_per_head` | Baggage capacity per person |
 | `carry` | Units a soldier carries |
 | `max_captains` | Captains per faction (GP-01: 1 + 8) |

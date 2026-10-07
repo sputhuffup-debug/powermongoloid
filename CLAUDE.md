@@ -33,6 +33,7 @@ M3 (M0 complete 2026-10-05, M1 and M2 complete 2026-10-06, M3b built 2026-10-06;
 - Map image:      cargo run --release -p sim_headless -- --seed 42 --ticks 1 --map-ppm map.ppm
 - Armies:         sim_headless --skirmish (playtest start) or --battle 1000 (two armies),
                   with --stats-every 600 for army lines, --timings for per-stage cost
+                  (--timings --stats-every 250: mean/worst tick per window)
 - Stress (RND-04): cargo run --release -p game_app -- --stress 20000
 - Village stats:  cargo run --release -p sim_headless -- --ticks 7200 --stats-every 600
                   (STATS_DETAIL=1 adds who isn't working, restless sleepers, the hungriest villager)
@@ -70,6 +71,8 @@ M3 (M0 complete 2026-10-05, M1 and M2 complete 2026-10-06, M3b built 2026-10-06;
   never all villagers; blows and deaths resolve serially in SpawnId order.
 - Followers rejoin along the rally field toward the captain; only the captain
   walks the goal field.
+- Fighters closing on a foe respect `formation.max_per_tile` (ADR 0012), or
+  big battles crush into one blob that costs seconds per tick.
 
 ## Rendering (ADR 0008, ADR 0009)
 - Detail bands come from assets/data/render.ron: stylized textures inside the

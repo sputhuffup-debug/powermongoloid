@@ -4,7 +4,7 @@
 //! index, fighter grid and spatial grid.
 
 use bevy_ecs::prelude::*;
-use bevy_math::Vec2;
+use bevy_math::{IVec2, Vec2};
 use sim_agents::{
     ActionKind, Activity, CombatStats, DecisionTrace, Enlisted, Factors, ScoredOption, Stage,
     Strike, Villagers,
@@ -95,19 +95,19 @@ pub(crate) fn decide(
             };
             let routed = act.kind == ActionKind::Rout;
             let kind = if routed {
-                if stats.morale >= c.rally_morale && near.enemies == 0 {
+                if stats.morale >= c.rally_morale && near.is_none() {
                     ActionKind::Follow
                 } else {
                     ActionKind::Rout
                 }
             } else if stats.morale < c.rout_morale {
                 ActionKind::Rout
-            } else if near.nearest.is_some() {
+            } else if near.is_some() {
                 ActionKind::Fight
             } else {
                 ActionKind::Follow
             };
-            match (kind, near.nearest) {
+            match (kind, near) {
                 (ActionKind::Fight, Some((t, at, d, _))) => aim(&mut strike, t, at, d, tick, &army),
                 (ActionKind::Rout, Some((_, at, ..))) => {
                     strike.target = None;
@@ -129,6 +129,7 @@ pub(crate) fn decide(
             }
             // UI-03: explain the choice (refreshed on change and now and then).
             if changed || (tick + id.0).is_multiple_of(40) {
+                let near = grid.count_nearby(e, p, side, c.engage_radius, &army);
                 let odds = (near.enemies as f32 / (near.friends + 1) as f32).min(1.0);
                 let mut options = vec![
                     ScoredOption {
@@ -167,10 +168,7 @@ pub(crate) fn decide(
         let p = world_pos(pos, Some(motion));
         strike.swing = false;
         strike.bonus = 1.0;
-        match grid
-            .nearest_hostile(e, p, side, c.engage_radius * 3.0, &army)
-            .nearest
-        {
+        match grid.nearest_hostile(e, p, side, c.engage_radius * 3.0, &army) {
             Some((t, at, d, _)) => aim(&mut strike, t, at, d, tick, &army),
             None => strike.target = None,
         }
@@ -186,9 +184,24 @@ fn passable(map: &WorldMap, costs: &TravelCosts, p: Vec2) -> bool {
 /// way is blocked (an off-centre spot on a narrow strip), it steps toward
 /// the middle of its own tile, from where the next tile is reachable.
 fn step(map: &WorldMap, costs: &TravelCosts, p: Vec2, v: Vec2) -> Vec2 {
+    step_unless(map, costs, p, v, |_| false)
+}
+
+/// Like [`step`], but never into another tile for which `full` is true:
+/// a crowded tile counts as a wall.
+fn step_unless(
+    map: &WorldMap,
+    costs: &TravelCosts,
+    p: Vec2,
+    v: Vec2,
+    full: impl Fn(IVec2) -> bool,
+) -> Vec2 {
+    let here = p.floor().as_ivec2();
     for cand in [v, Vec2::new(v.x, 0.0), Vec2::new(0.0, v.y)] {
-        if cand != Vec2::ZERO && passable(map, costs, p + cand) {
-            return p + cand;
+        let to = p + cand;
+        let tile = to.floor().as_ivec2();
+        if cand != Vec2::ZERO && passable(map, costs, to) && (tile == here || !full(tile)) {
+            return to;
         }
     }
     let center = p.floor() + Vec2::splat(0.5);
@@ -322,7 +335,9 @@ pub(crate) fn move_soldiers(
             Vec2::ZERO
         }
     };
-    let apply = |pos: &mut Position, motion: &mut Motion, p: Vec2, want: Vec2| {
+    // `in_melee`: a fighter closing on a foe queues rather than crush into
+    // a crowded tile (army.ron `max_per_tile`); marching ignores the cap.
+    let apply = |pos: &mut Position, motion: &mut Motion, p: Vec2, want: Vec2, in_melee: bool| {
         if want == Vec2::ZERO {
             if motion.velocity != Vec2::ZERO {
                 motion.velocity = Vec2::ZERO;
@@ -330,7 +345,9 @@ pub(crate) fn move_soldiers(
             return;
         }
         let v = want.clamp_length_max(1.2) * speed_at(&villagers, &map, p);
-        let to = step(&map, costs, p, v);
+        let to = step_unless(&map, costs, p, v, |t| {
+            in_melee && grid.fighters_on(t) >= f.max_per_tile
+        });
         place(pos, motion, p, to);
     };
     soldiers
@@ -384,7 +401,13 @@ pub(crate) fn move_soldiers(
                 _ => follow(1.0),
             };
             let want = want + separate(e, p);
-            apply(&mut pos, &mut motion, p, want);
+            apply(
+                &mut pos,
+                &mut motion,
+                p,
+                want,
+                act.kind == ActionKind::Fight,
+            );
         });
     for &(_, e) in &grid.militia {
         let Ok((mut pos, mut motion, act, stats, strike)) = militia.get_mut(e) else {
@@ -395,7 +418,7 @@ pub(crate) fn move_soldiers(
         }
         let p = world_pos(&pos, Some(&motion));
         let want = chase(strike, p) + separate(e, p);
-        apply(&mut pos, &mut motion, p, want);
+        apply(&mut pos, &mut motion, p, want, true);
     }
 }
 

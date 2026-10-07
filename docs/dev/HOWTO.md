@@ -104,6 +104,6 @@ Copy `tests/tests/posture.rs`. Shared helpers (commands, positions, village list
 
 ## Profile
 
-- **Per-stage tick cost:** `cargo run --release -p sim_headless -- --ticks 1500 --timings`. Add `--population 20000` or `--battle 7500` for heavy loads.
+- **Per-stage tick cost:** `cargo run --release -p sim_headless -- --ticks 1500 --timings`. Add `--population 20000` or `--battle 7500` for heavy loads, and `--stats-every 250` to see the mean and worst tick and the costliest stages for each window of 250 ticks (spikes hide in a whole-run average).
 - **Per-system detail:** Tracy. `cargo run -p game_app --release --features tracy`, then connect the Tracy profiler; every system's span shows up.
 - **Benchmarks:** `cargo bench -p sim_headless` (`tick/agents/*`, `tick/army/2000`, `state_hash/*`). A nightly CI job fails on a slowdown over 10% (`scripts/check_bench_regression.py`).

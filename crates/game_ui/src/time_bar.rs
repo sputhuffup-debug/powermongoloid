@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use bevy::prelude::*;
-use sim_core::{Calendar, SimTick};
+use sim_core::{Calendar, SIM_TICK_HZ, SimTick, SimTimings};
 
 use crate::style;
 
@@ -14,8 +14,10 @@ pub struct TimeBarPlugin;
 
 impl Plugin for TimeBarPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (allow_catch_up, spawn_time_bar))
-            .add_systems(Update, (speed_keys, speed_buttons, update_time_bar).chain());
+        app.add_systems(Startup, spawn_time_bar).add_systems(
+            Update,
+            (speed_keys, speed_buttons, update_time_bar, cap_catch_up).chain(),
+        );
     }
 }
 
@@ -28,11 +30,33 @@ struct ClockText;
 #[derive(Component, Clone, Copy)]
 struct SpeedButton(Option<f32>);
 
-/// At 8x, a slow frame can hold many ticks' worth of time; raise the
-/// virtual clock's per-frame cap so those ticks still run instead of being
-/// dropped.
-fn allow_catch_up(mut time: ResMut<Time<Virtual>>) {
-    time.set_max_delta(Duration::from_secs(2));
+/// Most wall-clock time the fixed-tick loop may take in one frame. With
+/// about 8 ms of rendering this keeps frames near 30 fps (NFR-05).
+const SIM_FRAME_BUDGET: Duration = Duration::from_millis(25);
+
+/// How much real time one frame may hand to the fixed-tick loop: as many
+/// ticks as fit in `budget` at the current `tick_cost` (at least one), at
+/// `speed` ticks of game time per tick of real time.
+pub fn catch_up_cap(tick_cost: Duration, speed: f64, budget: Duration) -> Duration {
+    let cost = tick_cost.as_secs_f64().max(1e-4);
+    let ticks = (budget.as_secs_f64() / cost).floor().max(1.0);
+    Duration::from_secs_f64(ticks / (SIM_TICK_HZ * speed.max(1e-3)))
+}
+
+/// NFR-05: when ticks get expensive (a battle of thousands) at high speed,
+/// run the game slower than the chosen speed instead of freezing. Without
+/// a cap, a slow frame owes more ticks, which make the next frame slower
+/// still, until frames take seconds. Bevy drops virtual time beyond
+/// `max_delta`; the sim only counts ticks, so replays are unaffected.
+fn cap_catch_up(mut time: ResMut<Time<Virtual>>, timings: Res<SimTimings>) {
+    let cap = catch_up_cap(
+        timings.total_avg,
+        time.relative_speed_f64(),
+        SIM_FRAME_BUDGET,
+    );
+    if time.max_delta() != cap {
+        time.set_max_delta(cap);
+    }
 }
 
 fn spawn_time_bar(mut commands: Commands) {
@@ -157,5 +181,36 @@ fn update_time_bar(
         } else {
             style::BUTTON
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MS: fn(u64) -> Duration = Duration::from_millis;
+
+    #[test]
+    fn cheap_ticks_leave_room_to_catch_up() {
+        // 3 ms ticks: 8 fit in 25 ms; at 1x that is 0.8 s of real time.
+        let cap = catch_up_cap(MS(3), 1.0, MS(25));
+        assert_eq!(cap, Duration::from_secs_f64(0.8));
+        // At 8x the same 8 ticks pass in an eighth of the time.
+        assert_eq!(
+            catch_up_cap(MS(3), 8.0, MS(25)),
+            Duration::from_secs_f64(0.1)
+        );
+    }
+
+    #[test]
+    fn expensive_ticks_at_high_speed_get_one_tick_per_frame() {
+        // The 2026-10-07 stress run: 36 ms ticks at 8x.
+        let cap = catch_up_cap(MS(36), 8.0, MS(25));
+        assert_eq!(cap, Duration::from_secs_f64(1.0 / 80.0));
+    }
+
+    #[test]
+    fn no_timing_yet_still_allows_progress() {
+        assert!(catch_up_cap(Duration::ZERO, 1.0, MS(25)) >= MS(100));
     }
 }
