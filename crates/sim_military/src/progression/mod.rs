@@ -448,14 +448,7 @@ pub fn setup_run(world: &mut World) -> Option<RunStart> {
     world
         .entity_mut(champion)
         .insert((Champion, Traits(vec![draws.champion_trait])));
-    for &card in &draws.modifiers {
-        let effects = data.data.modifiers[card as usize].effects.clone();
-        for effect in effects {
-            if let Effect::Stores(fraction) = effect {
-                spoil_stores(world, fraction);
-            }
-        }
-    }
+    apply_start_modifiers(world, &data, &draws.modifiers);
     let offer = post_offer(
         world,
         FactionId::PLAYER,
@@ -498,6 +491,22 @@ fn outfit_groups(world: &mut World, captain: Entity, band: &BandData) {
                 weapon: g.armed,
                 tools: g.tools,
             };
+        }
+    }
+}
+
+/// GP-27: applies the one-off start effects of run modifier `cards`, in
+/// draw order. Only `Stores` acts now; the other effects are read later
+/// (`FactionModifiers` in M4 step 4, the director in step 7).
+fn apply_start_modifiers(world: &mut World, data: &Progression, cards: &[u16]) {
+    for &card in cards {
+        let Some(m) = data.modifier(card) else {
+            continue;
+        };
+        for effect in &m.effects {
+            if let Effect::Stores(fraction) = *effect {
+                spoil_stores(world, fraction);
+            }
         }
     }
 }
@@ -638,6 +647,103 @@ mod tests {
             world.resource::<Factions>().seat(FactionId::PLAYER),
             Some(start.start)
         );
+
+        // GP-27: the band's make-up. Followers in SpawnId order take their
+        // group's stats and gear; the champion keeps army.ron's captain
+        // stats and the first group's gear. Checked before any tick, while
+        // hunger and upkeep have changed nothing.
+        assert!(
+            band.groups.len() > 1,
+            "seed 42 draws a mixed band, not {:?}",
+            band.name
+        );
+        let mut q = world.query::<(&SpawnId, &Follower, &CombatStats, &Equipment)>();
+        let mut members: Vec<(SpawnId, CombatStats, Equipment)> = q
+            .iter(world)
+            .filter(|(_, f, ..)| f.captain == start.champion)
+            .map(|(id, _, s, e)| (*id, *s, *e))
+            .collect();
+        members.sort_unstable_by_key(|m| m.0);
+        let want = band
+            .groups
+            .iter()
+            .flat_map(|g| std::iter::repeat_n(g, g.count as usize));
+        assert_eq!(members.len(), band.followers() as usize);
+        for ((id, stats, gear), g) in members.iter().zip(want) {
+            assert_eq!(*stats, soldier_stats(g.unit), "{id:?} of {}", band.name);
+            assert_eq!(
+                *gear,
+                Equipment {
+                    weapon: g.armed,
+                    tools: g.tools
+                },
+                "{id:?} of {}",
+                band.name
+            );
+        }
+        let captain = world.resource::<crate::Army>().data.captain;
+        assert_eq!(
+            world.get::<CombatStats>(start.champion).copied(),
+            Some(soldier_stats(captain))
+        );
+        assert_eq!(
+            world.get::<Equipment>(start.champion).copied(),
+            Some(Equipment {
+                weapon: band.groups[0].armed,
+                tools: band.groups[0].tools
+            })
+        );
+
+        // GP-27 "Rats in the stores": the card's one-off effect takes the
+        // fraction (rounded down) of each food from every storehouse, and
+        // leaves other goods and homes alone.
+        let (rats, fraction) = data
+            .data
+            .modifiers
+            .iter()
+            .find_map(|m| {
+                m.effects.iter().find_map(|e| match *e {
+                    Effect::Stores(f) => Some((m.id, f)),
+                    _ => None,
+                })
+            })
+            .expect("a Stores run modifier");
+        let econ = world.resource::<Economy>().clone();
+        let stores = |world: &mut World| {
+            let mut q = world.query::<(&SpawnId, &SettlementEconomy)>();
+            let mut v: Vec<(SpawnId, Entity, Option<Entity>)> = q
+                .iter(world)
+                .map(|(id, se)| (*id, se.storehouse, se.homes.first().copied()))
+                .collect();
+            v.sort_unstable();
+            v.into_iter()
+                .map(|(id, store, home)| {
+                    let get = |e: Option<Entity>| {
+                        e.and_then(|e| world.get::<Stockpile>(e).cloned())
+                            .unwrap_or_default()
+                    };
+                    (id, get(Some(store)), get(home))
+                })
+                .collect::<Vec<_>>()
+        };
+        let before = stores(world);
+        apply_start_modifiers(world, &data, &[rats]);
+        let after = stores(world);
+        assert_eq!(before.len(), after.len());
+        let mut lost = 0;
+        for ((id, s0, h0), (_, s1, h1)) in before.iter().zip(&after) {
+            assert_eq!(h1, h0, "settlement {id:?}: homes keep their food");
+            for (&g, &q) in &s0.goods {
+                let want = if econ.is_food(g) {
+                    q - (q as f32 * fraction).floor() as u32
+                } else {
+                    q
+                };
+                assert_eq!(s1.get(g), want, "settlement {id:?}, good {g:?}: {q} before");
+                lost += q - s1.get(g);
+            }
+        }
+        assert!(lost > 0, "some storehouse lost food");
         let offer = world
             .resource::<Offers>()
             .get(start.offer)
@@ -665,8 +771,21 @@ mod tests {
         let card = offer.choices[choice as usize];
         assert_eq!(app.world().resource::<RunProgress>().boons, vec![card]);
         assert!(app.world().resource::<Offers>().pending.is_empty());
-        if data.boon(card).unwrap().name == "Well fed" {
-            assert!(food(&app) > before, "three more days of food");
+        if let [Effect::FoodDays(days)] = data.boon(card).unwrap().effects[..] {
+            // Exactly the grain for `days` days of the whole band, once
+            // (soldiers may already eat a little of it this tick).
+            let world = app.world();
+            let econ = world.resource::<Economy>();
+            let grain = *econ.foods_by_value().last().expect("a food");
+            let need = world.resource::<Villagers>().data.needs.hunger_per_day
+                * (band.followers() + 1) as f32
+                * days;
+            let qty = (need / econ.food_value(grain)).ceil() as u32;
+            let gained = food(&app) as i64 - before as i64;
+            assert!(
+                gained > 0 && gained <= qty as i64,
+                "{days} more days of food: {gained} units, {qty} expected"
+            );
         }
         let events = app
             .world()

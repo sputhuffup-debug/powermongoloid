@@ -214,6 +214,29 @@ fn a_run_replays() {
     verify_replay(&reloaded, Threading::Single).expect("run replay reproduces serially");
 }
 
+/// NFR-08, guide G1: a battle's setup orders are AI commands, so a
+/// `--battle` replay logs none of them, and verifying it (which re-runs
+/// the setup) applies them once, in parallel and serially. As player
+/// commands they were logged and then applied twice on replay.
+#[test]
+fn a_battle_replays_without_logging_setup_orders() {
+    let config = HeadlessConfig {
+        scenario: Scenario::Battle(20),
+        // Enough villages for the skirmish start, fewer to set up.
+        population: 1_500,
+        ..config(3)
+    };
+    let replay = record_replay(config, 200, &[], 100);
+    assert_eq!(replay.scenario, "battle:20");
+    assert!(
+        replay.commands.is_empty(),
+        "setup orders are AI-origin and never recorded (G1): {:?}",
+        replay.commands
+    );
+    verify_replay(&replay, Threading::Multi).expect("battle replay reproduces");
+    verify_replay(&replay, Threading::Single).expect("battle replay reproduces serially");
+}
+
 fn skirmish(seed: u64) -> HeadlessConfig {
     HeadlessConfig {
         scenario: Scenario::Skirmish,

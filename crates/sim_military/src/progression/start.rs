@@ -616,6 +616,39 @@ mod tests {
         }
     }
 
+    /// GP-21: a spot is labelled by the drawn kind when it has it, else by
+    /// the first kind it has in `StartTerrain::ALL` order, else `Open`.
+    #[test]
+    fn a_spot_is_labelled_by_a_kind_it_has() {
+        let spot = |kinds| Spot {
+            tile: IVec2::ZERO,
+            index: 0,
+            kinds,
+            monuments: 0,
+            far: false,
+            edge: false,
+        };
+        let coast_hills = spot(StartTerrain::Coast.bit() | StartTerrain::Hills.bit());
+        assert_eq!(
+            coast_hills.terrain(StartTerrain::Hills),
+            StartTerrain::Hills
+        );
+        assert_eq!(
+            coast_hills.terrain(StartTerrain::Coast),
+            StartTerrain::Coast
+        );
+        assert_eq!(
+            coast_hills.terrain(StartTerrain::ForestEdge),
+            StartTerrain::Coast
+        );
+        let forest = spot(StartTerrain::ForestEdge.bit());
+        assert_eq!(
+            forest.terrain(StartTerrain::Hills),
+            StartTerrain::ForestEdge
+        );
+        assert_eq!(spot(0).terrain(StartTerrain::Coast), StartTerrain::Open);
+    }
+
     #[test]
     fn dilate_grows_a_square() {
         let size = 7;

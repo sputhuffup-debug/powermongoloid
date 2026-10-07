@@ -21,7 +21,7 @@ SIM-04 and SIM-05. Guarded by `sim_core` calendar tests and `village_day`.
 | `seasons_per_year` | Seasons in a year (4), so a year is 120 days |
 
 ## worldgen.ron (`sim_world::WorldGenSettings`)
-SIM-01 and SIM-02 ([ADR 0005](../adr/0005-world-generation-and-terrain.md)); presets, sizes and monuments are M4 (GP-21, GP-23). Guarded by `tests/tests/worldgen.rs`. "Fraction" means a fraction of the map size; `*_tiles_at_2048` values scale with the map size.
+SIM-01 and SIM-02 ([ADR 0005](../adr/0005-world-generation-and-terrain.md)); presets, sizes and monuments are M4 (GP-21, GP-23). Guarded by `tests/tests/worldgen.rs`, and for the `run` preset (monuments, sizes, settlements, regions) also by `run_start` ([tests/tests/run_start.rs](../../tests/tests/run_start.rs)). "Fraction" means a fraction of the map size; `*_tiles_at_2048` values scale with the map size.
 
 **Presets.** The file holds two complete settings blocks, parsed into `sim_world::WorldGenPresets` and picked with `WorldGenSettings::preset(WorldPreset::..)`:
 
@@ -60,8 +60,8 @@ Every field below appears in both presets.
 | `regions` | Regions the island is divided into (used by population and runs now, LOD in M5). A request: the map has at most one region per settlement, so code reads `WorldMap::region_count()` |
 | `names.prefixes`, `names.suffixes` | Syllables for settlement names (prefix + suffix). Monument names use them too, never repeating a settlement's name, so there must be enough combinations for `settlements.max` plus `monuments.per_region` per region |
 | `monuments.per_region` | Monuments placed in each region (GP-23): 6 in run, 0 in developed (none). Each slot draws a kind by weight, then takes the suitable tile nearest a seeded anchor in the region. If the kind fits nowhere, the kinds after it in the list are tried in turn, then the spacing is relaxed to a half and a quarter |
-| `monuments.min_settlement_distance` | Minimum tiles from every settlement centre (52 in run). Keep it above army.ron `threat.radius` (45), or a guard camp keeps a village frightened |
-| `monuments.min_spacing` | Minimum tiles between two monuments (40 in run) |
+| `monuments.min_settlement_distance` | Minimum tiles from every settlement centre (52 in run). Keep it above army.ron `threat.radius` (45), or a guard camp keeps a village frightened; `run_preset_meets_its_criteria` reads both files and checks this |
+| `monuments.min_spacing` | Minimum tiles between two monuments (40 in run), where possible: a slot that fits nowhere relaxes it to a half, then a quarter (see `monuments.per_region`) |
 | `monuments.kinds[].kind`, `monuments.kinds[].weight`, `monuments.kinds[].site` | The kinds that may be drawn (`StandingStones`, `RuinedFort`, `HolyWell`, `RoadMarker`, `AncientForge`, `MarketCross`, `Wayshrine`, `Watchtower`; each at most once), their relative chance per slot (> 0), and where they may stand. No site is ever Water, Road, Mountain or Farmland |
 | `site: NearWater(min, max)` | Open ground (grass, forest, beach, hills) `min..=max` steps from water (holy well: 2-6) |
 | `site: Hills`, `site: HillsNearMountain(within)` | On hills; or on hills within `within` steps of a mountain (ancient forge: 6) |
@@ -96,9 +96,9 @@ SIM-10..13 ([ADR 0006](../adr/0006-utility-ai-and-decision-traces.md)). Guarded 
 
 | Field | Meaning |
 | --- | --- |
-| `population.total` | Villagers to populate (5,000; tests and the CLI override it) |
-| `population.region` | `Auto` (the region with the most settlements) or `Index(n)` |
-| `population.min_per_settlement` | Smallest populated settlement |
+| `population.total` | Villagers to populate in the developed world (5,000; tests and the CLI override it). Ignored in the `run` preset, where every settlement is populated at its drawn size (worldgen.ron `sizes`) |
+| `population.region` | `Auto` (the region with the most settlements) or `Index(n)` (developed world only) |
+| `population.min_per_settlement` | Smallest populated settlement (developed world only) |
 | `households.size_weights` | Relative weights of household sizes 1..7 |
 | `households.adult_age`, `households.child_age`, `households.elder_age` | Age ranges in years (`min`, `max`) |
 | `households.elder_chance` | Chance a household has an elder |
@@ -159,14 +159,14 @@ GP-01..04 and SIM-30..32 ([ADR 0010](../adr/0010-armies-orders-and-combat.md)). 
 | `recruit.radius` | The army must be this close to the village centre to deal with it |
 | `recruit.willing` (`passive`, `neutral`, `aggressive`) | Chance per adult asked to join, by posture |
 | `recruit.hungry_village_bonus`, `recruit.fed_army_bonus` | Extra chance when the village is short of food, or the army well fed |
-| `threat.radius`, `threat.passive`, `threat.neutral`, `threat.aggressive` | How frightening an army is to a settlement within `radius`, by posture |
+| `threat.radius`, `threat.passive`, `threat.neutral`, `threat.aggressive` | How frightening an army is to a settlement within `radius`, by posture. Keep `radius` below worldgen.ron run `monuments.min_settlement_distance` (52), or a monument's guard camp keeps a village frightened; `run_preset_meets_its_criteria` in tests/tests/worldgen.rs checks this |
 | `gather_keep_days` (`passive`, `neutral`, `aggressive`) | Days of food a village keeps when an army gathers food |
 | `gather_target_days` | Gathering fills the baggage up to this many days of food |
 | `trade_keep_days` | Villages sell food beyond this many days |
 | `trade_value` | `(good, food value)` per unit when an army barters |
 
 ## progression.ron (`sim_military::Progression`)
-Runs: GP-21, GP-27 and SIM-34 (M4, see [M4_PLAN.md](../M4_PLAN.md)). Read only in a run (`RunState.config` is `Some`); the developed world and the M2/M3 tests never draw from it. Guarded by the `sim_military` progression unit tests (`shipped_data_is_valid`, `a_run_start_is_seeded_and_fits`, `a_run_is_set_up_its_boon_picked_once_and_abandoned`). Cards are numbered by their position: each `id` must equal its index, and lists are append only, because offers, `RunProgress` and saves store the index.
+Runs: GP-21, GP-27 and SIM-34 (M4, see [M4_PLAN.md](../M4_PLAN.md)). Read only in a run (`RunState.config` is `Some`); the developed world and the M2/M3 tests never draw from it. Guarded by the `sim_military` progression unit tests (`shipped_data_is_valid`, `a_run_start_is_seeded_and_fits`, `a_run_is_set_up_its_boon_picked_once_and_abandoned`), by `run_start` ([tests/tests/run_start.rs](../../tests/tests/run_start.rs); `twenty_seeds_draw_valid_varied_starts` checks 2-3 nearby monuments and start variety over 20 seeds, so re-run it after changing `start.*`, `bands`, `modifiers` or their weights), and by the run tests in `determinism` (`run_state_hash_covers_every_sim_component`, `a_run_replays`). Cards are numbered by their position: each `id` must equal its index, and lists are append only, because offers, `RunProgress` and saves store the index.
 
 **The start spot** (`sim_military::draw_start`). The rival's seat is the most populous settlement. The other regions are tried from the farthest (by settlement centroid) to the nearest; the band starts in the first one with a tile that has `min_monuments..=max_monuments` monuments nearby (else in the farthest). Tiles are ranked by class (monument count fits, then on the far side of the region from the seat, then of the drawn kind, then near the region's edge); in the best class the tile farthest from the seat plus a seeded jitter wins.
 

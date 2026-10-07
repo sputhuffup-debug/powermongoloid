@@ -205,13 +205,28 @@ fn check_roads(seed: u64, w: &GeneratedWorld) {
 #[test]
 fn run_preset_meets_its_criteria() {
     let s = run_settings();
+    // GP-23: a monument's guard camp must never frighten a village, so
+    // monuments keep beyond the threat radius. Read from army.ron, not
+    // copied, so retuning either file is caught here.
+    let threat_radius = sim_military::Army::default_data(
+        &sim_core::Calendar::default_data(),
+        &sim_economy::Economy::default_data(),
+    )
+    .data
+    .threat
+    .radius;
+    assert!(
+        s.monuments.min_settlement_distance > threat_radius,
+        "worldgen.ron run monuments.min_settlement_distance ({}) must exceed army.ron threat.radius ({threat_radius})",
+        s.monuments.min_settlement_distance
+    );
     for seed in SEEDS {
         let w = generate_world(seed, &s, 4);
         check_terrain(seed, &w);
         check_settlements(seed, &w, &s);
         check_roads(seed, &w);
         check_regions(seed, &w, &s);
-        check_monuments(seed, &w, &s);
+        check_monuments(seed, &w, &s, threat_radius);
         check_sizes(seed, &w, &s);
     }
 }
@@ -223,9 +238,12 @@ fn check_regions(seed: u64, w: &GeneratedWorld, s: &WorldGenSettings) {
     assert_eq!(used.len(), s.regions as usize, "seed {seed}: {used:?}");
 }
 
-/// GP-23: 4 to 8 monuments per region on allowed ground, outside every
-/// village's threat radius, spaced apart, with unique names.
-fn check_monuments(seed: u64, w: &GeneratedWorld, s: &WorldGenSettings) {
+/// GP-23: 4 to 8 monuments per region, never on water, road or mountain,
+/// outside every village's threat radius (army.ron `threat.radius`), spaced
+/// apart, with unique names. That each stands on ground its kind allows
+/// (its site rule) is checked by the sim_world unit test
+/// `placed_monuments_suit_their_kind`.
+fn check_monuments(seed: u64, w: &GeneratedWorld, s: &WorldGenSettings, threat_radius: f32) {
     let m = &s.monuments;
     let mut per_region = vec![0; w.map.region_count()];
     let mut names = BTreeSet::new();
@@ -246,7 +264,7 @@ fn check_monuments(seed: u64, w: &GeneratedWorld, s: &WorldGenSettings) {
             let d = a.center.as_vec2().distance(x.center.as_vec2());
             closest_settlement = closest_settlement.min(d);
             assert!(
-                d >= m.min_settlement_distance - 1e-3 && d > 45.0,
+                d >= m.min_settlement_distance - 1e-3 && d > threat_radius,
                 "seed {seed}: {} is {d} from {}",
                 a.name,
                 x.name

@@ -10,26 +10,31 @@ mod common;
 use std::collections::BTreeSet;
 
 use bevy_ecs::prelude::*;
+use bevy_math::IVec2;
 use common::*;
-use sim_agents::Villagers;
+use sim_agents::{CombatStats, Villagers};
 use sim_core::{
-    Calendar, Cause, CommandKind, FactionId, OfferKind, Offers, RunOutcome, RunState, SimEventKind,
-    SimSeed, SimStepper, SimTick, compute_state_hash,
+    Calendar, Cause, CommandKind, FactionId, OfferKind, Offers, Position, RunOutcome, RunState,
+    SimEventKind, SimSeed, SimStepper, SimTick, SpawnId, compute_state_hash,
 };
-use sim_economy::{Economy, Stockpile};
-use sim_military::progression::{BoonWhen, Effect};
-use sim_military::{Captain, Equipment, Follower, Progression, RunProgress, RunWorld, Traits};
+use sim_economy::{Economy, SettlementEconomy, Stockpile};
+use sim_military::progression::{BandData, BoonWhen, Effect};
+use sim_military::{
+    Army, Captain, Equipment, Factions, Follower, Progression, RunProgress, RunWorld, StartTerrain,
+    Traits,
+};
 use sim_world::worldgen::default_threads;
 use sim_world::{Settlement, Terrain, WorldGenSettings, WorldPreset, find_path, generate_world};
 
 /// GP-21, GP-23, GP-27, world level (no App, no population): for seeds
 /// 1..=20 the run island has 4 regions, every settlement a drawn size, 4-8
-/// monuments per region on allowed ground away from settlements, and a
-/// start that is seeded, away from every settlement, in another region than
-/// the rival's seat (the most populous settlement) with a walkable path to
-/// it, 2-3 monuments within `monument_radius` (no more than a day's march),
-/// and three distinct start boons. Across the seeds the start terrain, the
-/// band and the run modifiers each take at least three values.
+/// monuments per region on allowed ground away from settlements and
+/// `min_spacing` apart, and a start that is seeded, away from every
+/// settlement, in another region than the rival's seat (the most populous
+/// settlement) with a walkable path to it, 2-3 monuments within
+/// `monument_radius` (no more than a day's march), a terrain label its tile
+/// actually has, and three distinct start boons. Across the seeds the start
+/// terrain, the band and the run modifiers each take at least three values.
 #[test]
 fn twenty_seeds_draw_valid_varied_starts() {
     let data = Progression::default_data();
@@ -67,10 +72,11 @@ fn twenty_seeds_draw_valid_varied_starts() {
             "seed {seed}: every settlement is populated: {people:?}"
         );
 
-        // Monuments: 4-8 per region, never on water, road or mountain, and
-        // at least `min_settlement_distance` from every centre.
+        // Monuments: 4-8 per region, never on water, road or mountain, at
+        // least `min_settlement_distance` from every centre and (no spacing
+        // was relaxed on these seeds, ADR 0013) `min_spacing` apart.
         let mut per_region = vec![0u32; map.region_count()];
-        for m in &g.monuments {
+        for (i, m) in g.monuments.iter().enumerate() {
             per_region[m.region as usize] += 1;
             let t = map.terrain(m.center);
             assert!(
@@ -86,6 +92,15 @@ fn twenty_seeds_draw_valid_varied_starts() {
                     "seed {seed}: {} is {d:.0} tiles from {}",
                     m.name,
                     x.name
+                );
+            }
+            for b in &g.monuments[i + 1..] {
+                let d = m.center.as_vec2().distance(b.center.as_vec2());
+                assert!(
+                    d >= settings.monuments.min_spacing - 1e-3,
+                    "seed {seed}: {} and {} are {d:.0} tiles apart",
+                    m.name,
+                    b.name
                 );
             }
         }
@@ -112,8 +127,14 @@ fn twenty_seeds_draw_valid_varied_starts() {
                 .all(|(i, &p)| i == seat || p < people[seat]),
             "seed {seed}: the seat is the largest settlement"
         );
-        assert_eq!(a.seat_center, g.settlements[seat].center);
-        assert_eq!(a.rival_region, g.settlements[seat].region);
+        assert_eq!(
+            a.seat_center, g.settlements[seat].center,
+            "seed {seed}: seat #{seat}"
+        );
+        assert_eq!(
+            a.rival_region, g.settlements[seat].region,
+            "seed {seed}: seat #{seat}"
+        );
         assert_ne!(a.start_region, a.rival_region, "seed {seed}");
 
         // The start spot: open ground in the start region, away from every
@@ -128,6 +149,38 @@ fn twenty_seeds_draw_valid_varied_starts() {
             t.name()
         );
         assert_eq!(map.region(a.start), a.start_region, "seed {seed}");
+
+        // Its label is a kind the tile has (the same tests `draw_start`
+        // makes; a tile can have several, so membership, not equality).
+        let at = |d: IVec2| {
+            let q = a.start + d;
+            map.in_bounds(q).then(|| map.terrain(q))
+        };
+        let coast = t == Terrain::Beach
+            || (-2..=2).any(|dx| (-2..=2).any(|dy| at(IVec2::new(dx, dy)) == Some(Terrain::Water)));
+        let n4 = [IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y];
+        let forest_edge = (t == Terrain::Forest
+            && n4.iter().any(|&d| {
+                matches!(
+                    at(d),
+                    Some(Terrain::Grass | Terrain::Beach | Terrain::Hills | Terrain::Farmland)
+                )
+            }))
+            || (t == Terrain::Grass && n4.iter().any(|&d| at(d) == Some(Terrain::Forest)));
+        let hills = t == Terrain::Hills;
+        let fits = match a.terrain {
+            StartTerrain::Coast => coast,
+            StartTerrain::ForestEdge => forest_edge,
+            StartTerrain::Hills => hills,
+            StartTerrain::Open => !coast && !forest_edge && !hills,
+        };
+        assert!(
+            fits,
+            "seed {seed}: the start {} on {} is labelled {} (coast {coast}, forest edge {forest_edge}, hills {hills})",
+            a.start,
+            t.name(),
+            a.terrain.name()
+        );
         for x in &g.settlements {
             let d = a.start.as_vec2().distance(x.center.as_vec2());
             assert!(
@@ -171,10 +224,27 @@ fn twenty_seeds_draw_valid_varied_starts() {
         let boons: BTreeSet<u16> = a.boon_choices.into_iter().collect();
         assert_eq!(boons.len(), 3, "seed {seed}: {:?}", a.boon_choices);
         for c in a.boon_choices {
-            assert_eq!(data.boon(c).expect("a card").when, BoonWhen::Start);
+            let card = data
+                .boon(c)
+                .unwrap_or_else(|| panic!("seed {seed}: no boon card {c}"));
+            assert_eq!(
+                card.when,
+                BoonWhen::Start,
+                "seed {seed}: boon {c} ({})",
+                card.name
+            );
         }
-        assert!((a.band as usize) < data.data.bands.len());
-        assert!(data.data.champion_traits.contains(&a.champion_trait));
+        assert!(
+            (a.band as usize) < data.data.bands.len(),
+            "seed {seed}: band {} of {}",
+            a.band,
+            data.data.bands.len()
+        );
+        assert!(
+            data.data.champion_traits.contains(&a.champion_trait),
+            "seed {seed}: trait {:?}",
+            a.champion_trait
+        );
         let (lo, hi) = data.data.modifiers_per_run;
         assert!(
             (lo as usize..=hi as usize).contains(&a.modifiers.len()),
@@ -184,7 +254,12 @@ fn twenty_seeds_draw_valid_varied_starts() {
         let groups: Vec<&str> = a
             .modifiers
             .iter()
-            .filter_map(|&m| data.modifier(m).expect("a card").group.as_deref())
+            .filter_map(|&m| {
+                data.modifier(m)
+                    .unwrap_or_else(|| panic!("seed {seed}: no modifier card {m}"))
+                    .group
+                    .as_deref()
+            })
             .collect();
         let distinct: BTreeSet<&str> = groups.iter().copied().collect();
         assert_eq!(distinct.len(), groups.len(), "seed {seed}: {groups:?}");
@@ -227,9 +302,76 @@ fn twenty_seeds_draw_valid_varied_starts() {
     assert!(modifier_sets.len() >= 3, "modifier sets {modifier_sets:?}");
 }
 
+/// GP-27: the band's make-up, before any tick (hunger and upkeep have
+/// changed nothing yet). The followers, in SpawnId order, have their
+/// group's stats and gear, group after group as the template lists them;
+/// the champion has army.ron's captain stats and the first group's gear.
+fn assert_band_make_up(app: &mut App, champion: Entity, band: &BandData) {
+    let world = app.world_mut();
+    let mut q = world.query::<(&SpawnId, &Follower, &CombatStats, &Equipment)>();
+    let mut members: Vec<(SpawnId, CombatStats, Equipment)> = q
+        .iter(world)
+        .filter(|(_, f, ..)| f.captain == champion)
+        .map(|(id, _, s, e)| (*id, *s, *e))
+        .collect();
+    members.sort_unstable_by_key(|m| m.0);
+    assert_eq!(members.len(), band.followers() as usize, "{}", band.name);
+    let want = band
+        .groups
+        .iter()
+        .flat_map(|g| std::iter::repeat_n(g, g.count as usize));
+    for ((id, s, e), g) in members.iter().zip(want) {
+        assert_eq!(
+            (s.health, s.max_health, s.attack, s.defense, s.morale),
+            (
+                g.unit.health,
+                g.unit.health,
+                g.unit.attack,
+                g.unit.defense,
+                g.unit.morale
+            ),
+            "{id:?} of {}",
+            band.name
+        );
+        assert_eq!(
+            *e,
+            Equipment {
+                weapon: g.armed,
+                tools: g.tools
+            },
+            "{id:?} of {}",
+            band.name
+        );
+    }
+    let captain = world.resource::<Army>().data.captain;
+    let s = *world
+        .get::<CombatStats>(champion)
+        .expect("the champion fights");
+    assert_eq!(
+        (s.health, s.max_health, s.attack, s.defense, s.morale),
+        (
+            captain.health,
+            captain.health,
+            captain.attack,
+            captain.defense,
+            captain.morale
+        ),
+        "the champion has the captain's stats"
+    );
+    assert_eq!(
+        world.get::<Equipment>(champion).copied(),
+        Some(Equipment {
+            weapon: band.groups[0].armed,
+            tools: band.groups[0].tools
+        })
+    );
+}
+
 /// GP-21: two apps of one seed are set up identically and stay identical
-/// for 200 ticks. Every settlement is populated, the champion leads the
-/// drawn band, and one start boon offer of three distinct cards waits.
+/// for 200 ticks, and the installed run starts exactly as the pure
+/// `draw_start` (validated over 20 seeds above) says on the generated
+/// world. Every settlement is populated, the champion leads the drawn band
+/// with the drawn trait, and one start boon offer of the drawn cards waits.
 #[test]
 fn a_run_starts_identically_from_its_seed() {
     const SEED: u64 = 7;
@@ -255,7 +397,12 @@ fn a_run_starts_identically_from_its_seed() {
         populated.len()
     );
     let range = WorldGenSettings::preset(WorldPreset::Run).settlements;
-    assert!((range.min as usize..=range.max as usize).contains(&settlements));
+    assert!(
+        (range.min as usize..=range.max as usize).contains(&settlements),
+        "seed {SEED}: {settlements} settlements, want {}..={}",
+        range.min,
+        range.max
+    );
     assert_eq!(
         populated.len(),
         settlements,
@@ -264,12 +411,59 @@ fn a_run_starts_identically_from_its_seed() {
 
     // A run, not over, with the rival's seat drawn.
     let state = *a.world().resource::<RunState>();
-    assert!(state.config.is_some() && state.outcome.is_none());
+    assert!(
+        state.config.is_some() && state.outcome.is_none(),
+        "seed {SEED}: {state:?}"
+    );
     let progress = a.world().resource::<RunProgress>().clone();
     let seat = progress.rival_seat.expect("a rival seat");
-    assert!(populated.iter().any(|v| v.1 == seat));
+    assert!(
+        populated.iter().any(|v| v.1 == seat),
+        "seed {SEED}: seat {seat} not among populated {:?}",
+        populated.iter().map(|v| v.1).collect::<Vec<_>>()
+    );
 
-    // One pending offer: the player's start boon, three distinct cards.
+    // The installed run starts as the pure draw on the generated world
+    // (`RunWorld::from_world` reads what `from_generated` read).
+    let g = generate_world(
+        SEED,
+        &WorldGenSettings::preset(WorldPreset::Run),
+        default_threads(),
+    );
+    let costs = Villagers::default_data(&Calendar::default_data()).travel_costs;
+    let data = Progression::default_data();
+    let d = sim_military::draw_start(SimSeed(SEED), &data, &RunWorld::from_generated(&g, &costs))
+        .expect("a start");
+    assert_eq!(
+        (
+            progress.start,
+            progress.terrain,
+            progress.start_region,
+            progress.rival_seat,
+            progress.seat_center,
+            progress.rival_region,
+            progress.band,
+            progress.modifiers.clone(),
+        ),
+        (
+            d.start,
+            d.terrain,
+            d.start_region,
+            Some(d.seat),
+            d.seat_center,
+            d.rival_region,
+            d.band,
+            d.modifiers.clone(),
+        ),
+        "seed {SEED}: the installed run starts as the pure draw (GP-21)"
+    );
+    assert_eq!(
+        a.world().resource::<Factions>().seat(FactionId::PLAYER),
+        Some(d.start),
+        "the player is seated at the start"
+    );
+
+    // One pending offer: the player's start boon, the three drawn cards.
     let offers = a.world().resource::<Offers>().pending.clone();
     assert_eq!(offers.len(), 1, "{offers:?}");
     let offer = &offers[0];
@@ -280,22 +474,25 @@ fn a_run_starts_identically_from_its_seed() {
     );
     let cards: BTreeSet<u16> = offer.choices.iter().copied().collect();
     assert_eq!((offer.choices.len(), cards.len()), (3, 3));
+    assert_eq!(offer.choices, d.boon_choices.to_vec(), "the drawn boons");
 
-    // The champion: the player's captain, with one trait, leading the band.
+    // The champion: the player's captain, with the drawn trait, leading
+    // the drawn band (GP-27).
     let c = champion(&mut a);
-    let world = a.world_mut();
-    assert_eq!(
-        world.get::<Captain>(c).map(|k| k.faction),
-        Some(FactionId::PLAYER)
-    );
-    assert_eq!(world.get::<Traits>(c).map(|t| t.0.len()), Some(1));
-    let mut q = world.query::<&Follower>();
-    let followers = q.iter(world).filter(|f| f.captain == c).count() as u32;
-    let data = world.resource::<Progression>();
-    assert_eq!(
-        followers,
-        data.data.bands[progress.band as usize].followers()
-    );
+    let band = data.data.bands[progress.band as usize].clone();
+    {
+        let world = a.world_mut();
+        assert_eq!(
+            world.get::<Captain>(c).map(|k| k.faction),
+            Some(FactionId::PLAYER)
+        );
+        assert_eq!(
+            world.get::<Traits>(c).map(|t| t.0.clone()),
+            Some(vec![d.champion_trait]),
+            "the drawn trait"
+        );
+    }
+    assert_band_make_up(&mut a, c, &band);
 
     a.step(200);
     b.step(200);
@@ -308,46 +505,64 @@ fn a_run_starts_identically_from_its_seed() {
         "same seed, same run"
     );
     let events = chronicle(&a);
+    let first = *events.first().expect("a chronicle");
+    let e = first.event;
     assert_eq!(
-        events.first().map(|e| (e.tick, e.event.kind)),
-        Some((0, SimEventKind::RunStarted))
+        (first.tick, e.kind, e.other, e.at, e.amount),
+        (0, SimEventKind::RunStarted, d.seat, d.start, d.band as i32),
+        "RunStarted names the seat, the start and the band"
     );
 }
 
-/// GP-27: the start boon applies once. A second `ChooseOffer` for the same
-/// offer (a double click) is refused and counted, and nothing applies
-/// twice.
+/// GP-27: each start boon with an effect the state shows (food, arms,
+/// goodwill) applies once. The card is put into seed 42's start offer
+/// before tick 0 (a test-only edit), picked, and checked; a second
+/// `ChooseOffer` for the same offer (a double click) is refused and
+/// counted, and nothing applies twice.
 #[test]
 fn choosing_the_start_boon_applies_once() {
+    let data = Progression::default_data();
+    // The cards by effect, not by id, so reordering progression.ron can't
+    // make this test check nothing.
+    let card_with = |what: &str, f: &dyn Fn(&Effect) -> bool| {
+        data.data
+            .boons
+            .iter()
+            .find(|b| b.when == BoonWhen::Start && b.effects.iter().any(f))
+            .unwrap_or_else(|| panic!("a Start boon with {what}"))
+            .id
+    };
+    let cards = [
+        card_with("FoodDays", &|e| matches!(e, Effect::FoodDays(_))),
+        card_with("ArmBand", &|e| matches!(e, Effect::ArmBand)),
+        card_with("Goodwill", &|e| matches!(e, Effect::Goodwill(_))),
+    ];
+    for card in cards {
+        pick_once(&data, card);
+    }
+}
+
+/// One pass of `choosing_the_start_boon_applies_once`: a fresh seed-42 run
+/// whose start offer's first choice is `card`.
+fn pick_once(data: &Progression, card: u16) {
     let mut app = run_app(42);
     let offer = start_offer(&app);
-    let data = Progression::default_data();
-    let choices = app
-        .world()
-        .resource::<Offers>()
-        .get(offer)
-        .expect("the start offer")
-        .choices
-        .clone();
-    // Prefer a boon whose effect shows in the state: food, goodwill, arms.
-    let shows = |card: u16| {
-        let effects = &data.boon(card).expect("a card").effects;
-        if effects.iter().any(|e| matches!(e, Effect::FoodDays(_))) {
-            0
-        } else if effects.iter().any(|e| matches!(e, Effect::Goodwill(_))) {
-            1
-        } else if effects.contains(&Effect::ArmBand) {
-            2
-        } else {
-            3
+    {
+        let mut offers = app.world_mut().resource_mut::<Offers>();
+        let o = offers
+            .pending
+            .iter_mut()
+            .find(|o| o.id == offer)
+            .expect("the start offer");
+        // Keep the three cards distinct.
+        match o.choices.iter().position(|&c| c == card) {
+            Some(j) => o.choices.swap(0, j),
+            None => o.choices[0] = card,
         }
-    };
-    let choice = (0..choices.len())
-        .min_by_key(|&i| (shows(choices[i]), i))
-        .expect("three choices") as u8;
-    let card = choices[choice as usize];
+    }
+    let choice = 0u8;
     let boon = data.boon(card).expect("a card").clone();
-    println!("picking {:?} ({}) of {choices:?}", boon.name, boon.text);
+    println!("picking {:?} ({})", boon.name, boon.text);
 
     let c = champion(&mut app);
     let econ = app.world().resource::<Economy>().clone();
@@ -372,7 +587,19 @@ fn choosing_the_start_boon_applies_once() {
             .filter(|(_, eq, _)| eq.weapon)
             .count()
     };
+    // The populated settlement nearest the champion (ties: lowest SpawnId).
+    let nearest = {
+        let world = app.world_mut();
+        let at = world.get::<Position>(c).expect("a position").0;
+        let mut q = world.query::<(&SpawnId, &Settlement, &SettlementEconomy)>();
+        q.iter(world)
+            .map(|(id, s, _)| ((s.center - at).length_squared(), id.0))
+            .min()
+            .map(|(_, id)| id)
+            .expect("a populated settlement")
+    };
     let food_before = food(&app);
+    let armed_before = armed(&mut app);
     let rejected_before = rejected(&app, FactionId::PLAYER);
 
     choose(&mut app, offer, choice);
@@ -387,28 +614,40 @@ fn choosing_the_start_boon_applies_once() {
         .data
         .needs
         .hunger_per_day;
+    let mut checked = 0;
     for e in &boon.effects {
         match *e {
             Effect::FoodDays(days) => {
+                // Exactly once: at least the need, less than one more unit
+                // of the best food (soldiers may eat a little this tick).
                 let need = hunger * members as f32 * days;
+                let grain = *econ.foods_by_value().last().expect("a food");
+                let gain = food_after - food_before;
                 println!("food {food_before:.1} -> {food_after:.1} (need {need:.1})");
                 assert!(
-                    food_after - food_before >= need - 1e-3,
-                    "{days} more days of food for {members}"
+                    gain >= need - 1e-3 && gain < need + econ.food_value(grain) + 1e-3,
+                    "{days} days of food for {members}, applied once (gain {gain:.1}, need {need:.1})"
                 );
+                checked += 1;
             }
-            Effect::Goodwill(g) => assert_eq!(
-                progress
-                    .pending_goodwill
-                    .iter()
-                    .map(|x| x.1)
-                    .collect::<Vec<_>>(),
-                vec![g]
-            ),
-            Effect::ArmBand => assert_eq!(armed_after, members, "everyone is armed"),
+            Effect::Goodwill(g) => {
+                assert_eq!(
+                    progress.pending_goodwill,
+                    vec![(nearest, g)],
+                    "goodwill for the settlement nearest the champion"
+                );
+                checked += 1;
+            }
+            Effect::ArmBand => {
+                println!("armed {armed_before} -> {armed_after} of {members}");
+                assert!(armed_before < members, "someone starts unarmed");
+                assert_eq!(armed_after, members, "everyone is armed");
+                checked += 1;
+            }
             _ => {}
         }
     }
+    assert!(checked > 0, "{} has an effect the state shows", boon.name);
 
     // A double click: refused, counted, and nothing applies twice.
     choose(&mut app, offer, choice);

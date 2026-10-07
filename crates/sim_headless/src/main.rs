@@ -19,7 +19,9 @@ const USAGE: &str = "\
 usage: sim_headless [options]
   --seed <u64>              world seed (default 42)
   --ticks <u64>             ticks to run (default 1000)
-  --population <u32>        villagers to populate (default: villagers.ron, 5000)
+  --population <u32>        villagers to populate (default: villagers.ron,
+                            5000; not with --run, whose settlements are
+                            populated at their drawn sizes)
   --world-size <tiles>      map size, a multiple of 64 (default 2048; 1024
                             with --run)
   --commands <n>            inject n deterministic no-op commands
@@ -43,7 +45,9 @@ usage: sim_headless [options]
 struct Args {
     seed: u64,
     ticks: u64,
-    population: u32,
+    /// `None`: villagers.ron's total. Refused with `--run`, which populates
+    /// every settlement at its drawn size (worldgen.ron `sizes`).
+    population: Option<u32>,
     /// `None`: the scenario's preset size.
     world_size: Option<u32>,
     commands: usize,
@@ -62,7 +66,7 @@ fn parse_args() -> Result<Args, String> {
     let mut args = Args {
         seed: 42,
         ticks: 1000,
-        population: sim_headless::default_population(),
+        population: None,
         world_size: None,
         commands: 0,
         checkpoint_every: 1000,
@@ -87,7 +91,7 @@ fn parse_args() -> Result<Args, String> {
         match flag.as_str() {
             "--seed" => args.seed = num(&flag, value()?)?,
             "--ticks" => args.ticks = num(&flag, value()?)?,
-            "--population" => args.population = num(&flag, value()?)?,
+            "--population" => args.population = Some(num(&flag, value()?)?),
             "--world-size" => args.world_size = Some(num(&flag, value()?)?),
             "--commands" => args.commands = num(&flag, value()?)?,
             "--checkpoint-every" => args.checkpoint_every = num(&flag, value()?)?,
@@ -118,6 +122,11 @@ fn parse_args() -> Result<Args, String> {
             return Err("--difficulty needs --run".to_string());
         };
         cfg.difficulty = difficulty;
+    }
+    if args.population.is_some() && matches!(args.scenario, Scenario::Run(_)) {
+        return Err(
+            "--population has no effect with --run (settlements use their drawn sizes)".to_string(),
+        );
     }
     Ok(args)
 }
@@ -403,7 +412,7 @@ fn main() -> ExitCode {
             },
         };
         HeadlessConfig {
-            population: args.population,
+            population: args.population.unwrap_or(base.population),
             threading: args.threading,
             world_size: args.world_size.unwrap_or(base.world_size),
             ..base
@@ -566,7 +575,7 @@ fn main() -> ExitCode {
         ),
         _ => println!(
             "seed={} ticks={} population={}",
-            args.seed, args.ticks, args.population
+            args.seed, args.ticks, config.population
         ),
     }
     for c in &result.checkpoints[..result.checkpoints.len().saturating_sub(1)] {

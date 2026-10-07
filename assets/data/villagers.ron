@@ -3,6 +3,8 @@
 (
     population: (
         // M2 populates one region at full detail; the rest wait for LOD (M5).
+        // The run island ignores total, region and min_per_settlement: every
+        // settlement there is populated at its drawn size (worldgen.ron sizes).
         total: 5000,
         // Region to populate: Auto = the region with the most settlements.
         region: Auto,

@@ -330,4 +330,101 @@ mod tests {
         assert!(ok(SiteRule::GrassOrHills, 2));
         assert!(!ok(SiteRule::GrassOrHills, 5));
     }
+    /// GP-23: every monument the run preset places stands on ground its
+    /// kind's site rule allows, re-checked against the finished map (seeds
+    /// 42 and 7), and never on Farmland.
+    #[test]
+    fn placed_monuments_suit_their_kind() {
+        let s = WorldGenSettings::preset(crate::WorldPreset::Run);
+        for seed in [42, 7] {
+            let w = crate::worldgen::generate_world(seed, &s, 4);
+            let size = w.map.size() as usize;
+            let terrain = w.map.terrain_slice();
+            let tile_region: Vec<RegionId> = (0..terrain.len())
+                .map(|i| w.map.region(w.map.pos(i)))
+                .collect();
+            // Roads never cross water and greens or fields never turn
+            // anything into water, so this equals the distance placement saw.
+            let water_dist = super::super::fields::water_distance(terrain, size);
+            let inp = MonumentInputs {
+                size,
+                terrain,
+                tile_region: &tile_region,
+                water_dist: &water_dist,
+                centers: &[],
+                settlement_names: &[],
+            };
+            let d = Distances {
+                road: Some(distance_to(terrain, size, |t| t == Terrain::Road)),
+                mountain: Some(distance_to(terrain, size, |t| t == Terrain::Mountain)),
+            };
+            assert!(!w.monuments.is_empty(), "seed {seed}: no monuments");
+            for site in &w.monuments {
+                let rule = s
+                    .monuments
+                    .kinds
+                    .iter()
+                    .find(|r| r.kind == site.kind)
+                    .unwrap_or_else(|| panic!("seed {seed}: {:?} is not a listed kind", site.kind))
+                    .site;
+                let i = w.map.index(site.center);
+                assert!(
+                    allows(rule, &inp, &d, i) && terrain[i] != Terrain::Farmland,
+                    "seed {seed}: {} ({:?}) at {} on {} breaks {rule:?}",
+                    site.name,
+                    site.kind,
+                    site.center,
+                    terrain[i].name()
+                );
+            }
+        }
+    }
+
+    /// GP-23: when the drawn kind fits nowhere (here, watchtowers on a map
+    /// without hills), the slot takes the next kind that fits and records
+    /// that kind, not the drawn one.
+    #[test]
+    fn a_kind_that_fits_nowhere_falls_back_to_one_that_does() {
+        let size = 48;
+        let terrain = vec![Terrain::Grass; size * size];
+        let water = super::super::fields::water_distance(&terrain, size);
+        let region = vec![0; size * size];
+        let names = ["Ashford".to_string()];
+        let inp = MonumentInputs {
+            size,
+            terrain: &terrain,
+            tile_region: &region,
+            water_dist: &water,
+            centers: &[IVec2::ZERO],
+            settlement_names: &names,
+        };
+        let mut s = WorldGenSettings::preset(crate::WorldPreset::Run);
+        s.monuments.per_region = 3;
+        s.monuments.min_settlement_distance = 4.0;
+        s.monuments.min_spacing = 8.0;
+        // Watchtowers are drawn almost always and never fit.
+        s.monuments.kinds = vec![
+            MonumentKindRule {
+                kind: MonumentKind::Watchtower,
+                weight: 1.0,
+                site: SiteRule::Hills,
+            },
+            MonumentKindRule {
+                kind: MonumentKind::StandingStones,
+                weight: 1e-6,
+                site: SiteRule::GrassOrHills,
+            },
+        ];
+        let d = Distances {
+            road: None,
+            mountain: None,
+        };
+        let placed = place(SimSeed(3), &inp, &s);
+        assert_eq!(placed.len(), 3, "{placed:?}");
+        for site in &placed {
+            let i = site.center.y as usize * size + site.center.x as usize;
+            assert_eq!(site.kind, MonumentKind::StandingStones, "{site:?}");
+            assert!(allows(SiteRule::GrassOrHills, &inp, &d, i), "{site:?}");
+        }
+    }
 }

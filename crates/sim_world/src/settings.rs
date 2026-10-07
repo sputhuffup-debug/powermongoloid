@@ -407,8 +407,10 @@ mod tests {
         assert_eq!(s.regions, 4);
         assert!(s.monuments.per_region > 0);
         assert!(!s.sizes.tiers.is_empty());
-        // Monuments must sit outside a village's threat radius (army.ron 45).
-        assert!(s.monuments.min_settlement_distance > 45.0);
+        // Monuments must sit outside a village's threat radius. sim_world
+        // can't read army.ron, so the authoritative check against it is
+        // tests/tests/worldgen.rs `run_preset_meets_its_criteria`.
+        assert!(s.monuments.min_settlement_distance > 0.0);
     }
 
     #[test]
