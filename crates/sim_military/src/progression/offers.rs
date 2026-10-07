@@ -40,7 +40,10 @@ pub fn choose(
         return Err("not your offer");
     }
     let card = *o.choices.get(choice as usize).ok_or("no such choice")?;
-    if matches!(o.kind, OfferKind::Invitation { .. } | OfferKind::Hire { .. }) {
+    if matches!(
+        o.kind,
+        OfferKind::Invitation { .. } | OfferKind::Hire { .. }
+    ) {
         return Err("not available yet");
     }
     world.resource_mut::<Offers>().take(offer);

@@ -2,12 +2,14 @@
 //! See ADR 0003 (state hash) and ADR 0004 (harness and replays).
 
 use sim_core::{
-    CommandKind, CommandLog, FactionId, Replay, SimCommand, SimStepper, unhashed_state,
+    CommandKind, CommandLog, CommandScript, Difficulty, FactionId, LoggedCommand, Replay,
+    RunConfig, RunState, SimCommand, SimStepper, SimTick, unhashed_state,
 };
 use sim_headless::{
     HeadlessConfig, RunResult, Scenario, Threading, headless_app, record_replay, run,
-    sample_commands, sample_orders, verify_replay,
+    sample_commands, sample_orders, start_boon_pick, verify_replay,
 };
+use sim_military::RunProgress;
 
 /// SEED.md "Testing requirements": 10,000 ticks with a command log.
 const TICKS: u64 = 10_000;
@@ -150,6 +152,66 @@ fn state_hash_covers_every_sim_component() {
          register_hashed_resource, or exempt_from_hash with a reason:\n  {}",
         missing.join("\n  ")
     );
+}
+
+/// The same coverage on a run (M4, GP-21, GP-27): the run island, the
+/// start boon picked at tick 0 and random orders, so the run's components
+/// and resources exist. Later M4 steps extend this run with their state.
+#[test]
+fn run_state_hash_covers_every_sim_component() {
+    let mut app = headless_app(HeadlessConfig::run(42, RunConfig::default()));
+    let mut commands: Vec<LoggedCommand> = start_boon_pick(&app, 0).into_iter().collect();
+    commands.extend(sample_orders(&mut app, 42, 600, 30));
+    app.insert_resource(CommandScript::from_log(&commands));
+    app.step(1_500);
+    assert_eq!(
+        app.world().resource::<SimTick>().0,
+        1_500,
+        "the run goes on"
+    );
+    assert_eq!(app.world().resource::<RunState>().outcome, None);
+    assert_eq!(
+        app.world().resource::<RunProgress>().boons.len(),
+        1,
+        "the start boon was picked"
+    );
+    let missing = unhashed_state(app.world_mut());
+    assert!(
+        missing.is_empty(),
+        "run state not covered by the hash; register it with register_hashed / \
+         register_hashed_resource, or exempt_from_hash with a reason:\n  {}",
+        missing.join("\n  ")
+    );
+}
+
+/// NFR-08 for runs (GP-21): a run's replay carries its `RunConfig` in the
+/// header and reproduces in parallel and serially, with the start boon
+/// pick at tick 0 and random orders (some refused).
+#[test]
+fn a_run_replays() {
+    const RUN_TICKS: u64 = 2_000;
+    let cfg = RunConfig {
+        difficulty: Difficulty::Harsh,
+    };
+    let config = HeadlessConfig::run(9, cfg);
+    let commands = {
+        let mut probe = headless_app(config);
+        let mut c: Vec<LoggedCommand> = start_boon_pick(&probe, 1).into_iter().collect();
+        assert_eq!(c.len(), 1, "a start boon to pick");
+        c.extend(sample_orders(&mut probe, 9, RUN_TICKS, 60));
+        c
+    };
+    let replay = record_replay(config, RUN_TICKS, &commands, 500);
+    assert_eq!(replay.scenario, "run");
+    assert_eq!(replay.run, Some(cfg), "the run's config is in the header");
+    assert_eq!(
+        replay.commands, commands,
+        "every player command is logged once, in order"
+    );
+    let reloaded = Replay::from_ron(&replay.to_ron()).expect("replay parses");
+    assert_eq!(reloaded, replay);
+    verify_replay(&reloaded, Threading::Multi).expect("run replay reproduces");
+    verify_replay(&reloaded, Threading::Single).expect("run replay reproduces serially");
 }
 
 fn skirmish(seed: u64) -> HeadlessConfig {

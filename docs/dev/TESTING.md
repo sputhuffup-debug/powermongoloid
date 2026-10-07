@@ -34,8 +34,14 @@ Times are on a 4-core machine.
 | | `different_seeds_give_different_hashes`, `hash_changes_as_the_sim_advances`, `hashing_does_not_change_state` | The hash actually measures state | ~5 s |
 | | `state_hash_covers_every_sim_component` | Every sim component and resource is hashed or exempt (armies included) | ~10 s |
 | | `armies_with_orders_are_deterministic_and_replay` | Armies plus 200 random orders: parallel equals serial, and the replay reproduces | ~60 s |
+| | `run_state_hash_covers_every_sim_component` | M4 (GP-21, GP-27): the same coverage on a run, with the start boon picked at tick 0 and random orders for 1,500 ticks. Each M4 step extends this run with its own state | ~3 s |
+| | `a_run_replays` | NFR-08 for runs: the replay header carries the run's `RunConfig` (`Replay.run`), and a run with its start boon pick and 60 random orders (some refused) reproduces in parallel and serially | ~11 s |
 | `worldgen.rs` | `shipped_world_is_2048_square_in_64_tile_chunks`, `same_seed_same_island_regardless_of_threads`, `different_seeds_give_different_islands`, `every_seed_meets_the_m1_criteria`, `the_sim_spawns_settlements_and_roads` | SIM-01 and SIM-02: world size, determinism, terrain mix, settlements and roads (the M1 criteria); the developed world has no monuments or drawn sizes (M4 D6) | ~15 s |
 | | `run_preset_meets_its_criteria`, `run_preset_is_the_same_regardless_of_threads` | GP-21 and GP-23: the run island (4 seeds) has the M1 terrain, settlement and road criteria, 4 regions, 4-8 monuments per region on allowed ground away from settlements and each other, a size for every settlement with the seat the unique largest, and 3,500-5,500 people; its monuments and sizes don't depend on the thread count | |
+| `run_start.rs` | `twenty_seeds_draw_valid_varied_starts` | M4 step 1 (GP-21, GP-23, GP-27), world level with no App: for seeds 1..=20 the run island has 4 regions, a drawn size for every settlement and 4-8 monuments per region on allowed ground away from settlements. The start (`draw_start`) is seeded, in another region than the rival's seat (the unique largest settlement), away from every settlement, with a walkable path to the seat, 2-3 monuments within `start.monument_radius` (no more than a day's march) and three distinct start boons. Across the seeds the start terrain, the band and the run modifiers each take at least 3 values | ~10 s |
+| | `a_run_starts_identically_from_its_seed` | GP-21: two apps of one seed hash the same after setup and after 200 ticks; every settlement is populated; one start boon offer of three distinct cards waits; the champion is the player's captain, with one trait, leading the drawn band | ~2 s |
+| | `choosing_the_start_boon_applies_once` | GP-27: the pick applies its effect (here three days of food) and is recorded once; a second `ChooseOffer` for the same offer is refused and counted in `rejected_commands`, and nothing applies twice | <1 s |
+| | `abandoning_ends_the_run_and_stops_the_clock` | GP-21: only the player can abandon. The outcome, its cause and `RunEnded` are recorded on that tick; afterwards `SimTick` and the state hash freeze and commands are no longer applied | <1 s |
 | `village_day.rs` | `five_thousand_villagers_live_a_full_day` | M2: 5,000 villagers eat, work and sleep through a day (`villagers.ron`, `economy.ron` tuning) | ~30 s |
 | `famine.rs` | `cutting_off_farmers_starves_that_village_within_two_days` | M2: food security responds to production, and the famine stays local | ~17 s |
 | `army_march.rs` | `an_army_of_200_marches_around_a_lake_as_a_crowd` | M3 / SIM-30: 200 followers cross 220 tiles around a lake, stay a crowd, never stand on water, and parallel equals serial | ~12 s |
@@ -71,7 +77,13 @@ These run in seconds and sit next to the code they test.
   - installing a world spawns settlements, then monuments
 - **sim_economy:** inventory and stockpile rules, transfer operations, the resolver serving lower SpawnIds first, data validation, layout rings.
 - **sim_agents:** utility choice (best score, inertia, ties), eating, response curves, data validation, apportioning.
-- **sim_military:** data loading, hostility rules, the fighter grid's masked search matching a full search, formation slots.
+- **sim_military:**
+  - data loading, hostility rules, the fighter grid's masked search matching a full search, formation slots
+  - `progression.ron` loads and its validation rejects bad cards (`shipped_data_is_valid`, `rejects_bad_data`)
+  - start draws (GP-21, GP-27, `a_run_start_is_seeded_and_fits`): on the run island of seed 42 the same seed gives the same start, the seat is the largest settlement, the band starts in another region with 2-3 monuments nearby and a path to the seat, and three distinct start boons are offered; weighted card draws skip zero weights and respect groups
+  - a run app (`a_run_is_set_up_its_boon_picked_once_and_abandoned`, ~1 s): setup spawns the drawn band under a champion with one trait and posts the start offer; the pick applies once and a second is refused; only the player can abandon, and abandoning stops the clock
+  - `survey_twenty_seeds` (`#[ignore]`, run with `--include-ignored survey --nocapture`): prints each seed's start draws for tuning `progression.ron`; `SURVEY_SEEDS=42,7` picks seeds
+- **sim_headless:** scenario names round-trip, a run's config travels in the replay header (`scenario_names_round_trip`); a run config selects the run island and everything else the developed world (`a_run_config_selects_the_run_island`); `verify_replay` refuses a scenario it doesn't know (`an_unknown_replay_scenario_is_an_error`).
 - **game_render:**
   - detail bands and hysteresis
   - camera maths: pan, zoom, rotation snapping, easing

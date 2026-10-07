@@ -14,7 +14,9 @@ NFR-08: the same seed and the same command stream give a bit-identical state has
 | **Order-dependent work is sorted by `SpawnId`.** | `Entity` ids are reused after despawns; `SpawnId`s are allocated in spawn order and never reused. |
 | **Parallel systems write only their own entity's components.** Shared state changes go through a serial, sorted step. | The step either posts an order to a resolver (`Transfers`, `Strike`) or runs as an exclusive system over a sorted list. Two threads writing the same data would race. |
 | **Every sim component and resource is registered** with `register_hashed` / `register_hashed_resource`, or exempted with `exempt_from_hash::<T>("reason")`. | The coverage test (`state_hash_covers_every_sim_component`) fails otherwise. Unhashed state could diverge silently. |
+| **Scenario setup edits state directly and never writes player commands** (`sim_headless::set_up_scenario`: skirmish, battle, run). Setup that needs orders writes `SimCommand::ai`; picks such as the start boon are recorded player commands sent at tick 0. | `verify_replay` re-runs the setup *and* replays the recorded log, so a player command written by setup would apply twice. AI commands are never recorded. |
 | **New sim entities get a `SpawnId`** (`sim_core::spawn_sim`, or allocate from `NextSpawnId` in setup code). | The hash and every sort depend on it. |
+| **Run-only rules leave the developed world alone** (M4, [ADR 0013](../adr/0013-runs-presets-and-run-config.md)). Gate them with `.run_if(in_run)` (or check `RunState::in_run`), draw from new stream keys only, spawn no entities before the villagers outside the run preset, and make multipliers exact no-ops at 1.0. | The developed world, the benchmarks and every M2/M3 test must keep their results. One extra draw on an existing stream, or one extra entity before the villagers, shifts every later draw or SpawnId. |
 | **Caches must be pure.** `PathCache`, `FlowCache` and the grids are exempt from the hash, because what they return depends only on hashed state. | A system that asks a cache must get the same answer whether or not the entry was cached. For example, `ensure_field` rebuilds a missing field every tick before anyone reads it. |
 | **Floating-point sums run in a fixed order.** | `f32` addition isn't associative. Counts are summed as integers where possible (see `upkeep::tally`). |
 | **Wall-clock time** (`Instant`, `Time<Real>`) is for diagnostics only. | `SimTimings`, logs. |
@@ -36,9 +38,10 @@ NFR-08: the same seed and the same command stream give a bit-identical state has
   ```sh
   cargo run --release -p sim_headless -- --skirmish --ticks 6000 --commands 200 --record run.ron
   cargo run --release -p sim_headless -- --replay run.ron --single-threaded
+  cargo run --release -p sim_headless -- --run --difficulty harsh --ticks 2000 --commands 200 --record run.ron
   ```
 
-- **`tests/tests/determinism.rs`:** 10,000-tick runs, parallel vs serial, recorded vs live commands, dropped-command detection, hash coverage, and armies with random orders.
+- **`tests/tests/determinism.rs`:** 10,000-tick runs, parallel vs serial, recorded vs live commands, dropped-command detection, hash coverage (the skirmish, and a run with its start boon picked), armies with random orders, and a run's replay with its `RunConfig`.
 
 ## When a determinism test fails
 

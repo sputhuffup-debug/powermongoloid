@@ -19,9 +19,6 @@ use sim_world::{Settlement, WorldMap};
 use crate::selection::{Selection, ground_hit};
 use crate::style;
 
-/// The player's faction. Rival warlords arrive in M5.
-pub const PLAYER: FactionId = FactionId(1);
-
 pub struct ArmyUiPlugin;
 
 impl Plugin for ArmyUiPlugin {
@@ -206,12 +203,12 @@ fn own_army(
 ) -> Option<(Entity, u64)> {
     let e = selection.army?;
     let (id, c) = captains.get(e).ok()?;
-    (c.faction == PLAYER).then_some((e, id.0))
+    (c.faction == FactionId::PLAYER).then_some((e, id.0))
 }
 
 fn send(out: &mut MessageWriter<SimCommand>, kind: CommandKind) {
     info!("order: {kind:?}");
-    out.write(SimCommand::player(PLAYER, kind));
+    out.write(SimCommand::player(FactionId::PLAYER, kind));
 }
 
 #[allow(clippy::too_many_arguments)] // Bevy system parameters.
@@ -576,7 +573,7 @@ fn army_panel(
         let day = tick / 2400 + 1;
         s += &format!("  day {day}: {line}\n");
     }
-    if c.faction != PLAYER {
+    if c.faction != FactionId::PLAYER {
         s += "(not yours: no orders)";
     } else {
         s += "Right-click: move / village orders (Shift queues)";

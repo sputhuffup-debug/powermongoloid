@@ -3,13 +3,14 @@
 //!   sim_headless --seed 42 --ticks 10000            print the final state hash
 //!   sim_headless --commands 200 --record run.ron    record a replay file
 //!   sim_headless --replay run.ron                   verify a replay file
+//!   sim_headless --run --difficulty harsh           a run on the run island
 //!
 //! Exit code 1 on bad arguments, 2 if a replay diverges.
 
 use std::process::ExitCode;
 use std::time::Instant;
 
-use sim_core::Replay;
+use sim_core::{Difficulty, Replay, RunConfig};
 use sim_headless::{
     HeadlessConfig, Scenario, Threading, record_replay, run, sample_commands, verify_replay,
 };
@@ -19,7 +20,8 @@ usage: sim_headless [options]
   --seed <u64>              world seed (default 42)
   --ticks <u64>             ticks to run (default 1000)
   --population <u32>        villagers to populate (default: villagers.ron, 5000)
-  --world-size <tiles>      map size, a multiple of 64 (default 2048)
+  --world-size <tiles>      map size, a multiple of 64 (default 2048; 1024
+                            with --run)
   --commands <n>            inject n deterministic no-op commands
   --checkpoint-every <n>    hash every n ticks (default 1000; 0 = end only)
   --single-threaded         run systems one at a time
@@ -30,13 +32,20 @@ usage: sim_headless [options]
   --timings                 print the mean wall-clock time of each sim stage
   --skirmish                set up the M3 playtest armies (with --commands:
                             random military orders for them)
-  --battle <n>              the skirmish plus two armies of n meeting in battle";
+  --battle <n>              the skirmish plus two armies of n meeting in battle
+  --run                     a run on the run island (GP-21): the band, its
+                            champion and the start boon offer; the first
+                            boon is picked at tick 0 (with --commands: plus
+                            random military orders)
+  --difficulty <name>       the run's difficulty: steady (default), chaotic
+                            or harsh (needs --run)";
 
 struct Args {
     seed: u64,
     ticks: u64,
     population: u32,
-    world_size: u32,
+    /// `None`: the scenario's preset size.
+    world_size: Option<u32>,
     commands: usize,
     checkpoint_every: u64,
     threading: Threading,
@@ -45,6 +54,7 @@ struct Args {
     map_ppm: Option<String>,
     stats_every: u64,
     scenario: Scenario,
+    difficulty: Option<Difficulty>,
     timings: bool,
 }
 
@@ -53,7 +63,7 @@ fn parse_args() -> Result<Args, String> {
         seed: 42,
         ticks: 1000,
         population: sim_headless::default_population(),
-        world_size: HeadlessConfig::new(0).world_size,
+        world_size: None,
         commands: 0,
         checkpoint_every: 1000,
         threading: Threading::Multi,
@@ -62,6 +72,7 @@ fn parse_args() -> Result<Args, String> {
         map_ppm: None,
         stats_every: 0,
         scenario: Scenario::Villages,
+        difficulty: None,
         timings: false,
     };
     let mut it = std::env::args().skip(1);
@@ -77,7 +88,7 @@ fn parse_args() -> Result<Args, String> {
             "--seed" => args.seed = num(&flag, value()?)?,
             "--ticks" => args.ticks = num(&flag, value()?)?,
             "--population" => args.population = num(&flag, value()?)?,
-            "--world-size" => args.world_size = num(&flag, value()?)?,
+            "--world-size" => args.world_size = Some(num(&flag, value()?)?),
             "--commands" => args.commands = num(&flag, value()?)?,
             "--checkpoint-every" => args.checkpoint_every = num(&flag, value()?)?,
             "--single-threaded" => args.threading = Threading::Single,
@@ -87,6 +98,13 @@ fn parse_args() -> Result<Args, String> {
             "--stats-every" => args.stats_every = num(&flag, value()?)?,
             "--skirmish" => args.scenario = Scenario::Skirmish,
             "--battle" => args.scenario = Scenario::Battle(num(&flag, value()?)?),
+            "--run" => args.scenario = Scenario::Run(RunConfig::default()),
+            "--difficulty" => {
+                let v = value()?;
+                args.difficulty = Some(Difficulty::parse(&v).ok_or(format!(
+                    "--difficulty: unknown {v:?} (steady, chaotic or harsh)"
+                ))?);
+            }
             "--timings" => args.timings = true,
             "-h" | "--help" => return Err(USAGE.to_string()),
             other => return Err(format!("unknown argument {other}\n{USAGE}")),
@@ -94,6 +112,12 @@ fn parse_args() -> Result<Args, String> {
     }
     if args.record.is_some() && args.replay.is_some() {
         return Err("--record and --replay can't be combined".to_string());
+    }
+    if let Some(difficulty) = args.difficulty {
+        let Scenario::Run(cfg) = &mut args.scenario else {
+            return Err("--difficulty needs --run".to_string());
+        };
+        cfg.difficulty = difficulty;
     }
     Ok(args)
 }
@@ -141,10 +165,125 @@ fn print_world_summary(app: &bevy_app::App) {
         roads.roads.len(),
         counts[Terrain::Road as usize]
     );
+    print_run_summary(app);
+}
+
+/// Prints the regions, monuments, settlement sizes and people, and, in a
+/// run, the rival's seat and the start draws (GP-21, GP-23, GP-27).
+fn print_run_summary(app: &bevy_app::App) {
+    use sim_core::{NameTable, Offers, SpawnId};
+    use sim_military::{Champion, Progression, RunProgress, Traits};
+    use sim_world::{Monument, MonumentKind, Settlement, SettlementSize, SizeTier, WorldMap};
+    let world = app.world();
+    let names = world.resource::<NameTable>();
+    let mut by_kind = [0u32; MonumentKind::COUNT];
+    let mut monuments = 0;
+    if let Some(mut q) = world.try_query::<&Monument>() {
+        for m in q.iter(world) {
+            by_kind[m.kind.index()] += 1;
+            monuments += 1;
+        }
+    }
+    let kinds: Vec<String> = MonumentKind::ALL
+        .iter()
+        .filter(|k| by_kind[k.index()] > 0)
+        .map(|k| format!("{} {}", k.name(), by_kind[k.index()]))
+        .collect();
+    let villagers = world
+        .try_query::<&sim_agents::Villager>()
+        .map_or(0, |mut q| q.iter(world).count());
+    let kinds = if kinds.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", kinds.join(", "))
+    };
+    eprintln!(
+        "regions={} monuments={monuments}{kinds} villagers={villagers}",
+        world.resource::<WorldMap>().region_count(),
+    );
+    let mut tiers = [(0u32, 0u32); 3];
+    if let Some(mut q) = world.try_query::<&SettlementSize>() {
+        for z in q.iter(world) {
+            tiers[z.tier as usize].0 += 1;
+            tiers[z.tier as usize].1 += z.people;
+        }
+    }
+    if tiers.iter().any(|t| t.0 > 0) {
+        let line: Vec<String> = SizeTier::ALL
+            .iter()
+            .map(|t| {
+                let (n, people) = tiers[*t as usize];
+                format!("{} {n} ({people} people)", t.name())
+            })
+            .collect();
+        eprintln!("sizes: {}", line.join(", "));
+    }
+    let progress = world.resource::<RunProgress>();
+    let Some(seat) = progress.rival_seat else {
+        return;
+    };
+    if let Some(mut q) = world.try_query::<(&SpawnId, &Settlement, Option<&SettlementSize>)>()
+        && let Some((_, st, size)) = q.iter(world).find(|(id, ..)| id.0 == seat)
+    {
+        eprintln!(
+            "seat: {} (#{seat}, {} people, region {}) at ({}, {})",
+            names.get(st.name),
+            size.map_or(0, |z| z.people),
+            st.region,
+            st.center.x,
+            st.center.y
+        );
+    }
+    let data = &world.resource::<Progression>().data;
+    let card = |list: &[String], i: u16| list.get(i as usize).cloned().unwrap_or_default();
+    let boon_names: Vec<String> = data.boons.iter().map(|b| b.name.clone()).collect();
+    let mod_names: Vec<String> = data.modifiers.iter().map(|m| m.name.clone()).collect();
+    let trait_names: Vec<String> = data.traits.iter().map(|t| t.name.clone()).collect();
+    let band = data.bands.get(progress.band as usize);
+    let traits: Vec<String> = world
+        .try_query_filtered::<&Traits, bevy_ecs::query::With<Champion>>()
+        .map(|mut q| {
+            q.iter(world)
+                .flat_map(|t| t.0.iter().map(|&i| card(&trait_names, i)))
+                .collect()
+        })
+        .unwrap_or_default();
+    eprintln!(
+        "start: ({}, {}) region {}, {}; band {:?} ({} + champion, {:.1} days of food), traits [{}]",
+        progress.start.x,
+        progress.start.y,
+        progress.start_region,
+        progress.terrain.name(),
+        band.map_or("?", |b| b.name.as_str()),
+        band.map_or(0, |b| b.followers()),
+        band.map_or(0.0, |b| b.food_days),
+        traits.join(", ")
+    );
+    let mods: Vec<String> = progress
+        .modifiers
+        .iter()
+        .map(|&m| card(&mod_names, m))
+        .collect();
+    let offers: Vec<String> = world
+        .resource::<Offers>()
+        .pending
+        .iter()
+        .map(|o| {
+            let choices: Vec<String> = o.choices.iter().map(|&c| card(&boon_names, c)).collect();
+            format!("#{} {:?}: {}", o.id, o.kind, choices.join(" / "))
+        })
+        .collect();
+    eprintln!(
+        "modifiers: [{}] offers: [{}]",
+        mods.join(", "),
+        offers.join("; ")
+    );
 }
 
 /// Writes the terrain as a binary PPM image (1 pixel per tile), with
-/// settlement centres marked, for eyeballing world generation.
+/// settlement centres (red crosses), monuments (white squares) and, in a
+/// run, the start (cyan) and the rival's seat (magenta) marked, for
+/// eyeballing world generation.
 fn write_map_ppm(app: &bevy_app::App, path: &str) -> std::io::Result<()> {
     use sim_world::{Settlement, Terrain, WorldMap};
     let world = app.world();
@@ -185,6 +324,28 @@ fn write_map_ppm(app: &bevy_app::App, path: &str) -> std::io::Result<()> {
                 }
             }
         }
+    }
+    // A filled square of `r` tiles around `c`.
+    let mut mark = |c: bevy_math::IVec2, r: i32, rgb: [u8; 3]| {
+        for dy in -r..=r {
+            for dx in -r..=r {
+                let p = c + bevy_math::IVec2::new(dx, dy);
+                if map.in_bounds(p) {
+                    let (x, y) = (p.x as usize, size - 1 - p.y as usize);
+                    px[(y * size + x) * 3..(y * size + x) * 3 + 3].copy_from_slice(&rgb);
+                }
+            }
+        }
+    };
+    if let Some(mut q) = world.try_query::<(&sim_world::Monument, &sim_core::Position)>() {
+        for (_, p) in q.iter(world) {
+            mark(p.0, 2, [255, 255, 255]);
+        }
+    }
+    let progress = world.resource::<sim_military::RunProgress>();
+    if progress.rival_seat.is_some() {
+        mark(progress.seat_center, 4, [230, 40, 230]);
+        mark(progress.start, 4, [40, 230, 230]);
     }
     let mut out = format!("P6\n{size} {size}\n255\n").into_bytes();
     out.extend_from_slice(&px);
@@ -233,12 +394,20 @@ fn main() -> ExitCode {
         };
     }
 
-    let config = HeadlessConfig {
-        seed: args.seed,
-        population: args.population,
-        threading: args.threading,
-        world_size: args.world_size,
-        scenario: args.scenario,
+    let config = {
+        let base = match args.scenario {
+            Scenario::Run(cfg) => HeadlessConfig::run(args.seed, cfg),
+            scenario => HeadlessConfig {
+                scenario,
+                ..HeadlessConfig::new(args.seed)
+            },
+        };
+        HeadlessConfig {
+            population: args.population,
+            threading: args.threading,
+            world_size: args.world_size.unwrap_or(base.world_size),
+            ..base
+        }
     };
     if let Err(e) = config.worldgen().validate() {
         eprintln!("--world-size: {e}");
@@ -249,7 +418,15 @@ fn main() -> ExitCode {
         let mut app = sim_headless::headless_app(config);
         print_world_summary(&app);
         commands = if args.scenario != Scenario::Villages {
-            sim_headless::sample_orders(&mut app, args.seed, args.ticks, args.commands)
+            // In a run, the start boon's first choice is picked at tick 0.
+            let mut out: Vec<_> = sim_headless::start_boon_pick(&app, 0).into_iter().collect();
+            out.extend(sim_headless::sample_orders(
+                &mut app,
+                args.seed,
+                args.ticks,
+                args.commands,
+            ));
+            out
         } else {
             sample_commands(args.seed, args.ticks, args.commands)
         };
@@ -380,10 +557,18 @@ fn main() -> ExitCode {
         result.tick_time.as_secs_f64(),
         args.ticks as f64 / result.tick_time.as_secs_f64().max(f64::EPSILON)
     );
-    println!(
-        "seed={} ticks={} population={}",
-        args.seed, args.ticks, args.population
-    );
+    match config.scenario {
+        Scenario::Run(cfg) => println!(
+            "seed={} ticks={} run difficulty={}",
+            args.seed,
+            args.ticks,
+            cfg.difficulty.name()
+        ),
+        _ => println!(
+            "seed={} ticks={} population={}",
+            args.seed, args.ticks, args.population
+        ),
+    }
     for c in &result.checkpoints[..result.checkpoints.len().saturating_sub(1)] {
         println!("checkpoint tick={} hash=0x{:016x}", c.tick, c.hash);
     }

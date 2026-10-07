@@ -37,12 +37,12 @@ There are two halves, and one rule between them ([ADR 0002](../adr/0002-workspac
 | `sim_world` | `WorldMap` (terrain arrays in 64-tile chunks, regions), world generation and its presets (`WorldPreset`: developed and run), `Settlement`, roads, A* paths and `PathCache`, flow fields and `FlowCache`, `SpatialGrid`; for M4 runs: settlement sizes (`SettlementSize`, `worldgen/sizes.rs`) and monuments (`Monument`, `monuments.rs`, placed by `worldgen/monuments.rs`) | `sim_core` |
 | `sim_economy` | Goods, recipes and workplaces (`economy.ron`), `Stockpile`, `Inventory`, `Transfers` and the transfer resolver, buildings and settlement layout | `sim_core`, `sim_world` |
 | `sim_agents` | Villagers: population, needs, the utility AI (`decide`), actions (`perform`), walking, food security, reactions to armies (flee, hide, fight), combat components | `sim_core`, `sim_world`, `sim_economy` |
-| `sim_military` | `army.ron`, captains and order queues, followers, command validation, the logistics step, army index and fighter grid, soldier AI, crowd steering, combat, morale, upkeep, threat, scripted raiders, army spawning | `sim_core`, `sim_world`, `sim_economy`, `sim_agents` |
+| `sim_military` | `army.ron`, captains and order queues, followers, command validation, the logistics step, army index and fighter grid, soldier AI, crowd steering, combat, morale, upkeep, threat, scripted raiders, army spawning; runs (`progression`, `progression.ron`): the start draws, `setup_run`, the champion, offers (`ChooseOffer`) and abandoning | `sim_core`, `sim_world`, `sim_economy`, `sim_agents` |
 | `sim_knowledge`, `sim_lod`, `sim_ai` | Placeholders for M5: faction knowledge, simulation LOD, rival warlords | `sim_core` |
-| `sim_headless` | `SimPlugins` (every sim plugin in order), `HeadlessConfig` and scenarios, the run/record/verify harness, stats, the CLI, benchmarks | every `sim_*` crate |
+| `sim_headless` | `SimPlugins` (every sim plugin in order; `SimPlugins::run` for a run), `HeadlessConfig` and scenarios (`set_up_scenario`, shared with `game_app`), the run/record/verify harness, stats, the CLI (`--run`, `--difficulty`), benchmarks | every `sim_*` crate |
 | `game_render` | Terrain chunks, buildings, people (detail bands, interpolation), banners, procedural art, the camera rig | `sim_*` (read-only) |
 | `game_ui` | Time bar, selection, villager/soldier inspector, settlement panel, captain panel and orders, labels, dev debug panel (egui) | `sim_*`, `game_render` |
-| `game_app` | The binary: window, plugins, start scenario, stress mode | everything |
+| `game_app` | The binary: window, plugins, start scenario (through `sim_headless::set_up_scenario`; `--run` for a run), stress mode | everything |
 
 `tests/` is the `integration_tests` crate: the scenario and determinism tests.
 
@@ -56,7 +56,7 @@ Each crate exposes **one plugin** that registers its resources, components (in t
 
 | # | `SimSet` | Systems, in order | Notes |
 | --- | --- | --- | --- |
-| 1 | **Input** | **Inject:** `inject_scripted`, `record_commands` (sim_core), `raiders::think` (sim_military)<br>**Ai:** the sim's own AI writes `SimCommand::ai` here (empty until the raiders and the rival move in)<br>**Consume:** `drain_commands` (sim_core); `MilitarySet::Orders`: `collect_commands`, then `apply_commands`, then `run_orders` | Chained Inject, Ai, Consume, so commands arrive in a fixed order. Commands become order-queue changes; captains progress orders and do settlement dealings (the serial logistics step) |
+| 1 | **Input** | **Inject:** `inject_scripted`, `record_commands` (sim_core)<br>**Ai:** the sim's own AI writes `SimCommand::ai` here: `raiders::think` (sim_military; the rival joins in M4 step 7)<br>**Consume:** `drain_commands` (sim_core); `MilitarySet::Orders`: `collect_commands`, then `apply_commands`, then `run_orders` | Chained Inject, Ai, Consume, so commands arrive in a fixed order. Commands become order-queue changes; captains progress orders and do settlement dealings (the serial logistics step) |
 | 2 | **Knowledge** | `MilitarySet::Index`: `build_index`, then `update_threats` | Builds read-only summaries (army index, fighter grid) for this tick's parallel systems; sets each settlement's `Threat` |
 | 3 | **Decide** | `AgentSet::Decide`: `ai::decide`; then `MilitarySet::Decide`: `soldiers::decide` | Villagers score options (about a tenth each tick); soldiers choose follow, fight or rout and aim blows |
 | 4 | **Move** | `AgentSet::Move`: `plan_paths`, then `move_agents`; then `MilitarySet::Move`: `move_captains`, then `move_soldiers` | Villagers follow A* paths; armies follow flow fields with separation |
@@ -72,7 +72,7 @@ Each crate exposes **one plugin** that registers its resources, components (in t
 
 ## From a click to a frame
 
-1. **Click.** In `Update`, `game_ui::army::right_click` turns a right-click into `SimCommand::player(FactionId(1), IssueOrder { captain, order: MoveTo { .. }, .. })` and writes it as a Bevy message.
+1. **Click.** In `Update`, `game_ui::army::right_click` turns a right-click into `SimCommand::player(FactionId::PLAYER, IssueOrder { captain, order: MoveTo { .. }, .. })` and writes it as a Bevy message.
 2. **Record.** On the next fixed tick, `record_commands` logs it (only player commands go into replays), and `drain_commands` counts it.
 3. **Validate.** `collect_commands` and `apply_commands` check it (is it the issuer's captain? is the target valid?) and update the captain's `orders`.
 4. **Plan.** `run_orders` sets the captain's goal and makes sure its flow field and rally field exist (`FlowCache`).
@@ -82,7 +82,8 @@ Each crate exposes **one plugin** that registers its resources, components (in t
 ## Where state lives
 
 - **Components on sim entities.** Every sim entity has a `SpawnId`: villagers, soldiers, buildings, settlements. These are **hashed** (the state hash covers them) unless explicitly exempt.
-- **Resources.** Data loaded from `assets/data/*.ron` (`Villagers`, `Economy`, `Army`, `Calendar`, `WorldGenSettings`) and world-level state (`WorldMap`, `Factions`, `ArmyStats`, `SimTick`) are hashed.
+- **Resources.** Data loaded from `assets/data/*.ron` (`Villagers`, `Economy`, `Army`, `Progression`, `Calendar`, `WorldGenSettings`) and world-level state (`WorldMap`, `Factions`, `ArmyStats`, `SimTick`) are hashed.
+- **Run state (M4).** `RunState` (config, outcome), `Offers`, `Chronicle` and `FactionModifiers` in sim_core, and `RunProgress` in sim_military, are always present and hashed, with defaults outside a run, so the coverage test sees them from tick 0 ([ADR 0013](../adr/0013-runs-presets-and-run-config.md)). `EventFeed` is a UI ring derived from events and is exempt.
 - **Caches and indexes.** `PathCache`, `FlowCache`, `SpatialGrid`, `ArmyIndex` and `FighterGrid` are exempt from the hash. Each is a pure function of hashed state and is rebuilt identically, so it can never change an outcome.
 - **Render-side state.** Lives in render resources keyed by sim `Entity` (`AgentVisuals`, `Banners`), never on sim entities.
 - **Game data.** Everything tunable lives in `assets/data/`, embedded at compile time with `include_str!`. [DATA.md](DATA.md) documents every field.

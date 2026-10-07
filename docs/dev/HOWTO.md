@@ -84,11 +84,22 @@ UI code reads sim state and writes `SimCommand`s only. Copy the captain panel in
 ## Add a scenario test
 
 Copy `tests/tests/posture.rs`. Shared helpers (commands, positions, village lists) are in `tests/tests/common/mod.rs`.
-1. **Build a world:** `headless_app(HeadlessConfig::new(SEED))`, or `Scenario::Skirmish` for armies. Set up extra state before the first tick (`spawn_army`, `cut_off_farmers`).
+1. **Build a world:** `headless_app(HeadlessConfig::new(SEED))`, or `Scenario::Skirmish` for armies, or `common::run_app(SEED)` for a run on the run island (`HeadlessConfig::run(SEED, RunConfig::default())`; its start boon waits for a pick: `common::choose(&mut app, offer, 0)` with `offer` from `common::start_offer(&app)`). Set up extra state before the first tick (`spawn_army`, `cut_off_farmers`). `tests/tests/run_start.rs` is a run example.
 2. **Send input** as commands: `common::order(...)`, never by editing components mid-run.
 3. **Step** with `app.step(n)`, and read results through queries or `sim_headless::stats`.
 4. **Assert** the requirement, and print the numbers so a failure explains itself.
 5. **Note what the test guards** in [TESTING.md](TESTING.md).
+
+## Add a run-only rule
+
+Runs (GP-21, M4) add rules that the developed world, the benchmarks and the M2/M3 tests must never feel ([ADR 0013](../adr/0013-runs-presets-and-run-config.md)). Example: the start boon, applied in `crates/sim_military/src/progression/offers.rs`.
+1. **Put the data** in `assets/data/progression.ron` and document every field in [DATA.md](DATA.md). Cards are append only: a card's `id` is its index, and offers and saves store it.
+2. **Gate it:** add the system with `.run_if(in_run)`, or check `RunState::in_run()` in a serial step, so nothing runs or draws outside a run.
+3. **Draw from a new stream key** (`rng_key("sim_military::your_step")`), never an existing one, and spawn only in a serial step with `NextSpawnId::allocate`.
+4. **Keep multipliers exact no-ops:** read `FactionModifiers::mult`, which is exactly 1.0 when nothing applies.
+5. **Player choices arrive as commands.** Post an offer with `sim_core::post_offer` and apply the pick in `progression::choose`; a run ends only through `RunState::finish(outcome, cause)` from a serial step (`settle_outcome` records `RunEnded`).
+6. **Test it on a run** with `common::run_app` and read what happened from `common::chronicle`, never from `SimEvent` messages. Extend `run_state_hash_covers_every_sim_component` in `tests/tests/determinism.rs` so the new state is covered.
+7. **Show the developed world didn't change:** re-run `village_day`, `famine`, `army_march`, `posture`, `starving_army` and `orders`, and compare `cargo run --release -p sim_headless -- --seed 42 --ticks 1200 --stats-every 600` with its output before the change (only the state hash may differ).
 
 ## Tune behaviour
 

@@ -30,13 +30,15 @@ use crate::schedule::SimTick;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum SimEventKind {
-    /// A run began (GP-21). `subject`: the champion's SpawnId; `at`: the start spot.
+    /// A run began (GP-21). `subject`: the champion's SpawnId; `other`: the
+    /// rival's seat; `at`: the start spot; `amount`: the band template.
     RunStarted,
     /// An offer is waiting (GP-27). `subject`: the offer id; `other`: what it
     /// concerns ([`OfferKind::subject`](crate::OfferKind::subject));
     /// `amount`: the number of choices.
     OfferPosted,
-    /// An offer was answered. `subject`: the offer id; `amount`: the choice.
+    /// An offer was answered. `subject`: the offer id; `other`: the card
+    /// picked (its index in the deck); `amount`: the choice.
     OfferChosen,
     /// A monument changed to `faction` (GP-23). `subject`: the monument.
     MonumentTaken,

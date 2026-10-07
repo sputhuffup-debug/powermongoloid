@@ -283,11 +283,15 @@ fn dilate(mask: &[bool], size: usize, r: usize) -> Vec<bool> {
     };
     let mut rows = vec![false; mask.len()];
     for y in 0..size {
-        window(&mut |x| mask[y * size + x], &mut |x, v| rows[y * size + x] = v);
+        window(&mut |x| mask[y * size + x], &mut |x, v| {
+            rows[y * size + x] = v
+        });
     }
     let mut out = vec![false; mask.len()];
     for x in 0..size {
-        window(&mut |y| rows[y * size + x], &mut |y, v| out[y * size + x] = v);
+        window(&mut |y| rows[y * size + x], &mut |y, v| {
+            out[y * size + x] = v
+        });
     }
     out
 }
@@ -340,13 +344,44 @@ impl Spot {
     }
 }
 
+/// Region-independent tile masks for [`spots`], computed once per draw.
+struct Masks {
+    /// Reachable on foot from the seat.
+    reach: Vec<bool>,
+    /// Within two tiles of water.
+    near_water: Vec<bool>,
+}
+
+impl Masks {
+    fn new(w: &RunWorld, seat: IVec2) -> Self {
+        let map = w.map;
+        let size = map.size() as usize;
+        let water: Vec<bool> = map
+            .terrain_slice()
+            .iter()
+            .map(|t| *t == Terrain::Water)
+            .collect();
+        Self {
+            reach: reachable(map, w.costs, seat),
+            near_water: dilate(&water, size, 2),
+        }
+    }
+}
+
 /// Every tile of `region` the band could start on: walkable open ground
 /// (not road, farmland or mountain), reachable from the seat, and at least
 /// `min_settlement_distance` from every settlement centre.
-fn spots(w: &RunWorld, s: &StartData, region: RegionId, seat: IVec2, start_c: Vec2) -> Vec<Spot> {
+fn spots(
+    w: &RunWorld,
+    s: &StartData,
+    masks: &Masks,
+    region: RegionId,
+    seat: IVec2,
+    start_c: Vec2,
+) -> Vec<Spot> {
     let map = w.map;
     let size = map.size() as usize;
-    let reach = reachable(map, w.costs, seat);
+    let (reach, near_water) = (&masks.reach, &masks.near_water);
     let edge = {
         let mask: Vec<bool> = (0..size * size)
             .map(|i| {
@@ -355,10 +390,6 @@ fn spots(w: &RunWorld, s: &StartData, region: RegionId, seat: IVec2, start_c: Ve
             })
             .collect();
         dilate(&mask, size, s.edge_distance as usize)
-    };
-    let near_water = {
-        let mask: Vec<bool> = map.terrain_slice().iter().map(|t| *t == Terrain::Water).collect();
-        dilate(&mask, size, 2)
     };
     let terrain_at = |p: IVec2| map.in_bounds(p).then(|| map.terrain(p));
     let neighbour = |p: IVec2, f: &dyn Fn(Terrain) -> bool| {
@@ -384,8 +415,7 @@ fn spots(w: &RunWorld, s: &StartData, region: RegionId, seat: IVec2, start_c: Ve
             continue;
         }
         let p = tile.as_vec2();
-        if w
-            .settlements
+        if w.settlements
             .iter()
             .any(|st| st.center.as_vec2().distance_squared(p) < min_d2)
         {
@@ -431,14 +461,15 @@ fn spots(w: &RunWorld, s: &StartData, region: RegionId, seat: IVec2, start_c: Ve
 ///
 /// 1. The rival's seat is the most populous settlement (ties: lowest id);
 ///    its region is the rival's.
-/// 2. The start region is the other region whose settlements' centroid lies
-///    farthest from the seat (ties: lowest id).
-/// 3. A start kind is drawn by `terrain_weights`. Among the region's
-///    possible start tiles, the best class is kept: `min..=max` monuments
-///    within `monument_radius`, then on the far side of the region from the
-///    seat, then of the drawn kind, then near the region's edge. Within it,
-///    the tile farthest from the seat plus a seeded `jitter` wins (ties:
-///    lowest tile index).
+/// 2. The other regions are ranked by how far their settlements' centroid
+///    lies from the seat (farthest first, ties: lowest id).
+/// 3. A start kind is drawn by `terrain_weights`. A region's possible start
+///    tiles are ranked by class: `min..=max` monuments within
+///    `monument_radius`, then on the far side of the region from the seat,
+///    then of the drawn kind, then near the region's edge. The start region
+///    is the farthest region whose best class has `min..=max` monuments
+///    (else the farthest region). Within its best class, the tile farthest
+///    from the seat plus a seeded `jitter` wins (ties: lowest tile index).
 /// 4. The band template, the champion's trait, the run modifiers (by
 ///    weight, no two of one `group`) and three distinct Start boons (by
 ///    weight) are drawn, each from its own stream.
@@ -466,23 +497,43 @@ pub fn draw_start(seed: SimSeed, data: &Progression, w: &RunWorld) -> Option<Sta
         sums[st.region as usize].1 += 1;
     }
     let centroid = |r: usize| (sums[r].1 > 0).then(|| sums[r].0 / sums[r].1 as f32);
-    let start_region = (0..regions)
+    // Other regions, farthest from the seat first (ties: lowest id); the
+    // seat's own region only when there is no other.
+    let mut order: Vec<(f32, RegionId, Vec2)> = (0..regions)
         .filter(|&r| r != seat.region as usize)
-        .filter_map(|r| centroid(r).map(|c| (c.distance(seat_c), r)))
-        .max_by(|a, b| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)))
-        .map_or(seat.region, |(_, r)| r as RegionId);
-    let start_c = if start_region == NO_REGION {
-        seat_c
-    } else {
-        centroid(start_region as usize).unwrap_or(seat_c)
-    };
+        .filter_map(|r| centroid(r).map(|c| (c.distance(seat_c), r as RegionId, c)))
+        .collect();
+    order.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+    if order.is_empty() {
+        let c = (seat.region != NO_REGION)
+            .then(|| centroid(seat.region as usize))
+            .flatten()
+            .unwrap_or(seat_c);
+        order.push((0.0, seat.region, c));
+    }
 
-    // The start spot.
+    // The start spot: in the farthest region with a spot that has
+    // `min..=max` monuments nearby, else in the farthest region.
     let mut rng = seed.stream(rng_key("sim_military::progression::start"), 0);
     let weights: Vec<f32> = s.terrain_weights.iter().map(|(_, w)| *w).collect();
     let kind = s.terrain_weights[pick_weighted(&mut rng, &weights)?].0;
-    let spots = spots(w, s, start_region, seat.center, start_c);
-    let best = spots.iter().map(|sp| sp.rank(s, kind)).min()?;
+    let masks = Masks::new(w, seat.center);
+    let mut fallback = None;
+    let mut found = None;
+    for &(_, region, c) in &order {
+        let spots = spots(w, s, &masks, region, seat.center, c);
+        let Some(best) = spots.iter().map(|sp| sp.rank(s, kind)).min() else {
+            continue;
+        };
+        if best.0 == 0 {
+            found = Some((region, best, spots));
+            break;
+        }
+        if fallback.is_none() {
+            fallback = Some((region, best, spots));
+        }
+    }
+    let (start_region, best, spots) = found.or(fallback)?;
     let mut scored: Vec<(f32, usize, Spot)> = spots
         .into_iter()
         .filter(|sp| sp.rank(s, kind) == best)
@@ -581,8 +632,8 @@ mod tests {
     #[test]
     fn a_run_start_is_seeded_and_fits() {
         let data = Progression::default_data();
-        let costs = sim_agents::Villagers::default_data(&sim_core::Calendar::default_data())
-            .travel_costs;
+        let costs =
+            sim_agents::Villagers::default_data(&sim_core::Calendar::default_data()).travel_costs;
         let settings = WorldGenSettings::preset(WorldPreset::Run);
         let g = generate_world(42, &settings, default_threads());
         let w = RunWorld::from_generated(&g, &costs);
@@ -629,10 +680,14 @@ mod survey {
     #[ignore]
     fn survey_twenty_seeds() {
         let data = Progression::default_data();
-        let costs = sim_agents::Villagers::default_data(&sim_core::Calendar::default_data())
-            .travel_costs;
+        let costs =
+            sim_agents::Villagers::default_data(&sim_core::Calendar::default_data()).travel_costs;
         let settings = WorldGenSettings::preset(WorldPreset::Run);
-        for seed in 1..=20u64 {
+        let seeds: Vec<u64> = std::env::var("SURVEY_SEEDS")
+            .ok()
+            .map(|v| v.split(',').filter_map(|x| x.parse().ok()).collect())
+            .unwrap_or_else(|| (1..=20).collect());
+        for seed in seeds {
             let g = generate_world(seed, &settings, default_threads());
             let w = RunWorld::from_generated(&g, &costs);
             let t = std::time::Instant::now();
@@ -646,7 +701,14 @@ mod survey {
                     sums.1 += 1;
                 }
                 let c = sums.0 / sums.1 as f32;
-                spots(&w, s, a.start_region, seat.center, c)
+                spots(
+                    &w,
+                    s,
+                    &Masks::new(&w, seat.center),
+                    a.start_region,
+                    seat.center,
+                    c,
+                )
             };
             let best_classes: std::collections::BTreeMap<(u8, bool, bool, bool), usize> = {
                 let mut m = std::collections::BTreeMap::new();
@@ -670,7 +732,7 @@ mod survey {
                 a.modifiers,
                 a.boon_choices,
                 spots.len(),
-                best_classes.iter().take(3).collect::<Vec<_>>(),
+                best_classes.iter().take(6).collect::<Vec<_>>(),
                 t.elapsed().as_secs_f64() * 1000.0
             );
         }

@@ -165,6 +165,37 @@ GP-01..04 and SIM-30..32 ([ADR 0010](../adr/0010-armies-orders-and-combat.md)). 
 | `trade_keep_days` | Villages sell food beyond this many days |
 | `trade_value` | `(good, food value)` per unit when an army barters |
 
+## progression.ron (`sim_military::Progression`)
+Runs: GP-21, GP-27 and SIM-34 (M4, see [M4_PLAN.md](../M4_PLAN.md)). Read only in a run (`RunState.config` is `Some`); the developed world and the M2/M3 tests never draw from it. Guarded by the `sim_military` progression unit tests (`shipped_data_is_valid`, `a_run_start_is_seeded_and_fits`, `a_run_is_set_up_its_boon_picked_once_and_abandoned`). Cards are numbered by their position: each `id` must equal its index, and lists are append only, because offers, `RunProgress` and saves store the index.
+
+**The start spot** (`sim_military::draw_start`). The rival's seat is the most populous settlement. The other regions are tried from the farthest (by settlement centroid) to the nearest; the band starts in the first one with a tile that has `min_monuments..=max_monuments` monuments nearby (else in the farthest). Tiles are ranked by class (monument count fits, then on the far side of the region from the seat, then of the drawn kind, then near the region's edge); in the best class the tile farthest from the seat plus a seeded jitter wins.
+
+| Field | Meaning |
+| --- | --- |
+| `start.monument_radius` | Monuments within this many tiles (straight line) of the start count as nearby. A day's march is about 312 tiles |
+| `start.min_monuments`, `start.max_monuments` | The start should have this many monuments nearby (2-3) |
+| `start.min_settlement_distance` | A start tile is at least this many tiles from every settlement centre |
+| `start.edge_distance` | Tiles within this distance of the start region's edge (coast or border) are preferred |
+| `start.jitter` | Seeded spread (tiles, 0..jitter) added to a tile's distance from the seat when picking the start |
+| `start.terrain_weights` | `(kind, weight)`: the kind of start drawn, `Coast` (beach or within 2 tiles of water), `ForestEdge` (forest beside open ground) or `Hills`. If no good tile has the drawn kind, the spot keeps its own kind (`Open` if none) |
+| `bands[].name` | A band template (GP-27); one is drawn per run |
+| `bands[].groups[].count` | Followers in this group (the champion not counted; about ten in all) |
+| `bands[].groups[].unit` (`health`, `attack`, `defense`, `morale`) | The group's fighting stats, as army.ron's `soldier`. The champion has army.ron's `captain` stats. Morale still recovers towards army.ron's `soldier.morale` |
+| `bands[].groups[].armed`, `bands[].groups[].tools` | The group starts with weapons, tools |
+| `bands[].food_days` | Days of food in the baggage for the whole band |
+| `champion_traits` | Trait ids the champion's starting trait is drawn from (SIM-34) |
+| `traits[].id`, `traits[].name`, `traits[].phrase` | A trait: its index, display name and the chronicle's phrase ("Brand, who never gave ground") |
+| `traits[].effects` | `(stat, value)` pairs: `sim_core::Stat` changes while the holder lives, as fractions (0.05 is +5%). Folded into `FactionModifiers` from M4 step 4 |
+| `boons[].id`, `boons[].name`, `boons[].text` | A boon card: its index, display name and card text |
+| `boons[].when` | `Start` (the starting boon, GP-27) or `Dominion` (holding 25% or 50% of a region, GP-24, M4 step 5) |
+| `boons[].weight` | Relative chance to be offered. Three distinct cards are drawn by weight, without repeats |
+| `boons[].effects` | What the boon does: `FoodDays(d)` adds d days of food for the whole army to the champion's baggage; `ArmBand` gives the champion and every follower a weapon; `Goodwill(g)` raises goodwill in the settlement nearest the champion (recorded now, applied with goodwill in M4 step 3); `Stat(stat, v)` is a modifier for the picker's faction (from M4 step 4). Effects apply when the card is picked |
+| `modifiers_per_run` | `(min, max)` run modifiers drawn per run (GP-27) |
+| `modifiers[].id`, `modifiers[].name`, `modifiers[].text` | A run modifier card: its index, display name and text |
+| `modifiers[].group` | Cards sharing a group (e.g. "harvest") never come in the same run; `None` for no group |
+| `modifiers[].weight` | Relative chance to be drawn (without repeats) |
+| `modifiers[].effects` | `Stores(f)` removes fraction f of the food in every storehouse at the start; `Stat(stat, v)` applies to everyone (the world row of `FactionModifiers`, from M4 step 4); `RaiderPace(x)` (raiders come x times as often) and `RivalStrength(x)` (the rival's levies and defence scale by x) take effect in M4 step 7; `Sellswords(n)` (a band for hire near the start) in a later step |
+
 ## render.ron (`game_render::RenderSettings`)
 RND-03 and RND-06 ([ADR 0009](../adr/0009-art-direction-and-detail-bands.md)). Guarded by `game_render` band tests.
 

@@ -22,8 +22,8 @@ use bevy_math::IVec2;
 use serde::{Deserialize, Serialize};
 use sim_agents::{CombatStats, Villagers};
 use sim_core::{
-    Allegiance, FactionId, OfferKind, RunState, SimEvent, SimEventKind, SimSeed, SpawnId,
-    Stat, StateHash, StateHasher, post_offer,
+    Allegiance, FactionId, OfferKind, RunState, SimEvent, SimEventKind, SimSeed, SpawnId, Stat,
+    StateHash, StateHasher, post_offer,
 };
 use sim_economy::{Economy, SettlementEconomy, Stockpile};
 use sim_world::RegionId;
@@ -221,8 +221,7 @@ impl Progression {
         if !non_negative(s.min_settlement_distance) || !non_negative(s.jitter) {
             return Err("progression: start distances must be >= 0".into());
         }
-        if s.terrain_weights.is_empty() || !s.terrain_weights.iter().all(|(_, w)| weight_ok(*w))
-        {
+        if s.terrain_weights.is_empty() || !s.terrain_weights.iter().all(|(_, w)| weight_ok(*w)) {
             return Err("progression: start needs terrain weights > 0".into());
         }
         if d.bands.is_empty() {
@@ -238,17 +237,25 @@ impl Progression {
         }
         for (i, t) in d.traits.iter().enumerate() {
             if t.id as usize != i {
-                return Err(format!("progression: trait {:?} has id {}, not {i}", t.name, t.id));
+                return Err(format!(
+                    "progression: trait {:?} has id {}, not {i}",
+                    t.name, t.id
+                ));
             }
         }
         if d.champion_traits.is_empty()
-            || d.champion_traits.iter().any(|&t| t as usize >= d.traits.len())
+            || d.champion_traits
+                .iter()
+                .any(|&t| t as usize >= d.traits.len())
         {
             return Err("progression: champion_traits must name traits".into());
         }
         for (i, b) in d.boons.iter().enumerate() {
             if b.id as usize != i || !weight_ok(b.weight) {
-                return Err(format!("progression: boon {:?}: id must be {i}, weight > 0", b.name));
+                return Err(format!(
+                    "progression: boon {:?}: id must be {i}, weight > 0",
+                    b.name
+                ));
             }
         }
         if d.boons.iter().filter(|b| b.when == BoonWhen::Start).count() < 3 {
@@ -456,6 +463,8 @@ pub fn setup_run(world: &mut World) -> Option<RunStart> {
         draws.boon_choices.to_vec(),
         None,
     );
+    // draw_start drew the choices from `boons ^ 0`: the run's first offer.
+    debug_assert_eq!(offer, 0, "the start boon is the run's first offer");
     let champion_id = world.get::<SpawnId>(champion).expect("spawned").0;
     world.write_message(
         SimEvent::new(SimEventKind::RunStarted, FactionId::PLAYER)
@@ -498,10 +507,8 @@ fn outfit_groups(world: &mut World, captain: Entity, band: &BandData) {
 fn spoil_stores(world: &mut World, fraction: f32) {
     let econ = world.resource::<Economy>().clone();
     let mut q = world.query::<(&SpawnId, &SettlementEconomy)>();
-    let mut stores: Vec<(SpawnId, Entity)> = q
-        .iter(world)
-        .map(|(id, se)| (*id, se.storehouse))
-        .collect();
+    let mut stores: Vec<(SpawnId, Entity)> =
+        q.iter(world).map(|(id, se)| (*id, se.storehouse)).collect();
     stores.sort_unstable();
     let fraction = fraction.clamp(0.0, 1.0);
     for (_, store) in stores {
@@ -547,7 +554,11 @@ mod tests {
                 >= 3
         );
         for b in &p.data.bands {
-            assert!((8..=12).contains(&b.followers()), "{}: a band of about ten", b.name);
+            assert!(
+                (8..=12).contains(&b.followers()),
+                "{}: a band of about ten",
+                b.name
+            );
         }
     }
 
@@ -566,5 +577,132 @@ mod tests {
         assert!(check(&|d| d.modifiers_per_run = (2, 1)).is_err());
         assert!(check(&|d| d.bands[0].groups.clear()).is_err());
         assert!(check(&|d| d.start.min_monuments = 9).is_err());
+    }
+
+    /// A run app on the run island, set up (the plugins `sim_headless`
+    /// adds, minus the empty M5 ones).
+    fn run_app(seed: u64) -> (bevy_app::App, RunStart) {
+        use sim_core::{RunConfig, SimCorePlugin, SimStepper};
+        use sim_world::{WorldGenSettings, WorldPreset};
+        let mut app = bevy_app::App::new();
+        app.add_plugins(SimCorePlugin {
+            seed,
+            run: Some(RunConfig::default()),
+        })
+        .add_plugins(sim_world::WorldPlugin {
+            settings: WorldGenSettings::preset(WorldPreset::Run),
+            threads: sim_world::worldgen::default_threads(),
+        })
+        .add_plugins(sim_economy::EconomyPlugin)
+        .add_plugins(sim_agents::AgentsPlugin { population: None })
+        .add_plugins(crate::MilitaryPlugin);
+        app.prepare_sim();
+        let start = setup_run(app.world_mut()).expect("a run start");
+        (app, start)
+    }
+
+    fn command(app: &mut bevy_app::App, issuer: FactionId, kind: sim_core::CommandKind) {
+        use sim_core::SimStepper;
+        app.world_mut()
+            .write_message(sim_core::SimCommand::player(issuer, kind));
+        app.step(1);
+    }
+
+    /// GP-21, GP-27: setup spawns the drawn band under a champion with one
+    /// trait and posts three start boons; the pick applies once, and a
+    /// second pick is refused. Abandoning is the player's alone and stops
+    /// the clock.
+    #[test]
+    fn a_run_is_set_up_its_boon_picked_once_and_abandoned() {
+        use sim_core::{
+            CommandKind, Offers, RunOutcome, SimEventKind, SimTick, compute_state_hash,
+        };
+        let (mut app, start) = run_app(42);
+        let world = app.world_mut();
+        let progress = world.resource::<RunProgress>().clone();
+        let data = world.resource::<Progression>().clone();
+        let band = &data.data.bands[progress.band as usize];
+        assert!(world.resource::<RunState>().config.is_some());
+        assert_eq!(champion_of(world, FactionId::PLAYER), Some(start.champion));
+        assert_eq!(
+            world.get::<Traits>(start.champion).map(|t| t.0.len()),
+            Some(1)
+        );
+        let mut q = world.query::<&Follower>();
+        let followers = q
+            .iter(world)
+            .filter(|f| f.captain == start.champion)
+            .count();
+        assert_eq!(followers as u32, band.followers());
+        assert_eq!(
+            world.resource::<Factions>().seat(FactionId::PLAYER),
+            Some(start.start)
+        );
+        let offer = world
+            .resource::<Offers>()
+            .get(start.offer)
+            .cloned()
+            .unwrap();
+        assert_eq!((offer.kind, offer.choices.len()), (OfferKind::StartBoon, 3));
+
+        // Pick the "Well fed" boon if offered, else the first.
+        let choice = offer
+            .choices
+            .iter()
+            .position(|&c| data.boon(c).unwrap().name == "Well fed")
+            .unwrap_or(0) as u8;
+        let food = |app: &bevy_app::App| {
+            app.world()
+                .get::<Stockpile>(start.champion)
+                .map_or(0, |s| s.total())
+        };
+        let before = food(&app);
+        let pick = CommandKind::ChooseOffer {
+            offer: start.offer,
+            choice,
+        };
+        command(&mut app, FactionId::PLAYER, pick.clone());
+        let card = offer.choices[choice as usize];
+        assert_eq!(app.world().resource::<RunProgress>().boons, vec![card]);
+        assert!(app.world().resource::<Offers>().pending.is_empty());
+        if data.boon(card).unwrap().name == "Well fed" {
+            assert!(food(&app) > before, "three more days of food");
+        }
+        let events = app
+            .world()
+            .resource::<sim_core::Chronicle>()
+            .entries()
+            .to_vec();
+        assert_eq!(events[0].event.kind, SimEventKind::RunStarted);
+        assert!(
+            events
+                .iter()
+                .any(|e| e.event.kind == SimEventKind::OfferChosen)
+        );
+
+        let rejected = |app: &bevy_app::App| {
+            app.world()
+                .resource::<crate::ArmyStats>()
+                .get(FactionId::PLAYER)
+                .rejected_commands
+        };
+        command(&mut app, FactionId::PLAYER, pick);
+        assert_eq!(rejected(&app), 1, "a second pick is refused");
+        assert_eq!(app.world().resource::<RunProgress>().boons, vec![card]);
+
+        command(&mut app, FactionId::RAIDERS, CommandKind::AbandonRun);
+        assert_eq!(app.world().resource::<RunState>().outcome, None);
+        command(&mut app, FactionId::PLAYER, CommandKind::AbandonRun);
+        let state = *app.world().resource::<RunState>();
+        assert_eq!(state.outcome, Some(RunOutcome::Abandoned));
+        let tick = app.world().resource::<SimTick>().0;
+        let hash = compute_state_hash(app.world_mut());
+        sim_core::SimStepper::step(&mut app, 20);
+        assert_eq!(
+            app.world().resource::<SimTick>().0,
+            tick,
+            "the clock stopped"
+        );
+        assert_eq!(compute_state_hash(app.world_mut()), hash);
     }
 }

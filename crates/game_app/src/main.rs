@@ -1,19 +1,22 @@
-//! `cargo run -p game_app [-- --seed <u64>] [--villages] [--stress <agents>]`
+//! `cargo run -p game_app [-- --seed <u64>] [--villages] [--stress <agents>]
+//! [--run [--difficulty <steady|chaotic|harsh>]]`
 //!
 //! By default the game opens on the M3 playtest start: your captain with 50
 //! men at the edge of the populated region and a raiding band on the far
 //! side. `--villages` opens on the villages alone (M2). `--stress <n>` adds
 //! two armies meeting in battle so about n agents are simulated and drawn,
 //! frames the camera on them, and logs frame and tick times every 5 s
-//! (RND-04 measurement on the reference machine).
+//! (RND-04 measurement on the reference machine). `--run` opens a run on
+//! the run island (GP-21): your band and champion at the start spot, with
+//! the start boon waiting (picked from the new-game screen in M4 step 10).
 
 use std::time::Duration;
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use game_render::CameraRig;
-use sim_core::{Position, SIM_TICK_HZ, SimTimings};
-use sim_headless::SimPlugins;
+use sim_core::{Difficulty, Position, RunConfig, SIM_TICK_HZ, SimTimings};
+use sim_headless::{Scenario, ScenarioSetup, SimPlugins, set_up_scenario};
 use sim_world::Mobile;
 
 #[derive(Resource, Debug, Clone, Copy, PartialEq)]
@@ -21,6 +24,8 @@ enum Start {
     Villages,
     Skirmish,
     Stress(u32),
+    /// A run on the run island (GP-21). Not the default until M4 step 10.
+    Run(RunConfig),
 }
 
 fn arg(name: &str) -> Option<String> {
@@ -39,6 +44,11 @@ fn main() {
     let seed = arg("--seed").and_then(|s| s.parse().ok()).unwrap_or(42);
     let start = if let Some(n) = arg("--stress").and_then(|s| s.parse().ok()) {
         Start::Stress(n)
+    } else if flag("--run") {
+        let difficulty = arg("--difficulty")
+            .and_then(|d| Difficulty::parse(&d))
+            .unwrap_or_default();
+        Start::Run(RunConfig { difficulty })
     } else if flag("--villages") {
         Start::Villages
     } else {
@@ -55,7 +65,10 @@ fn main() {
     // SIM-03: the simulation advances only in FixedUpdate, at 10 Hz.
     .insert_resource(Time::<Fixed>::from_hz(SIM_TICK_HZ))
     .insert_resource(start)
-    .add_plugins(SimPlugins::new(seed))
+    .add_plugins(match start {
+        Start::Run(config) => SimPlugins::run(seed, config),
+        _ => SimPlugins::new(seed),
+    })
     .add_plugins((game_render::RenderPlugin, game_ui::UiPlugin))
     // Scenario setup happens before the first tick, like population.
     .add_systems(Startup, set_up_start)
@@ -76,24 +89,29 @@ struct StressOn(bool);
 #[derive(Resource)]
 struct OpeningShot(Vec2, f32);
 
+/// Sets up the start through `sim_headless::set_up_scenario`, exactly as
+/// headless runs do, and picks the opening camera shot.
 fn set_up_start(world: &mut World) {
-    let start = *world.resource::<Start>();
-    let shot = match start {
-        Start::Villages => None,
-        Start::Skirmish => sim_military::setup_skirmish(world).map(|s| {
-            let p = world.get::<Position>(s.player).expect("captain").0;
-            OpeningShot(p.as_vec2(), 90.0)
-        }),
+    let scenario = match *world.resource::<Start>() {
+        Start::Villages => Scenario::Villages,
+        Start::Skirmish => Scenario::Skirmish,
         Start::Stress(n) => {
             let villagers = world.query::<&sim_agents::Villager>().iter(world).count() as u32;
             let per_side = n.saturating_sub(villagers) / 2;
-            sim_military::setup_battle(world, per_side.max(1)).map(|[a, b]| {
-                let pa = world.get::<Position>(a).expect("captain").0.as_vec2();
-                let pb = world.get::<Position>(b).expect("captain").0.as_vec2();
-                info!("stress: {villagers} villagers + 2 x {per_side} soldiers");
-                OpeningShot((pa + pb) / 2.0, pa.distance(pb).max(150.0))
-            })
+            info!("stress: {villagers} villagers + 2 x {per_side} soldiers");
+            Scenario::Battle(per_side.max(1))
         }
+        Start::Run(config) => Scenario::Run(config),
+    };
+    let at = |world: &World, e: Entity| world.get::<Position>(e).expect("captain").0.as_vec2();
+    let shot = match set_up_scenario(world, scenario) {
+        ScenarioSetup::Nothing => None,
+        ScenarioSetup::Skirmish(s) => Some(OpeningShot(at(world, s.player), 90.0)),
+        ScenarioSetup::Battle([a, b]) => {
+            let (pa, pb) = (at(world, a), at(world, b));
+            Some(OpeningShot((pa + pb) / 2.0, pa.distance(pb).max(150.0)))
+        }
+        ScenarioSetup::Run(r) => Some(OpeningShot(r.start.as_vec2(), 90.0)),
     };
     if let Some(shot) = shot {
         world.insert_resource(shot);

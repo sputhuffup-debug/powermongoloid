@@ -6,8 +6,11 @@
 | **Allegiance** | The faction a person belongs to. Villagers are 0 (independent); soldiers have their warlord's faction |
 | **Army index** (`ArmyIndex`) | A read-only summary of every army, rebuilt each tick in Knowledge: position, flow fields, head count, food. Lets soldiers read their army in parallel |
 | **Band** (detail band) | How a person or building is drawn at a camera distance: textured detail, flat low-poly, billboard or dot (`render.ron`) |
+| **Band template** | Who follows the champion at the start of a run: groups of followers with their stats, weapons and tools, plus days of food (`bands` in `progression.ron`). One is drawn per run (GP-27) |
 | **Baggage** | An army's food and goods: a `Stockpile` on the captain's entity |
+| **Boon** | A card picked from an offer of three: the starting boon before the first tick (GP-27), dominion boons later (GP-24). Kept for the run in `RunProgress.boons` |
 | **Captain** | A commander with an order queue and a posture. The player commands captains, not soldiers |
+| **Champion** (`Champion`) | The player's own figure in a run: the captain of the starting band, with `Traits`. A marker on the person, never in `Captain`, so it stays with the person. Its death ends the run unless a successor is left (SIM-35, M4 step 6) |
 | **Chronicle** (`Chronicle`) | The run's append-only history of notable events with their causes (UI-09). Hashed and saved; tests assert on it, never on messages |
 | **Command** (`SimCommand`) | The only way input reaches the sim: player or AI, logged for replays if the player issued it |
 | **DecisionTrace** | The scored options behind a person's last decision, shown in the inspector. Not hashed |
@@ -31,11 +34,15 @@
 | **Rally field** | A flow field toward the captain, over the army's extent. Followers far from their place walk it |
 | **Region** (`RegionId`) | A part of the island: settlements are grouped around farthest-apart seeds and every land tile takes the region of the nearest settlement over land. Region 0 is always the central one; count them with `WorldMap::region_count()`. A region edge borders water or another region |
 | **Replay** | A seed, scenario and the player's commands, plus expected hashes (RON). Re-running it must reproduce every hash |
+| **Rival** (rival warlord) | The run's opposing warlord (`FactionId::RIVAL`). Its **seat** is drawn at the start of a run, and taking it wins the run. From M4 step 7 it holds its region's settlements, grows on a clock and raids from mid-run (GP-28), scripted: its commands are `SimCommand::ai` and aren't recorded |
 | **Rout** | A soldier whose morale broke, fleeing until it rallies |
+| **Run modifier** | One or two cards drawn at the start of a run that change its rules for everyone: a lean year, rats in the stores, a stronger rival... (`modifiers` in `progression.ron`, GP-27) |
+| **RunProgress** | What a run has drawn and picked so far: start spot, rival's seat, band, run modifiers, boons. Hashed; all defaults outside a run |
 | **Run** | One game from a landless band to a win, a loss or abandonment, on a fresh seed (GP-21). `RunState` holds its config and outcome; when it ends, the clock stops |
+| **Run gate** | Every `SimSet` runs only while `run_in_progress` holds. When a run ends (`RunState::finish`, made final by `settle_outcome`), that tick completes and every later tick does nothing: `SimTick` and the state hash freeze, and commands are no longer applied. Outside a run the gate is always open |
 | **RunConfig** | What sets up a run besides the seed: its `Difficulty`. Stored in replay headers |
-| **Scenario** | What is set up before the first tick: `Villages`, `Skirmish` (the playtest start) or `Battle(n)` |
-| **Seat** (rival's seat) | The run island's largest settlement, always in the top size tier and strictly larger than any other; the rival warlord holds it, and taking it wins the run (GP-28) |
+| **Scenario** | What is set up before the first tick: `Villages`, `Skirmish` (the playtest start), `Battle(n)` or `Run(config)` (a run on the run island). `sim_headless::set_up_scenario` sets each one up, for headless runs and the game alike |
+| **Seat** (rival's seat) | `RunProgress.rival_seat`: the run island's largest settlement, always in the top size tier and strictly larger than any other; the rival warlord holds it, and taking it wins the run (GP-28) |
 | **Seed** (`SimSeed`) | The u64 that fixes the world and every random stream |
 | **SimEvent** | A typed message reporting something notable (a conquest, an offer, the run's end) with a `Cause`. Recorded each tick, in sorted order, into the event feed and the chronicle |
 | **SimSet** | One of the nine ordered phases of a tick: Input, Knowledge, Decide, Move, Act, Needs, Aggregate, Lod, Bookkeeping |
@@ -44,10 +51,12 @@
 | **SpawnId** | A stable id given to every sim entity in spawn order and never reused. Everything order-dependent sorts by it |
 | **Spatial grid** (`SpatialGrid`) | Moving entities bucketed in 8-tile cells, for neighbour queries and picking |
 | **Stat** / **FactionModifiers** | A stat a bonus can change (morale, food yield, march speed...) and the per-faction sums of those bonuses. Read at the point of use; exactly 1.0 with none |
+| **Start spot** | Where a run's band starts: a tile in a region far from the rival's seat, away from settlements, with two or three monuments nearby, of a seeded kind (coast, forest edge, hills). Drawn by `sim_military::draw_start` |
 | **State hash** | An FNV hash of every registered component and resource. Equal hashes mean equal state |
 | **Stream** (RNG stream) | `SimSeed::stream(key, tick)`: an independent random generator for a system, agent and tick |
 | **Strike** | A person's next blow: target, swing and cooldown. Resolved serially in SpawnId order |
 | **Threat** | How frightening nearby armies are to a settlement (0..1), and which faction provoked it. Drives villagers' safety need |
 | **Tick** | One fixed simulation step; 10 per game-second at 1x, 2,400 per day |
+| **Trait** (`Traits`) | A small, named quality of a person (Brave, Forager...) with stat effects; the champion starts with one (SIM-34) |
 | **Transfers** / **transfer resolver** | Agents post goods orders on themselves; `resolve_transfers` applies them in SpawnId order. The only way agents touch a building's stockpile |
 | **Utility AI** | Each option is scored as weight x considerations, and the best wins (with inertia for the current action) |

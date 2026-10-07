@@ -4,7 +4,8 @@
 //!
 //! # Main pieces
 //! - [`headless_app`] and [`HeadlessConfig`]: a windowless sim, with an
-//!   optional [`Scenario`] (villages, skirmish, battle).
+//!   optional [`Scenario`] (villages, skirmish, battle, or a run on the run
+//!   island, GP-21) set up by [`set_up_scenario`].
 //! - [`run`], [`record_replay`], [`verify_replay`]: run and check hashes.
 //! - [`sample_commands`] and [`sample_orders`]: deterministic command streams
 //!   for tests.
@@ -22,10 +23,11 @@ use bevy_ecs::schedule::SingleThreadedExecutor;
 use rand::RngExt;
 use sim_core::rng::rng_key;
 use sim_core::{
-    Checkpoint, CommandKind, CommandLog, CommandScript, FactionId, LoggedCommand, REPLAY_FORMAT,
-    Replay, SimCommand, SimCorePlugin, SimSeed, SimStepper, compute_state_hash,
+    Checkpoint, CommandKind, CommandLog, CommandScript, FactionId, LoggedCommand, OfferKind,
+    Offers, REPLAY_FORMAT, Replay, RunConfig, SimCommand, SimCorePlugin, SimSeed, SimStepper,
+    compute_state_hash,
 };
-use sim_world::WorldGenSettings;
+use sim_world::{WorldGenSettings, WorldPreset};
 
 /// The population in `villagers.ron` (5,000 for M2).
 pub fn default_population() -> u32 {
@@ -38,18 +40,34 @@ pub fn default_population() -> u32 {
 /// Every `sim_*` plugin, in dependency order.
 pub struct SimPlugins {
     pub seed: u64,
-    /// Overrides the population in `villagers.ron`.
+    /// Overrides the population in `villagers.ron` (developed world only;
+    /// the run island populates every settlement at its drawn size).
     pub population: Option<u32>,
     pub worldgen: WorldGenSettings,
+    /// A run's config (GP-21): `Some` makes this app a run, set up by
+    /// [`set_up_scenario`] with [`Scenario::Run`].
+    pub run: Option<RunConfig>,
 }
 
 impl SimPlugins {
-    /// The shipped data files.
+    /// The shipped data files: the developed world, no run.
     pub fn new(seed: u64) -> Self {
         Self {
             seed,
             population: None,
             worldgen: WorldGenSettings::default_data(),
+            run: None,
+        }
+    }
+
+    /// A run (GP-21): the `run` worldgen preset, every settlement populated
+    /// at its drawn size, and `config` in [`sim_core::RunState`].
+    pub fn run(seed: u64, config: RunConfig) -> Self {
+        Self {
+            seed,
+            population: None,
+            worldgen: WorldGenSettings::preset(WorldPreset::Run),
+            run: Some(config),
         }
     }
 }
@@ -59,7 +77,7 @@ impl PluginGroup for SimPlugins {
         PluginGroupBuilder::start::<Self>()
             .add(SimCorePlugin {
                 seed: self.seed,
-                run: None,
+                run: self.run,
             })
             .add(sim_world::WorldPlugin {
                 settings: self.worldgen,
@@ -98,29 +116,81 @@ pub enum Scenario {
     /// The skirmish plus two armed armies of this many each, marching on
     /// each other (`sim_military::setup_battle`; benchmarks, stress).
     Battle(u32),
+    /// A run on the run island (GP-21, GP-27): the band, its champion and
+    /// the start boon offer (`sim_military::setup_run`). Needs an app built
+    /// with [`SimPlugins::run`] (or [`HeadlessConfig::run`]).
+    Run(RunConfig),
 }
 
 impl Scenario {
-    /// Name stored in replay files ("" for villages).
+    /// Name stored in replay files ("" for villages). A run's config is
+    /// stored separately, in [`Replay::run`].
     pub fn name(self) -> String {
         match self {
             Scenario::Villages => String::new(),
             Scenario::Skirmish => "skirmish".into(),
             Scenario::Battle(n) => format!("battle:{n}"),
+            Scenario::Run(_) => "run".into(),
         }
     }
 
-    /// Parses a replay file's scenario name.
+    /// Parses a replay file's scenario name. "run" gives the default
+    /// [`RunConfig`]; [`verify_replay`] substitutes the replay's own.
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "" | "villages" => Some(Scenario::Villages),
             "skirmish" => Some(Scenario::Skirmish),
+            "run" => Some(Scenario::Run(RunConfig::default())),
             _ => s
                 .strip_prefix("battle:")
                 .and_then(|n| n.parse().ok())
                 .map(Scenario::Battle),
         }
     }
+
+    /// The run's config, for a run.
+    pub fn run_config(self) -> Option<RunConfig> {
+        match self {
+            Scenario::Run(cfg) => Some(cfg),
+            _ => None,
+        }
+    }
+
+    /// The worldgen preset this scenario plays on: the run island for a
+    /// run, the developed world otherwise.
+    pub fn preset(self) -> WorldPreset {
+        match self {
+            Scenario::Run(_) => WorldPreset::Run,
+            _ => WorldPreset::Developed,
+        }
+    }
+}
+
+/// What [`set_up_scenario`] made, for framing the camera or driving a test.
+#[derive(Debug, Clone, Copy)]
+pub enum ScenarioSetup {
+    /// Nothing to set up (villages), or the world had no room for it.
+    Nothing,
+    /// The skirmish's two armies.
+    Skirmish(sim_military::Skirmish),
+    /// The battle's two armies (player first).
+    Battle([bevy_ecs::entity::Entity; 2]),
+    /// The run's start: champion, start spot and start offer.
+    Run(sim_military::RunStart),
+}
+
+/// Sets up `scenario` before the first tick, after `prepare_sim`. Shared by
+/// [`headless_app`] and `game_app`, so the game and the headless runs start
+/// identically. Setup edits state directly and writes no player commands,
+/// so a replay that re-runs it applies everything once (guide G1).
+pub fn set_up_scenario(world: &mut bevy_ecs::world::World, scenario: Scenario) -> ScenarioSetup {
+    let setup = match scenario {
+        Scenario::Villages => None,
+        Scenario::Skirmish => sim_military::setup_skirmish(world).map(ScenarioSetup::Skirmish),
+        Scenario::Battle(n) => sim_military::setup_battle(world, n).map(ScenarioSetup::Battle),
+        Scenario::Run(_) => sim_military::setup_run(world).map(ScenarioSetup::Run),
+    };
+    setup.unwrap_or(ScenarioSetup::Nothing)
 }
 
 /// How to build a headless simulation.
@@ -146,20 +216,39 @@ impl HeadlessConfig {
         }
     }
 
+    /// A run (GP-21) with `seed`: the run island at its preset size,
+    /// [`Scenario::Run`], parallel. `population` is unused: every
+    /// settlement is populated at its drawn size.
+    pub fn run(seed: u64, config: RunConfig) -> Self {
+        Self {
+            world_size: WorldGenSettings::preset(WorldPreset::Run).size,
+            scenario: Scenario::Run(config),
+            ..Self::new(seed)
+        }
+    }
+
+    /// The worldgen preset: the run island for a run, else developed.
+    pub fn preset(&self) -> WorldPreset {
+        self.scenario.preset()
+    }
+
     /// World generation settings at this map size.
     pub fn worldgen(&self) -> WorldGenSettings {
-        WorldGenSettings::default_data().with_size(self.world_size)
+        WorldGenSettings::preset(self.preset()).with_size(self.world_size)
     }
 }
 
 /// Builds a windowless simulation app, ready to [`SimStepper::step`].
 pub fn headless_app(config: HeadlessConfig) -> App {
     let mut app = App::new();
+    let run = config.scenario.run_config();
     app.add_plugins(TaskPoolPlugin::default())
         .add_plugins(SimPlugins {
             seed: config.seed,
-            population: Some(config.population),
+            // The run island populates every settlement at its drawn size.
+            population: run.is_none().then_some(config.population),
             worldgen: config.worldgen(),
+            run,
         });
     if config.threading == Threading::Single {
         app.edit_schedule(FixedUpdate, |s| {
@@ -167,15 +256,7 @@ pub fn headless_app(config: HeadlessConfig) -> App {
         });
     }
     app.prepare_sim();
-    match config.scenario {
-        Scenario::Villages => {}
-        Scenario::Skirmish => {
-            sim_military::setup_skirmish(app.world_mut());
-        }
-        Scenario::Battle(n) => {
-            sim_military::setup_battle(app.world_mut(), n);
-        }
-    }
+    set_up_scenario(app.world_mut(), config.scenario);
     app
 }
 
@@ -255,7 +336,7 @@ pub fn record_replay(
         population: config.population,
         world_size: config.world_size,
         scenario: config.scenario.name(),
-        run: None,
+        run: config.scenario.run_config(),
         ticks,
         checkpoint_every,
         commands: result.log,
@@ -284,13 +365,25 @@ impl std::fmt::Display for Divergence {
 }
 
 /// Re-runs a replay and checks every checkpoint.
+///
+/// # Panics
+/// If the replay names a scenario this build doesn't know: re-running it
+/// as anything else could only diverge.
 pub fn verify_replay(replay: &Replay, threading: Threading) -> Result<RunResult, Divergence> {
+    let scenario = match Scenario::parse(&replay.scenario) {
+        Some(Scenario::Run(_)) => Scenario::Run(replay.run.unwrap_or_default()),
+        Some(s) => s,
+        None => panic!(
+            "replay scenario {:?} is unknown to this build (known: villages, skirmish, battle:<n>, run)",
+            replay.scenario
+        ),
+    };
     let config = HeadlessConfig {
         seed: replay.seed,
         population: replay.population,
         threading,
         world_size: replay.world_size,
-        scenario: Scenario::parse(&replay.scenario).unwrap_or_default(),
+        scenario,
     };
     let result = run(
         config,
@@ -320,9 +413,11 @@ pub fn sample_commands(seed: u64, ticks: u64, count: usize) -> Vec<LoggedCommand
 
 /// `count` deterministic military commands for the armies in `app` (after
 /// scenario setup), spread over `ticks`, from `seed`: orders of every kind,
-/// posture changes, appointments, and some invalid commands (another
-/// faction's captain, an unknown settlement) that must be refused. Issued
-/// by the player's faction (1). Used by tests and `sim_headless --commands`.
+/// posture changes, appointments, offer picks, and some invalid commands
+/// (another faction's captain, an unknown settlement, offers that don't
+/// exist) that must be refused. Issued by the player's faction, except
+/// `AbandonRun`, which the raiders issue so that it is always refused and
+/// never cuts a run short. Used by tests and `sim_headless --commands`.
 pub fn sample_orders(app: &mut App, seed: u64, ticks: u64, count: usize) -> Vec<LoggedCommand> {
     use bevy_ecs::prelude::*;
     use sim_core::{OrderSpec, Posture, SpawnId};
@@ -372,7 +467,7 @@ pub fn sample_orders(app: &mut App, seed: u64, ticks: u64, count: usize) -> Vec<
                 },
                 _ => OrderSpec::MoveTo { x: -5, y: 3 },
             };
-            let command = match rng.random_range(0..10) {
+            let command = match rng.random_range(0..12) {
                 0 => CommandKind::SetPosture {
                     captain: cid,
                     posture: [Posture::Passive, Posture::Neutral, Posture::Aggressive]
@@ -382,20 +477,56 @@ pub fn sample_orders(app: &mut App, seed: u64, ticks: u64, count: usize) -> Vec<
                     follower: followers[rng.random_range(0..followers.len())],
                 },
                 2 => CommandKind::CancelOrders { captain: cid },
+                // GP-27: mostly offers that don't exist (or are taken).
+                10 => CommandKind::ChooseOffer {
+                    offer: rng.random_range(0..4),
+                    choice: rng.random_range(0..4),
+                },
+                // GP-21: refused, the issuer is not the player (below).
+                11 => CommandKind::AbandonRun,
                 _ => CommandKind::IssueOrder {
                     captain: cid,
                     order: kind,
                     queue: rng.random_bool(0.3),
                 },
             };
+            let issuer = if command == CommandKind::AbandonRun {
+                FactionId::RAIDERS
+            } else {
+                FactionId::PLAYER
+            };
             LoggedCommand {
                 tick: rng.random_range(0..ticks.max(1)),
-                command: SimCommand::player(FactionId(1), command),
+                command: SimCommand::player(issuer, command),
             }
         })
         .collect();
     out.sort_by_key(|c| c.tick);
     out
+}
+
+/// The player's pending start boon offer (GP-27), if any: the id a
+/// `ChooseOffer` answers.
+pub fn start_offer(app: &App) -> Option<u64> {
+    app.world()
+        .get_resource::<Offers>()?
+        .for_faction(FactionId::PLAYER)
+        .find(|o| o.kind == OfferKind::StartBoon)
+        .map(|o| o.id)
+}
+
+/// A recorded player command picking `choice` of the start boon offer at
+/// tick 0 (GP-27), or `None` outside a run. `sim_headless --run` starts its
+/// command stream with it.
+pub fn start_boon_pick(app: &App, choice: u8) -> Option<LoggedCommand> {
+    let offer = start_offer(app)?;
+    Some(LoggedCommand {
+        tick: 0,
+        command: SimCommand::player(
+            FactionId::PLAYER,
+            CommandKind::ChooseOffer { offer, choice },
+        ),
+    })
 }
 
 /// A tile within 60 tiles of `at` (clamped at 0).
@@ -432,4 +563,61 @@ pub fn cut_off_farmers(app: &mut App, settlement: bevy_ecs::entity::Entity) -> u
         }
     }
     n
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sim_core::Difficulty;
+
+    /// GP-21: a run's scenario name round-trips; its config travels in the
+    /// replay header, not the name.
+    #[test]
+    fn scenario_names_round_trip() {
+        let harsh = RunConfig {
+            difficulty: Difficulty::Harsh,
+        };
+        for s in [
+            Scenario::Villages,
+            Scenario::Skirmish,
+            Scenario::Battle(250),
+            Scenario::Run(RunConfig::default()),
+        ] {
+            assert_eq!(Scenario::parse(&s.name()), Some(s));
+        }
+        assert_eq!(Scenario::Run(harsh).name(), "run");
+        assert_eq!(Scenario::Run(harsh).run_config(), Some(harsh));
+        assert_eq!(Scenario::Skirmish.run_config(), None);
+        assert_eq!(Scenario::parse("siege"), None);
+    }
+
+    /// A run plays on the run island; everything else on the developed
+    /// world, unchanged (M4 D6).
+    #[test]
+    fn a_run_config_selects_the_run_island() {
+        let run = HeadlessConfig::run(7, RunConfig::default());
+        assert_eq!(run.preset(), WorldPreset::Run);
+        assert_eq!(run.worldgen(), WorldGenSettings::preset(WorldPreset::Run));
+        let developed = HeadlessConfig::new(7);
+        assert_eq!(developed.preset(), WorldPreset::Developed);
+        assert_eq!(developed.worldgen(), WorldGenSettings::default_data());
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown to this build")]
+    fn an_unknown_replay_scenario_is_an_error() {
+        let replay = Replay {
+            format: REPLAY_FORMAT,
+            seed: 1,
+            population: 0,
+            world_size: 1024,
+            scenario: "siege".into(),
+            run: None,
+            ticks: 1,
+            checkpoint_every: 0,
+            commands: Vec::new(),
+            checkpoints: Vec::new(),
+        };
+        let _ = verify_replay(&replay, Threading::Single);
+    }
 }
