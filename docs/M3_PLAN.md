@@ -1,6 +1,6 @@
 # M3 Plan: Armies (go/no-go)
 
-Status: **built 2026-10-06; stress run 2026-10-07 passed: 118–176 fps at 20,000 agents and at least 81 fps through the clash after the ADR 0012 fix; awaiting the go/no-go playtest** (`docs/M3_PLAYTEST.md`).
+Status: **built 2026-10-06; complete 2026-10-07. The stress run passed (118–176 fps at 20,000 agents, at least 81 fps through the clash after ADR 0012). Go/no-go: the systems are a go, but leading a big army should be the end goal, so the design is being revised around progression (`docs/PROGRESSION_DESIGN.md`)** (`docs/M3_PLAYTEST.md`).
 
 ## Changes from the plan while building
 - **Followers use a rally field toward their captain, not the goal field.** With the goal field, followers on another route around a lake overtook the captain and never rejoined (ADR 0011).

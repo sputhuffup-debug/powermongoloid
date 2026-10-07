@@ -20,6 +20,8 @@ First run, 2026-10-07: 118–176 fps with 20,000 agents, but frames took seconds
 
 ## 2. Playtest (about 30 minutes)
 
+**Verdict, 2026-10-07:** everything runs nicely, but marching an army should be an end goal, not the start: the game needs progression to get there. The design is being revised in `docs/PROGRESSION_DESIGN.md` before M4.
+
 ```
 cargo run --release -p game_app
 ```

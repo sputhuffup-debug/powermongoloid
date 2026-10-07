@@ -334,7 +334,7 @@ Captains, followers, orders, posture, flow-field movement, combat, food upkeep.
 - [x] Posture visibly changes how followers treat villagers (`tests/posture.rs`; screenshots in the M3 report)
 - [x] An army without food loses morale and starts deserting within the specified days (`tests/starving_army.rs`; deadline in `army.ron`)
 - [x] 20,000 visible agents at 60 fps on the reference machine (run `cargo run --release -p game_app -- --stress 20000` there; the container renders in software). 2026-10-07, Ryzen 5 7600X (6 cores) and RTX 4070: 118–176 fps (frame 6–9 ms) with 20,000 agents. The first run froze for seconds when the armies clashed; after ADR 0012 the re-run's worst 5-second window during the clash was 81 fps (frame 12.5 ms, sim tick 7.2 ms average)
-- [ ] **Go/no-go**: playtest whether marching an army through living villages is interesting. If not, revise the design before M4 (checklist: `docs/M3_PLAYTEST.md`)
+- [x] **Go/no-go**: playtest whether marching an army through living villages is interesting. If not, revise the design before M4 (checklist: `docs/M3_PLAYTEST.md`). 2026-10-07: everything runs well, but leading a big army should be the payoff, not the start; the design is being revised around progression (`docs/PROGRESSION_DESIGN.md`) before M4
 
 ### M3b: Developer handbook
 

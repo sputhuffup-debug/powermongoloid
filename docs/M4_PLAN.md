@@ -1,6 +1,6 @@
 # M4 Plan: Conquest and faith
 
-Status: **decisions made 2026-10-06; building starts after the M3 playtest says go**. No code written yet.
+Status: **on hold 2026-10-07**: the M3 playtest asked for progression, and `docs/PROGRESSION_DESIGN.md` proposes reshaping M4 around it. This plan will be revised once that design is approved. No code written yet.
 Spec: `docs/SEED.md` § "M4: Conquest and faith". On 2026-10-06 the economy half (town growth and styles, population, trade, seasons, decay) moved to **M4b "Living towns"**, designed in `docs/TOWNS_DESIGN.md`. Those sections remain below, marked, as input for the M4b plan.
 
 **Depends on the M3 go/no-go playtest** (`docs/M3_PLAYTEST.md`). If the playtest changes the core loop, this plan changes with it. Nothing below is built until you've played M3 and said go.
