@@ -137,6 +137,8 @@ pub struct FighterGrid {
     pub fighters: Vec<(SpawnId, Entity)>,
     /// Fighting villagers (militia), in SpawnId order.
     pub militia: Vec<(SpawnId, Entity)>,
+    /// Living fighters per tile, at the start of the tick (lookups only).
+    occupancy: HashMap<IVec2, u16>,
 }
 
 const CELL: f32 = 8.0;
@@ -146,6 +148,11 @@ impl FighterGrid {
         let c = (p / CELL).floor().as_ivec2();
         (self.per_side > 0 && c.x >= 0 && c.y >= 0 && c.x < self.per_side && c.y < self.per_side)
             .then(|| (c.y * self.per_side + c.x) as usize)
+    }
+
+    /// How many living fighters stood on `tile` when the tick began.
+    pub fn fighters_on(&self, tile: IVec2) -> u16 {
+        self.occupancy.get(&tile).copied().unwrap_or(0)
     }
 
     /// Visits fighters within `radius` of `p` in a fixed order.
@@ -171,11 +178,73 @@ impl FighterGrid {
         }
     }
 
-    /// The nearest fighter hostile to `side` within `radius` (ties by
-    /// SpawnId), with how many hostiles and friends are that close. Cells
-    /// holding no possible foe are skipped (so friends are counted only
-    /// where there are foes).
+    /// The nearest fighter hostile to `side` within `radius`, ties by
+    /// SpawnId. Cells are visited nearest first; cells holding no possible
+    /// foe, or none closer than the best found so far, are skipped, so in a
+    /// packed melee only a cell or two is read. The result is the same as
+    /// a full search ([`Self::nearest_hostile_slow`]).
     pub fn nearest_hostile(
+        &self,
+        me: Entity,
+        p: Vec2,
+        side: Side,
+        radius: f32,
+        army: &Army,
+    ) -> Option<Foe> {
+        if self.per_side == 0 {
+            return None;
+        }
+        let hostile = side.hostile_mask(army);
+        let lo = ((p - radius) / CELL).floor().as_ivec2().max(IVec2::ZERO);
+        let hi = ((p + radius) / CELL)
+            .floor()
+            .as_ivec2()
+            .min(IVec2::splat(self.per_side - 1));
+        // (distance from p to the cell's square, cell index), nearest first.
+        let mut cells: Vec<(f32, usize)> = Vec::with_capacity(9);
+        for cy in lo.y..=hi.y {
+            for cx in lo.x..=hi.x {
+                let c = (cy * self.per_side + cx) as usize;
+                if self.masks[c] & hostile == 0 {
+                    continue;
+                }
+                let min = IVec2::new(cx, cy).as_vec2() * CELL;
+                let gap = (min - p).max(p - (min + CELL)).max(Vec2::ZERO);
+                cells.push((gap.length(), c));
+            }
+        }
+        cells.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let r2 = radius * radius;
+        let mut best: Option<Foe> = None;
+        for (gap, c) in cells {
+            // Everyone in this cell is at least `gap` away; the margin
+            // keeps rounding from ever skipping a tie.
+            if best.is_some_and(|b| gap > b.2 + 1e-3) || gap > radius + 1e-3 {
+                break;
+            }
+            for e in &self.cells[c] {
+                let d2 = e.pos.distance_squared(p);
+                if d2 > r2 || e.entity == me || !side.hostile_to(e.side, army) {
+                    continue;
+                }
+                let d = d2.sqrt();
+                let better = match best {
+                    None => true,
+                    Some((_, _, bd, bid)) => d < bd || (d == bd && e.id < bid),
+                };
+                if better {
+                    best = Some((e.entity, e.pos, d, e.id));
+                }
+            }
+        }
+        best
+    }
+
+    /// How many hostiles and friends are within `radius`. Cells holding no
+    /// possible foe are skipped (so friends are counted only where there
+    /// are foes). Reads every fighter in range: call it only when the
+    /// numbers are needed (the decision trace), not every tick.
+    pub fn count_nearby(
         &self,
         me: Entity,
         p: Vec2,
@@ -201,20 +270,11 @@ impl FighterGrid {
                     continue;
                 }
                 for e in &self.cells[c] {
-                    let d2 = e.pos.distance_squared(p);
-                    if d2 > r2 || e.entity == me {
+                    if e.entity == me || e.pos.distance_squared(p) > r2 {
                         continue;
                     }
-                    let d = d2.sqrt();
                     if side.hostile_to(e.side, army) {
                         out.enemies += 1;
-                        let better = match out.nearest {
-                            None => true,
-                            Some((_, _, bd, bid)) => d < bd || (d == bd && e.id < bid),
-                        };
-                        if better {
-                            out.nearest = Some((e.entity, e.pos, d, e.id));
-                        }
                     } else if e.side == side {
                         out.friends += 1;
                     }
@@ -224,7 +284,8 @@ impl FighterGrid {
         out
     }
 
-    /// Like [`Self::nearest_hostile`], visiting every cell (tests).
+    /// The nearest hostile and the counts, visiting every cell in range
+    /// (tests: the reference for the two searches above).
     pub fn nearest_hostile_slow(
         &self,
         me: Entity,
@@ -232,7 +293,8 @@ impl FighterGrid {
         side: Side,
         radius: f32,
         army: &Army,
-    ) -> Nearby {
+    ) -> (Option<Foe>, Nearby) {
+        let mut nearest: Option<Foe> = None;
         let mut out = Nearby::default();
         self.for_each_within(p, radius, |e, d| {
             if e.entity == me {
@@ -240,26 +302,28 @@ impl FighterGrid {
             }
             if side.hostile_to(e.side, army) {
                 out.enemies += 1;
-                let better = match out.nearest {
+                let better = match nearest {
                     None => true,
                     Some((_, _, bd, bid)) => d < bd || (d == bd && e.id < bid),
                 };
                 if better {
-                    out.nearest = Some((e.entity, e.pos, d, e.id));
+                    nearest = Some((e.entity, e.pos, d, e.id));
                 }
             } else if e.side == side {
                 out.friends += 1;
             }
         });
-        out
+        (nearest, out)
     }
 }
 
-/// What a fighter sees around it.
-#[derive(Debug, Clone, Copy, Default)]
+/// A foe found by [`FighterGrid::nearest_hostile`]: entity, position,
+/// distance and SpawnId.
+pub type Foe = (Entity, Vec2, f32, SpawnId);
+
+/// How many fighters a fighter sees around it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Nearby {
-    /// (entity, position, distance, id)
-    pub nearest: Option<(Entity, Vec2, f32, SpawnId)>,
     pub enemies: u32,
     pub friends: u32,
 }
@@ -414,6 +478,7 @@ pub(crate) fn build_index(
     let mut count = 0;
     grid.fighters.clear();
     grid.militia.clear();
+    grid.occupancy.clear();
     for (e, id, allegiance, stats, pos, motion, act) in &fighters {
         if !stats.alive() {
             continue;
@@ -435,6 +500,7 @@ pub(crate) fn build_index(
                 routed: act.kind == ActionKind::Rout,
             });
             count += 1;
+            *grid.occupancy.entry(p.floor().as_ivec2()).or_default() += 1;
             grid.fighters.push((*id, e));
             if side.against.is_some() {
                 grid.militia.push((*id, e));
@@ -505,10 +571,13 @@ mod tests {
                 faction: FactionId(f),
                 against: None,
             };
-            let fast = grid.nearest_hostile(e, p.as_vec2() + 0.5, side, 8.0, &a);
-            let slow = grid.nearest_hostile_slow(e, p.as_vec2() + 0.5, side, 8.0, &a);
-            assert_eq!(fast.nearest.map(|n| n.0), slow.nearest.map(|n| n.0));
-            assert_eq!(fast.enemies, slow.enemies);
+            let at = p.as_vec2() + 0.5;
+            for radius in [3.0, 8.0, 24.0] {
+                let (nearest, counts) = grid.nearest_hostile_slow(e, at, side, radius, &a);
+                assert_eq!(grid.nearest_hostile(e, at, side, radius, &a), nearest);
+                let fast = grid.count_nearby(e, at, side, radius, &a);
+                assert_eq!(fast.enemies, counts.enemies);
+            }
         }
     }
 

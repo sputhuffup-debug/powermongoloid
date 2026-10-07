@@ -1,6 +1,6 @@
 # M3 Plan: Armies (go/no-go)
 
-Status: **built 2026-10-06; awaiting the reference-machine stress run and the go/no-go playtest** (`docs/M3_PLAYTEST.md`).
+Status: **built 2026-10-06; stress run 2026-10-07: 118–176 fps at 20,000 agents, the battle freeze it found fixed (ADR 0012); awaiting a confirming re-run and the go/no-go playtest** (`docs/M3_PLAYTEST.md`).
 
 ## Changes from the plan while building
 - **Followers use a rally field toward their captain, not the goal field.** With the goal field, followers on another route around a lake overtook the captain and never rejoined (ADR 0011).

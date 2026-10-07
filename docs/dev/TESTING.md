@@ -68,7 +68,7 @@ These run in seconds and sit next to the code they test.
   - detail bands and hysteresis
   - camera maths: pan, zoom, rotation snapping, easing
   - texture determinism
-- **game_ui:** the picking ray, action descriptions, text bars.
+- **game_ui:** the picking ray, action descriptions, text bars, the catch-up cap on ticks per frame.
 
 ## Writing tests
 

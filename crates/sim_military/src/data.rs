@@ -78,6 +78,10 @@ pub struct FormationData {
     pub separation: f32,
     pub arrive_radius: f32,
     pub catch_up: f32,
+    /// A fighter closing on a foe won't step into a tile already holding
+    /// this many fighters, so ranks queue behind a melee instead of piling
+    /// into it. Marching ignores it.
+    pub max_per_tile: u16,
 }
 
 /// How frightening an army is to settlements, by posture.

@@ -289,13 +289,40 @@ fn main() -> ExitCode {
         app.insert_resource(sim_core::CommandScript::from_log(&commands));
         let mut sums = [0.0f64; SimSet::ALL.len()];
         let mut total = 0.0;
-        for _ in 0..args.ticks {
+        // With --stats-every n: mean and worst tick, and the costliest
+        // stages, for each window of n ticks.
+        let mut window = ([0.0f64; SimSet::ALL.len()], 0.0f64, 0.0f64);
+        for tick in 1..=args.ticks {
             app.step(1);
             let t = app.world().resource::<SimTimings>();
-            for (s, d) in sums.iter_mut().zip(t.per_set) {
-                *s += d.as_secs_f64();
+            for (i, d) in t.per_set.iter().enumerate() {
+                sums[i] += d.as_secs_f64();
+                window.0[i] += d.as_secs_f64();
             }
             total += t.total.as_secs_f64();
+            window.1 += t.total.as_secs_f64();
+            window.2 = window.2.max(t.total.as_secs_f64());
+            if args.stats_every > 0 && tick % args.stats_every == 0 {
+                let n = args.stats_every as f64;
+                let mut sets: Vec<_> = SimSet::ALL.iter().zip(window.0).collect();
+                sets.sort_by(|a, b| b.1.total_cmp(&a.1));
+                let top: Vec<String> = sets[..3]
+                    .iter()
+                    .map(|(set, s)| format!("{} {:.2}", set.name(), s / n * 1000.0))
+                    .collect();
+                let agents = app
+                    .world_mut()
+                    .query_filtered::<(), bevy_ecs::query::With<sim_world::Mobile>>()
+                    .iter(app.world())
+                    .count();
+                println!(
+                    "tick {tick:>6}: {agents:>6} agents | mean {:.2} ms, worst {:.2} ms | {}",
+                    window.1 / n * 1000.0,
+                    window.2 * 1000.0,
+                    top.join(", ")
+                );
+                window = ([0.0; SimSet::ALL.len()], 0.0, 0.0);
+            }
         }
         let n = args.ticks.max(1) as f64;
         for (set, s) in SimSet::ALL.iter().zip(sums) {

@@ -48,7 +48,13 @@
         first_desertion_within_days: 2.0,
     ),
 
-    formation: (spacing: 1.4, separation: 0.75, arrive_radius: 3.0, catch_up: 8.0),
+    formation: (
+        spacing: 1.4, separation: 0.75, arrive_radius: 3.0, catch_up: 8.0,
+        // Fighters per tile before a fighter closing on a foe stops stepping
+        // in: without it two big armies crush into one blob (about 100 a
+        // tile at 20,000 agents). Marching ignores it.
+        max_per_tile: 3,
+    ),
     // Baggage holds this many units per head (followers and captain).
     baggage_per_head: 60,
     carry: 8,

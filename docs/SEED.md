@@ -333,7 +333,7 @@ Captains, followers, orders, posture, flow-field movement, combat, food upkeep.
 - [x] The player orders a captain with 200 followers across the region; they move as a crowd around obstacles (`tests/army_march.rs`)
 - [x] Posture visibly changes how followers treat villagers (`tests/posture.rs`; screenshots in the M3 report)
 - [x] An army without food loses morale and starts deserting within the specified days (`tests/starving_army.rs`; deadline in `army.ron`)
-- [ ] 20,000 visible agents at 60 fps on the reference machine (run `cargo run --release -p game_app -- --stress 20000` there; the container renders in software)
+- [x] 20,000 visible agents at 60 fps on the reference machine (run `cargo run --release -p game_app -- --stress 20000` there; the container renders in software). 2026-10-07: 118–176 fps (frame 6–9 ms) with 20,000 agents. The clash of the two armies froze the game for seconds; fixed in ADR 0012 (melee crowding and the catch-up cap), to be confirmed with a re-run
 - [ ] **Go/no-go**: playtest whether marching an army through living villages is interesting. If not, revise the design before M4 (checklist: `docs/M3_PLAYTEST.md`)
 
 ### M3b: Developer handbook
