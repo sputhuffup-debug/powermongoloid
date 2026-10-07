@@ -1,6 +1,6 @@
 # Design: progression, from wandering band to warlord
 
-Status: **draft 2026-10-07, for review**. Nothing here is built or added to SEED.md until you approve it. It answers the M3 go/no-go playtest: the armies run well, but leading a big army isn't fun as the starting point. It should be the payoff you work up to.
+Status: **approved 2026-10-07 with the defaults** (decisions at the end). M4 is planned in `docs/M4_PLAN.md`. It answers the M3 go/no-go playtest: the armies run well, but leading a big army isn't fun as the starting point. It should be the payoff you work up to.
 
 Your answers (2026-10-07):
 - **Start:** a wandering band. Small settlements and **monuments** around the region are the early targets. Each monument gives a small bonus (about 1%), so no single one is overpowered, but by the time you hold 25% of a region the bonuses add up to a real boost.
@@ -156,7 +156,7 @@ Each tier sets attack, defence and range in `army.ron`. A soldier's gear is visi
 
 ## 11. Proposed roadmap change
 
-Nothing moves until you approve. My recommendation:
+Approved 2026-10-07:
 
 | Milestone | Was | Proposed |
 | --- | --- | --- |
@@ -167,7 +167,7 @@ Nothing moves until you approve. My recommendation:
 
 The M4 acceptance test would be a playtest of whole runs: "a run from 10 men to the rival's seat takes about an hour, and two seeds play noticeably differently in their first ten minutes", plus scenario tests for each system and a headless bot run that checks a run can be won.
 
-Proposed new requirement IDs, added to SEED.md on approval:
+New requirement IDs, added to SEED.md on 2026-10-07:
 
 | ID | Requirement |
 | --- | --- |
@@ -184,13 +184,14 @@ Proposed new requirement IDs, added to SEED.md on approval:
 | SIM-37 | Equipment tiers as goods made by settlement tier; gear sets combat stats; bows are ranged |
 | SIM-38 | Wild foraging feeds a landless band at a small rate |
 
-## Open questions
+## Decisions (2026-10-07)
 
-Answered: **run length is about one hour** (2026-10-07). Unanswered questions keep the default shown.
+1. **Run length:** about one hour.
+2. **Boons are kept for the run,** even if the land is later lost.
+3. **Far-off monuments you don't garrison drift back to neutral.**
+4. **Saving:** one resumable save per run. Ironman can come later as an option.
+5. **Faith and heroes move to M4b.**
+6. **The world at the start of a run** is a seeded mix of hamlets, villages and a few towns, with the rival's seat the largest. This reverses TOWNS_DESIGN.md's "every settlement starts as a hamlet" for runs only.
+7. **The big island** becomes an optional, later "grand campaign"; M5's 250,000-person LOD work is optional.
 
-2. **Boons when land is lost.** Are boons kept for the run (default, since loss is already a punishment), or lost when you drop below the threshold?
-3. **Monuments drifting back.** Should far-off monuments you don't garrison drift back to neutral (default)? In an hour-long run this may be unnecessary, so the alternative is that they stay yours until taken.
-4. **Saving.** A resumable save per run (default), or strict ironman with no reloading as an option?
-5. **Faith and heroes.** Move them to M4b (default), or keep them in M4?
-6. **The world at the start.** For runs, a seeded mix of hamlets, villages and a few towns (default, so there are people to recruit by act 4), or all hamlets as decided on 2026-10-06, with growth sped up to fit 30 days?
-7. **The big island.** With hour-long runs on small islands, should M5's 250,000-person island and its LOD work become a later "grand campaign" mode (default), or be dropped from the roadmap?
+The requirement IDs above are now in SEED.md, and the plan for M4 "Rise" is `docs/M4_PLAN.md`.

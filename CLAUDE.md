@@ -6,7 +6,7 @@ Requirement IDs (GP-, SIM-, RND-, UI-, NFR-) are stable; reference them
 in commits, tests and comments.
 
 ## Current milestone
-Design revision: progression (docs/PROGRESSION_DESIGN.md, awaiting review), then M4.
+M4 "Rise" (roguelite runs; docs/PROGRESSION_DESIGN.md), planned in docs/M4_PLAN.md, awaiting go.
 (M0 complete 2026-10-05, M1, M2 and M3b complete 2026-10-06, M3 complete 2026-10-07; update this line as milestones complete)
 
 ## Hard rules
