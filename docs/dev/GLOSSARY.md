@@ -8,29 +8,42 @@
 | **Band** (detail band) | How a person or building is drawn at a camera distance: textured detail, flat low-poly, billboard or dot (`render.ron`) |
 | **Baggage** | An army's food and goods: a `Stockpile` on the captain's entity |
 | **Captain** | A commander with an order queue and a posture. The player commands captains, not soldiers |
+| **Chronicle** (`Chronicle`) | The run's append-only history of notable events with their causes (UI-09). Hashed and saved; tests assert on it, never on messages |
 | **Command** (`SimCommand`) | The only way input reaches the sim: player or AI, logged for replays if the player issued it |
 | **DecisionTrace** | The scored options behind a person's last decision, shown in the inspector. Not hashed |
 | **Enlisted** | Marks a soldier: villager AI, movement and needs skip it, and `sim_military` drives it |
+| **Event feed** (`EventFeed`) | The last 256 events, chronicled or not, numbered by `seq` for the UI's feed (UI-05). Not hashed |
 | **Exclusive system** | A system taking `&mut World`. Used for rare serial steps (commands, orders, casualties, desertion) |
-| **Faction** (`FactionId`) | 0 independent, 1 the player, 2 the scripted raiders (`army.ron`) |
+| **Faction** (`FactionId`) | `FactionId::INDEPENDENT` (0), `PLAYER` (1), `RAIDERS` (2, the scripted raiders), `RIVAL` (3, the rival warlord of a run) and `BEASTS` (4, monument guards); names and colours in `army.ron` |
 | **Fighter grid** (`FighterGrid`) | Everyone who can fight, bucketed in 8-tile cells with a bitmask of sides per cell, rebuilt each tick |
 | **Flow field** | A Dijkstra cost field toward a goal over a window of the map; following it downhill walks the cheap way around obstacles. Captains walk the **goal field** |
 | **Follower** | A soldier attached to a captain, with a formation slot |
 | **Food security** | Days of food a settlement holds at its population's eating rate |
+| **Game hour** | A 24th of a day: 100 ticks (`Calendar::ticks_per_hour`). Data fields ending in `_hours` use it; the UI's clock face does not |
 | **Logistics step** | `orders::run_orders`: the serial step where captains deal with settlements (recruit, food, arms, trade) |
 | **Militia** | Villagers whose AI chose `Fight` to defend a provoked settlement (stance `Militia { against }`) |
+| **Monument** (`Monument`) | A landmark the run preset's worldgen places in every region (GP-23): standing stones, a ruined fort, a holy well, a road marker, an ancient forge, a market cross, a wayshrine or a watchtower, on a site that suits its kind and away from settlements. A sim entity with a `SpawnId`; holding one gives a small, capped bonus (M4 step 4) |
 | **Morale** | 0..1. Low morale routs, and unfed or routed men may desert |
 | **Occupation** | A villager's trade (farmer, fisher, ...), tied to a workplace kind |
+| **Offer** (`Offers`) | A choice waiting for the player: the starting boon, a dominion boon, a trait, an invitation. Answered with a recorded `ChooseOffer` command, so picks replay (GP-27) |
 | **Posture** | Passive, neutral or aggressive. How an army treats villages: buy, ask, or take and frighten |
+| **Preset** (`WorldPreset`) | One of the two complete settings blocks in `worldgen.ron`: `developed` (the 2048-tile M1-M3 world; `WorldGenSettings::default_data()`) or `run` (the 1024-tile run island) |
 | **Rally field** | A flow field toward the captain, over the army's extent. Followers far from their place walk it |
+| **Region** (`RegionId`) | A part of the island: settlements are grouped around farthest-apart seeds and every land tile takes the region of the nearest settlement over land. Region 0 is always the central one; count them with `WorldMap::region_count()`. A region edge borders water or another region |
 | **Replay** | A seed, scenario and the player's commands, plus expected hashes (RON). Re-running it must reproduce every hash |
 | **Rout** | A soldier whose morale broke, fleeing until it rallies |
+| **Run** | One game from a landless band to a win, a loss or abandonment, on a fresh seed (GP-21). `RunState` holds its config and outcome; when it ends, the clock stops |
+| **RunConfig** | What sets up a run besides the seed: its `Difficulty`. Stored in replay headers |
 | **Scenario** | What is set up before the first tick: `Villages`, `Skirmish` (the playtest start) or `Battle(n)` |
+| **Seat** (rival's seat) | The run island's largest settlement, always in the top size tier and strictly larger than any other; the rival warlord holds it, and taking it wins the run (GP-28) |
 | **Seed** (`SimSeed`) | The u64 that fixes the world and every random stream |
+| **SimEvent** | A typed message reporting something notable (a conquest, an offer, the run's end) with a `Cause`. Recorded each tick, in sorted order, into the event feed and the chronicle |
 | **SimSet** | One of the nine ordered phases of a tick: Input, Knowledge, Decide, Move, Act, Needs, Aggregate, Lod, Bookkeeping |
+| **Size tier** (`SizeTier`, `SettlementSize`) | Hamlet, village or town: a settlement's drawn size in the run preset, with the number of people it is populated with. Developed settlements have none |
 | **Slot** | A follower's place in the loose sunflower formation around its captain |
 | **SpawnId** | A stable id given to every sim entity in spawn order and never reused. Everything order-dependent sorts by it |
 | **Spatial grid** (`SpatialGrid`) | Moving entities bucketed in 8-tile cells, for neighbour queries and picking |
+| **Stat** / **FactionModifiers** | A stat a bonus can change (morale, food yield, march speed...) and the per-faction sums of those bonuses. Read at the point of use; exactly 1.0 with none |
 | **State hash** | An FNV hash of every registered component and resource. Equal hashes mean equal state |
 | **Stream** (RNG stream) | `SimSeed::stream(key, tick)`: an independent random generator for a system, agent and tick |
 | **Strike** | A person's next blow: target, swing and cooldown. Resolved serially in SpawnId order |

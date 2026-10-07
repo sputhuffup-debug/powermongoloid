@@ -36,9 +36,24 @@ impl StateHash for NextSpawnId {
     }
 }
 
-/// A faction: 0 is independent, 1 the player, 2 and up rivals (army.ron).
+/// A faction, indexing army.ron's `factions`: 0 independent villages, 1 the
+/// player, 2 the raiders, 3 the rival warlord, 4 beasts (M4). Use the named
+/// constants rather than literals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct FactionId(pub u16);
+
+impl FactionId {
+    /// Independent villages, and nobody (an unheld monument).
+    pub const INDEPENDENT: FactionId = FactionId(0);
+    /// The player's warband.
+    pub const PLAYER: FactionId = FactionId(1);
+    /// Scripted raiders (and guards of raider camps, M4).
+    pub const RAIDERS: FactionId = FactionId(2);
+    /// The rival warlord of a run (GP-28).
+    pub const RIVAL: FactionId = FactionId(3);
+    /// Beasts guarding monuments (GP-23).
+    pub const BEASTS: FactionId = FactionId(4);
+}
 
 /// Tile coordinates. The sub-tile part of the position lives in [`Motion`].
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]

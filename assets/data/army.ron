@@ -1,11 +1,14 @@
 // Armies (GP-01..04, SIM-30..32). Rates "per day" use the calendar's day.
 (
     // Index = FactionId. 0 is the independent settlements; warlord factions
-    // (1 and up) are at war with each other.
+    // (1 and up) are at war with each other. Append only: never reorder.
     factions: [
         (name: "Independent", color: (0.75, 0.72, 0.65)),
         (name: "Your warband", color: (0.2, 0.45, 0.9)),
         (name: "Raiders", color: (0.85, 0.2, 0.2)),
+        // M4 runs (GP-28, GP-23): the rival warlord and monument beasts.
+        (name: "Rival", color: (0.55, 0.25, 0.7)),
+        (name: "Beasts", color: (0.5, 0.38, 0.2)),
     ],
 
     soldier: (health: 100.0, attack: 12.0, defense: 3.0, morale: 0.8),

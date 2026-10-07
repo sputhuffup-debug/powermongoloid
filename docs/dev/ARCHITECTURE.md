@@ -33,8 +33,8 @@ There are two halves, and one rule between them ([ADR 0002](../adr/0002-workspac
 
 | Crate | What it owns | Depends on |
 | --- | --- | --- |
-| `sim_core` | The tick schedule (`SimSet`), `SimTick`, the calendar, seeded RNG streams, `SpawnId`, the command path and replays, the state hash and its registry, the name table | Bevy ECS only |
-| `sim_world` | `WorldMap` (terrain arrays in 64-tile chunks), world generation, `Settlement`, roads, A* paths and `PathCache`, flow fields and `FlowCache`, `SpatialGrid` | `sim_core` |
+| `sim_core` | The tick schedule (`SimSet`) and the run gate, `SimTick`, the calendar and game hours, seeded RNG streams, `SpawnId`, `FactionId` constants, the command path and replays, the state hash and its registry, the name table; for M4 runs: `RunState`, `RunConfig` and `Offers` (`run.rs`), `SimEvent`, `Chronicle` and `EventFeed` (`events.rs`), `FactionModifiers` (`modifiers.rs`) | Bevy ECS only |
+| `sim_world` | `WorldMap` (terrain arrays in 64-tile chunks, regions), world generation and its presets (`WorldPreset`: developed and run), `Settlement`, roads, A* paths and `PathCache`, flow fields and `FlowCache`, `SpatialGrid`; for M4 runs: settlement sizes (`SettlementSize`, `worldgen/sizes.rs`) and monuments (`Monument`, `monuments.rs`, placed by `worldgen/monuments.rs`) | `sim_core` |
 | `sim_economy` | Goods, recipes and workplaces (`economy.ron`), `Stockpile`, `Inventory`, `Transfers` and the transfer resolver, buildings and settlement layout | `sim_core`, `sim_world` |
 | `sim_agents` | Villagers: population, needs, the utility AI (`decide`), actions (`perform`), walking, food security, reactions to armies (flee, hide, fight), combat components | `sim_core`, `sim_world`, `sim_economy` |
 | `sim_military` | `army.ron`, captains and order queues, followers, command validation, the logistics step, army index and fighter grid, soldier AI, crowd steering, combat, morale, upkeep, threat, scripted raiders, army spawning | `sim_core`, `sim_world`, `sim_economy`, `sim_agents` |
@@ -52,9 +52,11 @@ Each crate exposes **one plugin** that registers its resources, components (in t
 
 `FixedUpdate` runs nine chained `SimSet`s ([sim_core/src/schedule.rs](../../crates/sim_core/src/schedule.rs)). Inside each set, systems run in parallel where their data access allows; where order matters, it is explicit.
 
+**The run gate.** Every `SimSet` runs only while `run_in_progress` holds: there is no run (`RunState.config` is `None`, as in the developed world), or the run hasn't ended. A serial step ends a run with `RunState::finish`, which only records a pending outcome; `settle_outcome` makes it final at the end of that tick. The ending tick completes, and from the next one every tick does nothing, so `SimTick` and the state hash freeze (GP-21).
+
 | # | `SimSet` | Systems, in order | Notes |
 | --- | --- | --- | --- |
-| 1 | **Input** | **Inject:** `inject_scripted`, `record_commands` (sim_core), `raiders::think` (sim_military)<br>**Consume:** `drain_commands` (sim_core); `MilitarySet::Orders`: `collect_commands`, then `apply_commands`, then `run_orders` | Commands become order-queue changes; captains progress orders and do settlement dealings (the serial logistics step) |
+| 1 | **Input** | **Inject:** `inject_scripted`, `record_commands` (sim_core), `raiders::think` (sim_military)<br>**Ai:** the sim's own AI writes `SimCommand::ai` here (empty until the raiders and the rival move in)<br>**Consume:** `drain_commands` (sim_core); `MilitarySet::Orders`: `collect_commands`, then `apply_commands`, then `run_orders` | Chained Inject, Ai, Consume, so commands arrive in a fixed order. Commands become order-queue changes; captains progress orders and do settlement dealings (the serial logistics step) |
 | 2 | **Knowledge** | `MilitarySet::Index`: `build_index`, then `update_threats` | Builds read-only summaries (army index, fighter grid) for this tick's parallel systems; sets each settlement's `Threat` |
 | 3 | **Decide** | `AgentSet::Decide`: `ai::decide`; then `MilitarySet::Decide`: `soldiers::decide` | Villagers score options (about a tenth each tick); soldiers choose follow, fight or rout and aim blows |
 | 4 | **Move** | `AgentSet::Move`: `plan_paths`, then `move_agents`; then `MilitarySet::Move`: `move_captains`, then `move_soldiers` | Villagers follow A* paths; armies follow flow fields with separation |
@@ -62,7 +64,7 @@ Each crate exposes **one plugin** that registers its resources, components (in t
 | 6 | **Needs** | `AgentSet::Needs`: `update_needs`, `update_food_security`; then `MilitarySet::Upkeep`: `soldier_upkeep`, `civilian_morale`, `tally`, `apply_desertions` | Hunger, rest, safety, morale, starvation and desertion |
 | 7 | **Aggregate** | (empty until M5) | Dormant regions |
 | 8 | **Lod** | (empty until M5) | Promotion and demotion |
-| 9 | **Bookkeeping** | `refresh_chunk_digests`, `rebuild_grid` (sim_world), `advance_tick` (sim_core) | The spatial grid is rebuilt for the next tick; the tick counter advances last |
+| 9 | **Bookkeeping** | `refresh_chunk_digests`, `rebuild_grid` (sim_world); `BookkeepingSet::Record`: `record_events`, then `settle_outcome` (sim_core); then `BookkeepingSet::Advance`: `advance_tick` (sim_core) | The spatial grid is rebuilt for the next tick; this tick's `SimEvent`s are sorted into the event feed and the chronicle; a pending run outcome becomes final; the tick counter advances last |
 
 `sim_core::timing` adds marker systems between the sets to measure each set's wall time (`SimTimings`). The debug panel and `sim_headless --timings` show them.
 

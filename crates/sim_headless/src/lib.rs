@@ -57,7 +57,10 @@ impl SimPlugins {
 impl PluginGroup for SimPlugins {
     fn build(self) -> PluginGroupBuilder {
         PluginGroupBuilder::start::<Self>()
-            .add(SimCorePlugin { seed: self.seed })
+            .add(SimCorePlugin {
+                seed: self.seed,
+                run: None,
+            })
             .add(sim_world::WorldPlugin {
                 settings: self.worldgen,
                 threads: sim_world::worldgen::default_threads(),
@@ -252,6 +255,7 @@ pub fn record_replay(
         population: config.population,
         world_size: config.world_size,
         scenario: config.scenario.name(),
+        run: None,
         ticks,
         checkpoint_every,
         commands: result.log,

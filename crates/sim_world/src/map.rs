@@ -76,6 +76,8 @@ pub struct WorldMap {
     /// 0..255.
     fertility: Vec<u8>,
     region: Vec<RegionId>,
+    /// Highest region id in `region` plus one (derived, so not hashed).
+    region_count: usize,
     sea_level: f32,
     chunk_revision: Vec<u32>,
     chunk_digest: Vec<u64>,
@@ -98,6 +100,11 @@ impl WorldMap {
         );
         assert!(size.is_multiple_of(chunk_size));
         let chunks = (size / chunk_size).pow(2) as usize;
+        let region_count = region
+            .iter()
+            .filter(|&&r| r != NO_REGION)
+            .max()
+            .map_or(0, |&r| r as usize + 1);
         let mut map = Self {
             size,
             chunk_size,
@@ -105,6 +112,7 @@ impl WorldMap {
             terrain,
             fertility,
             region,
+            region_count,
             sea_level,
             chunk_revision: vec![0; chunks],
             chunk_digest: vec![0; chunks],
@@ -183,6 +191,29 @@ impl WorldMap {
     /// Region at `p`.
     pub fn region(&self, p: IVec2) -> RegionId {
         self.region[self.index(p)]
+    }
+
+    /// Number of regions: the highest region id on the map plus one (G29:
+    /// worldgen.ron `regions` is only a request). 0 if no tile has a region.
+    pub fn region_count(&self) -> usize {
+        self.region_count
+    }
+
+    /// Whether `p` is in a region and borders the outside of it: a
+    /// 4-neighbour is off the map, water, or in another region (or none).
+    /// Used to pick a run's start spot at a region's edge (GP-21).
+    pub fn is_region_edge(&self, p: IVec2) -> bool {
+        if !self.in_bounds(p) {
+            return false;
+        }
+        let r = self.region(p);
+        if r == NO_REGION {
+            return false;
+        }
+        [IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y]
+            .into_iter()
+            .map(|d| p + d)
+            .any(|q| !self.in_bounds(q) || self.terrain(q) == Terrain::Water || self.region(q) != r)
     }
 
     /// Height clamped to sea level: what the surface looks like.
@@ -355,6 +386,33 @@ mod tests {
         map.set_terrain(IVec2::new(1, 1), Terrain::Grass);
         map.refresh_digests();
         assert_eq!(before, hash(&map));
+    }
+
+    #[test]
+    fn regions_count_and_edges() {
+        // 8x8 grass: left half region 0, right half region 1, a water
+        // column at x = 7.
+        let size = 8usize;
+        let n = size * size;
+        let mut terrain = vec![Terrain::Grass; n];
+        let mut region = vec![0u8; n];
+        for y in 0..size {
+            for x in 4..size {
+                region[y * size + x] = 1;
+            }
+            terrain[y * size + 7] = Terrain::Water;
+            region[y * size + 7] = NO_REGION;
+        }
+        let map = WorldMap::from_parts(8, 8, vec![0.5; n], terrain, vec![100; n], region, 0.3);
+        assert_eq!(map.region_count(), 2);
+        // Interior, region border, water neighbour, map edge, water itself.
+        assert!(!map.is_region_edge(IVec2::new(1, 3)));
+        assert!(map.is_region_edge(IVec2::new(3, 3)));
+        assert!(map.is_region_edge(IVec2::new(4, 3)));
+        assert!(map.is_region_edge(IVec2::new(6, 3)));
+        assert!(map.is_region_edge(IVec2::new(1, 0)));
+        assert!(!map.is_region_edge(IVec2::new(7, 3)));
+        assert_eq!(flat(64, 64).region_count(), 1);
     }
 
     #[test]

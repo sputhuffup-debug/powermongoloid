@@ -11,7 +11,9 @@
 //! - [`FoodSecurity`], plus the combat-side components that every person
 //!   carries ([`CombatStats`], [`Strike`], [`Threat`] on settlements,
 //!   [`Enlisted`] for soldiers).
-//! - [`population::populate`]: creates households when the world is built.
+//! - [`population::populate`]: creates households when the world is built:
+//!   one region in the developed world, every settlement at its drawn size
+//!   on the run island (GP-21).
 //!
 //! Tuning lives in `villagers.ron` ([`Villagers`]). Never depends on
 //! rendering, windowing, audio or asset crates.
@@ -51,6 +53,8 @@ pub enum AgentSet {
 /// Villagers. `population` overrides the total in `villagers.ron`.
 #[derive(Default)]
 pub struct AgentsPlugin {
+    /// Overrides `villagers.ron`'s total in the developed world. Ignored on
+    /// the run island, where every settlement has a drawn size (GP-21).
     pub population: Option<u32>,
 }
 

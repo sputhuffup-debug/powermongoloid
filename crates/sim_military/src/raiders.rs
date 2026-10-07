@@ -4,7 +4,9 @@
 //! replays without being recorded.
 
 use bevy_ecs::prelude::*;
-use sim_core::{CommandKind, OrderSpec, Position, SimCommand, SimTick, SpawnId};
+use sim_core::{
+    CommandKind, FactionId, OrderSpec, Position, RunState, SimCommand, SimTick, SpawnId,
+};
 use sim_economy::SettlementEconomy;
 use sim_world::Settlement;
 
@@ -17,9 +19,13 @@ const THINK_EVERY: u64 = 300;
 /// Raiders with less food than this (days) raid a village first.
 const RAID_BELOW_DAYS: f32 = 2.0;
 
+/// Runs in `SimInputSet::Ai`, after scripted and player input, so its
+/// commands always arrive in the same order (guide G2). In a run, raiders
+/// hunt only the player's armies (guide D2).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // Bevy system parameters.
 pub(crate) fn think(
     tick: Res<SimTick>,
+    run: Res<RunState>,
     army: Res<Army>,
     index: Res<ArmyIndex>,
     villagers: Res<sim_agents::Villagers>,
@@ -50,7 +56,10 @@ pub(crate) fn think(
         }
         let prey = captains
             .iter()
-            .filter(|(_, c, _)| army.at_war(c.faction, captain.faction))
+            .filter(|(_, c, _)| {
+                army.at_war(c.faction, captain.faction)
+                    && (!run.in_run() || c.faction == FactionId::PLAYER)
+            })
             .map(|(cid, _, p)| (p.0.as_vec2().distance(here), *cid, p.0))
             .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
         let order = if let Some((_, _, at)) = prey.filter(|_| days >= RAID_BELOW_DAYS) {

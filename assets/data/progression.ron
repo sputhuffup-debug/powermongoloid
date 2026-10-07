@@ -1,0 +1,100 @@
+// Runs (GP-21, GP-27, SIM-34): the start draws, band templates, the
+// champion's traits, boons and run modifiers. A card's `id` is its index in
+// its list: append only, never reorder (offers and saves store the index).
+(
+    // GP-21: where the band wakes up. A day's march is about 312 tiles.
+    start: (
+        // Monuments within this many tiles (straight line) count as nearby.
+        monument_radius: 160.0,
+        min_monuments: 2,
+        max_monuments: 3,
+        // At least this many tiles from every settlement centre.
+        min_settlement_distance: 40.0,
+        // Within this many tiles of the start region's edge (coast or border).
+        edge_distance: 8,
+        // Seeded spread (tiles) added to the distance from the rival's seat.
+        jitter: 120.0,
+        terrain_weights: [(Coast, 1.0), (ForestEdge, 1.0), (Hills, 1.0)],
+    ),
+
+    // GP-27: the band's make-up, one template drawn per run. Each group is
+    // `count` followers with these stats and gear; the champion leads them
+    // with army.ron's captain stats. `food_days` fills the baggage.
+    bands: [
+        (
+            name: "Hunters and farmhands",
+            groups: [
+                (count: 6, unit: (health: 100.0, attack: 13.0, defense: 3.0, morale: 0.8), armed: true, tools: false),
+                (count: 4, unit: (health: 110.0, attack: 10.0, defense: 3.0, morale: 0.75), armed: false, tools: true),
+            ],
+            food_days: 2.0,
+        ),
+        (
+            name: "Deserters with spears",
+            groups: [
+                (count: 8, unit: (health: 100.0, attack: 12.0, defense: 4.0, morale: 0.65), armed: true, tools: false),
+            ],
+            food_days: 1.5,
+        ),
+        (
+            name: "Outlaws",
+            groups: [
+                (count: 7, unit: (health: 95.0, attack: 14.0, defense: 2.0, morale: 0.7), armed: false, tools: false),
+                (count: 3, unit: (health: 100.0, attack: 12.0, defense: 3.0, morale: 0.8), armed: true, tools: false),
+            ],
+            food_days: 1.0,
+        ),
+        (
+            name: "Kin and neighbours",
+            groups: [
+                (count: 12, unit: (health: 100.0, attack: 9.0, defense: 2.0, morale: 0.9), armed: false, tools: true),
+            ],
+            food_days: 3.0,
+        ),
+    ],
+
+    // SIM-34: the champion starts with one trait drawn from these (trait ids).
+    champion_traits: [0, 1, 2, 3, 4, 5],
+    // Traits: a name, the chronicle's phrase, and stat effects (fractions,
+    // +0.05 is +5%; see `sim_core::Stat`).
+    traits: [
+        (id: 0, name: "Brave", phrase: "who never gave ground", effects: [(Morale, 0.05)]),
+        (id: 1, name: "Beloved", phrase: "whom the villages loved", effects: [(LoyaltyDrift, 0.1), (RecruitChance, 0.05)]),
+        (id: 2, name: "Feared", phrase: "whose name emptied the roads", effects: [(Attack, 0.03), (LoyaltyDrift, -0.05)]),
+        (id: 3, name: "Forager", phrase: "who could live off a hedge", effects: [(ForageYield, 0.2)]),
+        (id: 4, name: "Quartermaster", phrase: "whose baggage was never empty", effects: [(Desertion, -0.1)]),
+        (id: 5, name: "Duelist", phrase: "quick with a blade", effects: [(Attack, 0.05)]),
+        (id: 6, name: "Shaken", phrase: "who had seen too much", effects: [(Morale, -0.05)]),
+    ],
+
+    // GP-27 (start) and GP-24 (dominion): three are offered, drawn by weight
+    // without repeats from the boons whose `when` matches.
+    boons: [
+        (id: 0, name: "Well fed", text: "Three more days of food in the baggage.", when: Start, weight: 1.0, effects: [FoodDays(3.0)]),
+        (id: 1, name: "Armed", text: "Spears for everyone in the band.", when: Start, weight: 1.0, effects: [ArmBand]),
+        (id: 2, name: "Known", text: "The nearest village has heard well of you.", when: Start, weight: 1.0, effects: [Goodwill(0.4)]),
+        (id: 3, name: "Hardy", text: "+5% morale.", when: Start, weight: 0.8, effects: [Stat(Morale, 0.05)]),
+        (id: 4, name: "Woodwise", text: "+25% food from foraging.", when: Start, weight: 0.8, effects: [Stat(ForageYield, 0.25)]),
+        (id: 5, name: "Silver tongue", text: "+10% trade value.", when: Start, weight: 0.6, effects: [Stat(TradeValue, 0.1)]),
+        (id: 6, name: "Granary of the region", text: "+10% food yield in owned settlements.", when: Dominion, weight: 1.0, effects: [Stat(FoodYield, 0.1)]),
+        (id: 7, name: "Seat of power", text: "+1 captain slot.", when: Dominion, weight: 1.0, effects: [Stat(CaptainSlots, 1.0)]),
+        (id: 8, name: "Hardened", text: "Veterans rank up 25% faster.", when: Dominion, weight: 1.0, effects: [Stat(VeteranRate, 0.25)]),
+        (id: 9, name: "Smiths' guild", text: "+10% smithing speed.", when: Dominion, weight: 1.0, effects: [Stat(SmithSpeed, 0.1)]),
+        (id: 10, name: "Iron discipline", text: "+5% defence and 10% less desertion.", when: Dominion, weight: 0.8, effects: [Stat(Defence, 0.05), Stat(Desertion, -0.1)]),
+    ],
+
+    // GP-27: run modifiers, drawn by weight without repeats at the start and
+    // shown to the player. Cards sharing a `group` never come together.
+    // `Stat` effects here apply to everyone (the world row of
+    // `FactionModifiers`).
+    modifiers_per_run: (1, 2),
+    modifiers: [
+        (id: 0, name: "Lean year", text: "Crops yield 15% less.", group: Some("harvest"), weight: 1.0, effects: [Stat(FoodYield, -0.15)]),
+        (id: 1, name: "Bumper harvest", text: "Crops yield 15% more.", group: Some("harvest"), weight: 1.0, effects: [Stat(FoodYield, 0.15)]),
+        (id: 2, name: "Rats in the stores", text: "Every storehouse has lost a tenth of its food.", group: None, weight: 1.0, effects: [Stores(0.1)]),
+        (id: 3, name: "Restless roads", text: "Raiders come sooner.", group: None, weight: 1.0, effects: [RaiderPace(1.5)]),
+        (id: 4, name: "Sellswords", text: "A band for hire waits near the start.", group: None, weight: 0.7, effects: [Sellswords(12)]),
+        (id: 5, name: "Stronger rival", text: "The rival levies more men and builds faster.", group: Some("rival"), weight: 0.8, effects: [RivalStrength(1.25)]),
+        (id: 6, name: "Weaker rival", text: "The rival levies fewer men.", group: Some("rival"), weight: 0.8, effects: [RivalStrength(0.8)]),
+    ],
+)

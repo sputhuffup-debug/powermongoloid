@@ -34,7 +34,8 @@ Times are on a 4-core machine.
 | | `different_seeds_give_different_hashes`, `hash_changes_as_the_sim_advances`, `hashing_does_not_change_state` | The hash actually measures state | ~5 s |
 | | `state_hash_covers_every_sim_component` | Every sim component and resource is hashed or exempt (armies included) | ~10 s |
 | | `armies_with_orders_are_deterministic_and_replay` | Armies plus 200 random orders: parallel equals serial, and the replay reproduces | ~60 s |
-| `worldgen.rs` | `shipped_world_is_2048_square_in_64_tile_chunks`, `same_seed_same_island_regardless_of_threads`, `different_seeds_give_different_islands`, `every_seed_meets_the_m1_criteria`, `the_sim_spawns_settlements_and_roads` | SIM-01 and SIM-02: world size, determinism, terrain mix, settlements and roads (the M1 criteria) | ~10 s |
+| `worldgen.rs` | `shipped_world_is_2048_square_in_64_tile_chunks`, `same_seed_same_island_regardless_of_threads`, `different_seeds_give_different_islands`, `every_seed_meets_the_m1_criteria`, `the_sim_spawns_settlements_and_roads` | SIM-01 and SIM-02: world size, determinism, terrain mix, settlements and roads (the M1 criteria); the developed world has no monuments or drawn sizes (M4 D6) | ~15 s |
+| | `run_preset_meets_its_criteria`, `run_preset_is_the_same_regardless_of_threads` | GP-21 and GP-23: the run island (4 seeds) has the M1 terrain, settlement and road criteria, 4 regions, 4-8 monuments per region on allowed ground away from settlements and each other, a size for every settlement with the seat the unique largest, and 3,500-5,500 people; its monuments and sizes don't depend on the thread count | |
 | `village_day.rs` | `five_thousand_villagers_live_a_full_day` | M2: 5,000 villagers eat, work and sleep through a day (`villagers.ron`, `economy.ron` tuning) | ~30 s |
 | `famine.rs` | `cutting_off_farmers_starves_that_village_within_two_days` | M2: food security responds to production, and the famine stays local | ~17 s |
 | `army_march.rs` | `an_army_of_200_marches_around_a_lake_as_a_crowd` | M3 / SIM-30: 200 followers cross 220 tiles around a lake, stay a crowd, never stand on water, and parallel equals serial | ~12 s |
@@ -49,18 +50,25 @@ Times are on a 4-core machine.
 These run in seconds and sit next to the code they test.
 
 - **sim_core:**
-  - calendar phases and clock
+  - calendar phases and clock; a game hour is a 24th of a day
   - RNG stream independence
   - hash reference vectors and the coverage check
-  - replay parsing and divergence finding
+  - replay parsing (with a run's config) and divergence finding
   - commands applied exactly once
+  - a finished run stops the clock and freezes the hash; outside a run it never stops
+  - a tick's events are recorded in sorted order whatever order they were written in
+  - offers are answered once and expire; modifiers are exact no-ops when empty
 - **sim_world:**
   - map chunk revisions and hashing
   - noise
   - A* paths
   - flow fields: detours, windows, cache
   - world generation fields and roads
-  - settings validation
+  - settings validation, both presets, monument and size rules
+  - region count and region edges
+  - size draws: tier shares, seeded, the seat is the unique largest
+  - monument site rules, weighted kind picks, nearest-tile ties
+  - installing a world spawns settlements, then monuments
 - **sim_economy:** inventory and stockpile rules, transfer operations, the resolver serving lower SpawnIds first, data validation, layout rings.
 - **sim_agents:** utility choice (best score, inertia, ties), eating, response curves, data validation, apportioning.
 - **sim_military:** data loading, hostility rules, the fighter grid's masked search matching a full search, formation slots.

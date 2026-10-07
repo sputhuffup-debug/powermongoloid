@@ -1,9 +1,14 @@
 //! World generation (SIM-01, SIM-02): a pure function of the seed, the
 //! settings and nothing else. The thread count only affects speed.
+//!
+//! Stages: noise, classify, settlements, roads, farmland, regions and
+//! names, then (M4, run preset only) settlement sizes and monuments.
 
 mod fields;
+mod monuments;
 mod roads;
 mod settle;
+mod sizes;
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -13,10 +18,13 @@ use rand::RngExt;
 use sim_core::SimSeed;
 use sim_core::rng::rng_key;
 
+use crate::SettlementSize;
 use crate::map::{NO_REGION, RegionId, Terrain, WorldMap};
+use crate::monuments::MonumentSite;
 use crate::settings::WorldGenSettings;
 
 pub use settle::{MAX_SITE_SLOPE, suitable as suitable_site};
+pub use sizes::draw_sizes;
 
 /// A settlement chosen by world generation.
 #[derive(Debug, Clone, PartialEq)]
@@ -24,6 +32,8 @@ pub struct SettlementSite {
     pub name: String,
     pub center: IVec2,
     pub region: RegionId,
+    /// Its drawn size (GP-21); `None` when the preset draws no sizes.
+    pub size: Option<SettlementSize>,
 }
 
 /// A road between two settlements (indices into `GeneratedWorld::settlements`).
@@ -35,11 +45,14 @@ pub struct RoadLink {
     pub path: Vec<IVec2>,
 }
 
-/// A generated world, ready to install: map, settlement sites, roads, stage timings.
+/// A generated world, ready to install: map, settlement sites, monument
+/// sites, roads, stage timings.
 #[derive(Debug, Clone)]
 pub struct GeneratedWorld {
     pub map: WorldMap,
     pub settlements: Vec<SettlementSite>,
+    /// Monuments (GP-23), by region then slot; empty when the preset places none.
+    pub monuments: Vec<MonumentSite>,
     pub roads: Vec<RoadLink>,
     /// Wall-clock time per stage, for diagnostics only.
     pub timings: Vec<(&'static str, Duration)>,
@@ -146,14 +159,36 @@ pub fn generate_world(seed: u64, s: &WorldGenSettings, threads: usize) -> Genera
     let names = settlement_names(seed, s, centers.len());
     lap("regions+names", &mut timings);
 
+    // GP-21: settlement sizes (none in developed, which draws nothing).
+    let drawn = draw_sizes(seed, &s.sizes, centers.len());
+    lap("sizes", &mut timings);
+
+    // GP-23: monuments, on the final terrain, before the map takes the
+    // region array.
+    let monuments = monuments::place(
+        seed,
+        &monuments::MonumentInputs {
+            size,
+            terrain: &terrain,
+            tile_region: &region,
+            water_dist: &water_dist,
+            centers: &centers,
+            settlement_names: &names,
+        },
+        s,
+    );
+    lap("monuments", &mut timings);
+
     let settlements = centers
         .iter()
         .zip(names)
         .zip(&site_region)
-        .map(|((&center, name), &region)| SettlementSite {
+        .zip(drawn)
+        .map(|(((&center, name), &region), size)| SettlementSite {
             name,
             center,
             region,
+            size,
         })
         .collect();
     let map = WorldMap::from_parts(
@@ -169,6 +204,7 @@ pub fn generate_world(seed: u64, s: &WorldGenSettings, threads: usize) -> Genera
     GeneratedWorld {
         map,
         settlements,
+        monuments,
         roads,
         timings,
     }

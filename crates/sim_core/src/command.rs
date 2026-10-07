@@ -128,14 +128,26 @@ pub enum CommandKind {
     AppointCaptain {
         follower: u64,
     },
+    /// Answer pending offer `offer` (a boon, a trait, an invitation) with
+    /// `choice`, an index into its choices (GP-27; `sim_core::Offers`).
+    ChooseOffer {
+        offer: u64,
+        choice: u8,
+    },
+    /// Give up the current run (GP-21).
+    AbandonRun,
 }
 
-/// Ordering inside [`SimSet::Input`](crate::SimSet::Input): scripted commands
-/// are injected and recorded first, then consumers read them.
+/// Ordering inside [`SimSet::Input`](crate::SimSet::Input), chained: scripted
+/// commands are injected and recorded first, then the sim's AI writes its
+/// commands, then consumers read them all. The fixed order makes the arrival
+/// order of commands (which consumers apply in) the same in every run.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SimInputSet {
     /// Replays scripted commands and records every command for this tick.
     Inject,
+    /// The sim's own AI (raiders, the rival) writes `SimCommand::ai` here.
+    Ai,
     /// Systems that act on `SimCommand`s go here.
     Consume,
 }

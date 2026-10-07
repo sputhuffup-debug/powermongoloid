@@ -19,12 +19,16 @@ use crate::components::{Captain, Equipment, Factions, Follower, Raider, Soldier}
 use crate::data::{Army, UnitStats};
 use crate::soldiers::slot_offset;
 
-/// What to spawn.
+/// What to spawn. `Copy`, so scenario configs can hold one.
 #[derive(Debug, Clone, Copy)]
 pub struct ArmySpec {
+    /// Whose army it is.
     pub faction: FactionId,
+    /// The captain's starting posture.
     pub posture: Posture,
+    /// Where it stands (snapped to the nearest passable tile).
     pub at: IVec2,
+    /// Followers besides the captain.
     pub followers: u32,
     /// Days of food in the baggage for the whole army.
     pub food_days: f32,
@@ -32,10 +36,16 @@ pub struct ArmySpec {
     pub armed: bool,
     /// Driven by the scripted raider AI.
     pub raider: bool,
+    /// The followers' stats; `None` uses army.ron's `soldier` (GP-27: a
+    /// run's band templates set their own).
+    pub soldier: Option<UnitStats>,
+    /// Every soldier starts with tools.
+    pub tools: bool,
 }
 
 impl ArmySpec {
-    /// A neutral army with three days of food and no weapons.
+    /// A neutral army with three days of food, no weapons or tools, and
+    /// army.ron's soldier stats.
     pub fn new(faction: FactionId, at: IVec2, followers: u32) -> Self {
         Self {
             faction,
@@ -45,6 +55,8 @@ impl ArmySpec {
             food_days: 3.0,
             armed: false,
             raider: false,
+            soldier: None,
+            tools: false,
         }
     }
 }
@@ -103,7 +115,8 @@ fn nearest_reachable(field: &FlowField, at: IVec2) -> Option<IVec2> {
     None
 }
 
-fn stats(u: UnitStats) -> CombatStats {
+/// A soldier's combat stats from a unit's base stats.
+pub(crate) fn soldier_stats(u: UnitStats) -> CombatStats {
     CombatStats {
         health: u.health,
         max_health: u.health,
@@ -171,7 +184,7 @@ pub fn spawn_army(world: &mut World, spec: &ArmySpec) -> Entity {
                     Allegiance(spec.faction),
                     DetailLevel { full: true },
                     Mobile,
-                    stats(unit),
+                    soldier_stats(unit),
                     Strike::default(),
                 ),
                 (
@@ -190,7 +203,7 @@ pub fn spawn_army(world: &mut World, spec: &ArmySpec) -> Entity {
                     Enlisted,
                     Equipment {
                         weapon: spec.armed,
-                        tools: false,
+                        tools: spec.tools,
                     },
                 ),
             ))
@@ -209,8 +222,9 @@ pub fn spawn_army(world: &mut World, spec: &ArmySpec) -> Entity {
     if spec.raider {
         world.entity_mut(captain).insert(Raider::default());
     }
+    let soldier = spec.soldier.unwrap_or(army.data.soldier);
     for tile in tiles {
-        let f = person(world, tile, army.data.soldier);
+        let f = person(world, tile, soldier);
         world.entity_mut(f).insert(Follower {
             captain,
             slot: 0,
@@ -231,7 +245,9 @@ pub struct Skirmish {
 
 /// A battle for benchmarks and stress tests: the skirmish start plus two
 /// armed armies of `per_side` at war, already ordered onto the midpoint of
-/// their camps. Orders are queued as player commands for the first tick.
+/// their camps. Orders are queued for the first tick as AI commands: setup
+/// is re-run when a replay is verified, so recording them as player
+/// commands would apply them twice (guide G1).
 pub fn setup_battle(world: &mut World, per_side: u32) -> Option<[Entity; 2]> {
     use sim_core::{CommandKind, OrderSpec, SimCommand, SpawnId};
     let s = setup_skirmish(world)?;
@@ -239,18 +255,21 @@ pub fn setup_battle(world: &mut World, per_side: u32) -> Option<[Entity; 2]> {
     let (a, b) = (at(world, s.player), at(world, s.raiders));
     let mid = (a + b) / 2;
     let mut out = [s.player; 2];
-    for (i, (faction, from)) in [(1u16, a), (2u16, b)].into_iter().enumerate() {
+    for (i, (faction, from)) in [(FactionId::PLAYER, a), (FactionId::RAIDERS, b)]
+        .into_iter()
+        .enumerate()
+    {
         let captain = spawn_army(
             world,
             &ArmySpec {
                 food_days: 5.0,
                 armed: true,
-                ..ArmySpec::new(FactionId(faction), from, per_side)
+                ..ArmySpec::new(faction, from, per_side)
             },
         );
         let id = world.get::<SpawnId>(captain).expect("id").0;
-        world.write_message(SimCommand::player(
-            FactionId(faction),
+        world.write_message(SimCommand::ai(
+            faction,
             CommandKind::IssueOrder {
                 captain: id,
                 order: OrderSpec::MoveTo { x: mid.x, y: mid.y },
@@ -309,7 +328,7 @@ pub fn setup_skirmish(world: &mut World) -> Option<Skirmish> {
         world,
         &ArmySpec {
             food_days: 2.5,
-            ..ArmySpec::new(FactionId(1), player_at, 50)
+            ..ArmySpec::new(FactionId::PLAYER, player_at, 50)
         },
     );
     let raiders = spawn_army(
@@ -319,7 +338,7 @@ pub fn setup_skirmish(world: &mut World) -> Option<Skirmish> {
             food_days: 1.0,
             armed: true,
             raider: true,
-            ..ArmySpec::new(FactionId(2), raider_at, 30)
+            ..ArmySpec::new(FactionId::RAIDERS, raider_at, 30)
         },
     );
     Some(Skirmish { player, raiders })

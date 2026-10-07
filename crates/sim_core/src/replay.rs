@@ -4,9 +4,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::command::LoggedCommand;
+use crate::run::RunConfig;
 
 /// Bump when the replay format or the meaning of a command changes.
-pub const REPLAY_FORMAT: u32 = 4;
+/// 5 (M4): the `run` header field, and the run gate and new commands.
+pub const REPLAY_FORMAT: u32 = 5;
 
 /// The state hash at a given tick (after `tick` ticks have run).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +30,9 @@ pub struct Replay {
     /// "skirmish" = the M3 playtest armies).
     #[serde(default)]
     pub scenario: String,
+    /// The run's configuration, for a run (GP-21); `None` otherwise.
+    #[serde(default)]
+    pub run: Option<RunConfig>,
     pub ticks: u64,
     /// Ticks between checkpoints (0 = only the final state).
     pub checkpoint_every: u64,
@@ -95,7 +100,7 @@ impl Replay {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CommandKind, FactionId, SimCommand};
+    use crate::{CommandKind, Difficulty, FactionId, SimCommand};
 
     fn sample() -> Replay {
         Replay {
@@ -103,13 +108,28 @@ mod tests {
             seed: 42,
             population: 8,
             world_size: 256,
-            scenario: String::new(),
+            scenario: "run".into(),
+            run: Some(RunConfig {
+                difficulty: Difficulty::Harsh,
+            }),
             ticks: 100,
             checkpoint_every: 50,
-            commands: vec![LoggedCommand {
-                tick: 7,
-                command: SimCommand::player(FactionId(1), CommandKind::Noop),
-            }],
+            commands: vec![
+                LoggedCommand {
+                    tick: 0,
+                    command: SimCommand::player(
+                        FactionId::PLAYER,
+                        CommandKind::ChooseOffer {
+                            offer: 0,
+                            choice: 2,
+                        },
+                    ),
+                },
+                LoggedCommand {
+                    tick: 7,
+                    command: SimCommand::player(FactionId::PLAYER, CommandKind::Noop),
+                },
+            ],
             checkpoints: vec![
                 Checkpoint { tick: 50, hash: 1 },
                 Checkpoint {
@@ -120,10 +140,23 @@ mod tests {
         }
     }
 
+    /// GP-21: a run's config survives the round trip, and replays without
+    /// one read back as `None`.
     #[test]
     fn ron_round_trip() {
         let replay = sample();
         assert_eq!(Replay::from_ron(&replay.to_ron()).unwrap(), replay);
+
+        let plain = Replay {
+            scenario: String::new(),
+            run: None,
+            ..sample()
+        };
+        let text = plain.to_ron();
+        assert_eq!(Replay::from_ron(&text).unwrap(), plain);
+        let without_field = text.replace("run: None,", "");
+        assert_ne!(without_field, text);
+        assert_eq!(Replay::from_ron(&without_field).unwrap().run, None);
     }
 
     #[test]

@@ -21,11 +21,20 @@ SIM-04 and SIM-05. Guarded by `sim_core` calendar tests and `village_day`.
 | `seasons_per_year` | Seasons in a year (4), so a year is 120 days |
 
 ## worldgen.ron (`sim_world::WorldGenSettings`)
-SIM-01 and SIM-02 ([ADR 0005](../adr/0005-world-generation-and-terrain.md)). Guarded by `tests/tests/worldgen.rs`. "Fraction" means a fraction of the map size; `*_tiles_at_2048` values scale with the map size.
+SIM-01 and SIM-02 ([ADR 0005](../adr/0005-world-generation-and-terrain.md)); presets, sizes and monuments are M4 (GP-21, GP-23). Guarded by `tests/tests/worldgen.rs`. "Fraction" means a fraction of the map size; `*_tiles_at_2048` values scale with the map size.
+
+**Presets.** The file holds two complete settings blocks, parsed into `sim_world::WorldGenPresets` and picked with `WorldGenSettings::preset(WorldPreset::..)`:
 
 | Field | Meaning |
 | --- | --- |
-| `size` | Map edge in tiles (2048); must be a multiple of `chunk_size` |
+| `developed` | The 2048-tile world of M1-M3 with one populated region: stress tests, benchmarks and every M2/M3 test. `WorldGenSettings::default_data()` is always this preset. It places no monuments and draws no sizes, so it generates exactly what it did before M4 |
+| `run` | The 1024-tile run island (GP-21): 4 regions, about 25 settlements that are all populated at a drawn size (about 4,000-5,000 people), and 6 monuments per region |
+
+Every field below appears in both presets.
+
+| Field | Meaning |
+| --- | --- |
+| `size` | Map edge in tiles (2048 developed, 1024 run); must be a multiple of `chunk_size` |
 | `chunk_size` | Chunk edge in tiles (64), used for rendering, hashing and LOD |
 | `height.octaves`, `height.frequency`, `height.lacunarity`, `height.gain` | Base fractal noise for the continent: layers, features per map width, frequency step and amplitude step per layer |
 | `height.warp_frequency`, `height.warp_strength` | Domain warp for irregular coastlines (strength is a fraction) |
@@ -48,8 +57,18 @@ SIM-01 and SIM-02 ([ADR 0005](../adr/0005-world-generation-and-terrain.md)). Gua
 | `roads.cost_grass`, `roads.cost_farmland`, `roads.cost_beach`, `roads.cost_forest`, `roads.cost_hills`, `roads.cost_mountain`, `roads.cost_road` | Integer cost per tile for the road builder's A* (orthogonal step; diagonal is x1.41); an existing road is cheap, so roads merge |
 | `roads.slope_cost` | Extra cost per unit of height difference |
 | `roads.search_margin_tiles` | A* search box margin around each link's endpoints |
-| `regions` | Regions the island is divided into (used by population now, LOD in M5) |
-| `names.prefixes`, `names.suffixes` | Syllables for settlement names (prefix + suffix) |
+| `regions` | Regions the island is divided into (used by population and runs now, LOD in M5). A request: the map has at most one region per settlement, so code reads `WorldMap::region_count()` |
+| `names.prefixes`, `names.suffixes` | Syllables for settlement names (prefix + suffix). Monument names use them too, never repeating a settlement's name, so there must be enough combinations for `settlements.max` plus `monuments.per_region` per region |
+| `monuments.per_region` | Monuments placed in each region (GP-23): 6 in run, 0 in developed (none). Each slot draws a kind by weight, then takes the suitable tile nearest a seeded anchor in the region. If the kind fits nowhere, the kinds after it in the list are tried in turn, then the spacing is relaxed to a half and a quarter |
+| `monuments.min_settlement_distance` | Minimum tiles from every settlement centre (52 in run). Keep it above army.ron `threat.radius` (45), or a guard camp keeps a village frightened |
+| `monuments.min_spacing` | Minimum tiles between two monuments (40 in run) |
+| `monuments.kinds[].kind`, `monuments.kinds[].weight`, `monuments.kinds[].site` | The kinds that may be drawn (`StandingStones`, `RuinedFort`, `HolyWell`, `RoadMarker`, `AncientForge`, `MarketCross`, `Wayshrine`, `Watchtower`; each at most once), their relative chance per slot (> 0), and where they may stand. No site is ever Water, Road, Mountain or Farmland |
+| `site: NearWater(min, max)` | Open ground (grass, forest, beach, hills) `min..=max` steps from water (holy well: 2-6) |
+| `site: Hills`, `site: HillsNearMountain(within)` | On hills; or on hills within `within` steps of a mountain (ancient forge: 6) |
+| `site: NearRoad(min, max)` | Open ground `min..=max` steps from a road (road marker, market cross: 1-3) |
+| `site: ForestEdgeOrRoad`, `site: GrassOrHills` | Forest next to open ground, or open ground beside a road (wayshrine); grass or hills (standing stones) |
+| `sizes.tiers[].tier`, `sizes.tiers[].weight`, `sizes.tiers[].min`, `sizes.tiers[].max` | Settlement size tiers (GP-21): `Hamlet` 20-60 people, `Village` 60-200, `Town` 200-400 in run. Weights are shares of the settlements: tier counts are apportioned by weight (largest remainder), then shuffled over the settlements, and each settlement's people are uniform in its tier's `min..=max`. With 25 settlements the run weights 0.20 / 0.45 / 0.35 give 5 hamlets, 11 villages and 9 towns, about 4,400 people. Empty in developed: no sizes are drawn and population apportions one region as in M2/M3 |
+| `sizes.seat_min` | The largest settlement becomes the rival's seat: raised to at least this many people (450 in run) and one more than any other, in the top tier. 0 when there are no tiers |
 
 ## economy.ron (`sim_economy::Economy`)
 SIM-20 and SIM-21 ([ADR 0007](../adr/0007-economy-and-transfer-resolver.md)). Guarded by `village_day` and `famine`.
@@ -113,7 +132,7 @@ GP-01..04 and SIM-30..32 ([ADR 0010](../adr/0010-armies-orders-and-combat.md)). 
 
 | Field | Meaning |
 | --- | --- |
-| `factions[].name`, `factions[].color` | Factions by id: 0 independent, 1 the player, 2 the raiders. RGB colour 0..1. Warlord factions (1 and up) are at war with each other |
+| `factions[].name`, `factions[].color` | Factions by id: 0 independent, 1 the player, 2 the raiders, 3 the rival warlord (M4 runs), 4 monument beasts (M4 runs); these match `FactionId::{INDEPENDENT, PLAYER, RAIDERS, RIVAL, BEASTS}`. Append only, never reorder. RGB colour 0..1. Warlord factions (1 and up) are at war with each other |
 | `soldier`, `captain` (`health`, `attack`, `defense`, `morale`) | Base stats. `morale` is also the level that morale recovers to |
 | `equipment.weapon_attack`, `equipment.tools_defense` | Bonus from a weapon or tools |
 | `combat.engage_radius` | Enemies this close (tiles) are engaged |

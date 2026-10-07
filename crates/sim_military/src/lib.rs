@@ -18,7 +18,9 @@
 //!    desertion.
 //!
 //! Also here: army data ([`Army`], `army.ron`), [`spawn::spawn_army`] and
-//! the playtest setup, and the scripted [`raiders`].
+//! the playtest setup, the scripted [`raiders`] (in `SimInputSet::Ai`), and
+//! runs ([`progression`], `progression.ron`, GP-21/27): the start draws,
+//! [`setup_run`], offers and the champion.
 //!
 //! Systems go in [`sim_core::SimSet`]s. This crate never depends on
 //! rendering, windowing, audio or asset crates.
@@ -28,6 +30,7 @@ pub mod components;
 pub mod data;
 pub mod index;
 pub mod orders;
+pub mod progression;
 pub mod raiders;
 pub mod soldiers;
 pub mod spawn;
@@ -48,6 +51,10 @@ pub use components::{
 pub use data::Army;
 pub use index::{ArmyIndex, ArmyInfo, FighterGrid, Side};
 pub use orders::{CommandInbox, arm_followers, enlist, find_settlement, provoke};
+pub use progression::{
+    Champion, Progression, RunProgress, RunStart, RunWorld, StartDraws, StartTerrain, Traits,
+    champion_of, draw_start, setup_run,
+};
 pub use soldiers::slot_offset;
 pub use spawn::{ArmySpec, Skirmish, nearest_passable, setup_battle, setup_skirmish, spawn_army};
 
@@ -84,6 +91,8 @@ impl Plugin for MilitaryPlugin {
             .cloned()
             .unwrap_or_else(Economy::default_data);
         app.insert_resource(Army::default_data(&calendar, &econ))
+            .insert_resource(Progression::default_data())
+            .init_resource::<RunProgress>()
             .init_resource::<Factions>()
             .init_resource::<ArmyStats>()
             .init_resource::<MilitaryLog>()
@@ -112,7 +121,7 @@ impl Plugin for MilitaryPlugin {
             .add_systems(
                 FixedUpdate,
                 (
-                    raiders::think.in_set(SimInputSet::Inject),
+                    raiders::think.in_set(SimInputSet::Ai),
                     (
                         orders::collect_commands,
                         orders::apply_commands.run_if(orders::has_commands),
@@ -155,6 +164,10 @@ impl Plugin for MilitaryPlugin {
             .register_hashed::<Equipment>()
             .register_hashed::<Soldier>()
             .register_hashed::<Raider>()
+            .register_hashed_resource::<Progression>()
+            .register_hashed_resource::<RunProgress>()
+            .register_hashed::<Champion>()
+            .register_hashed::<Traits>()
             .exempt_from_hash::<MilitaryLog>("UI history; its effects are in the hashed state")
             .exempt_from_hash::<CommandInbox>("always empty between ticks")
             .exempt_from_hash::<ArmyIndex>("rebuilt from hashed state every tick")

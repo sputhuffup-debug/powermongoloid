@@ -1,17 +1,31 @@
 //! M1 acceptance: a seed always produces the same 2048 x 2048 island with
 //! every terrain type, and 40 to 80 settlements on suitable land linked by
 //! roads (SIM-01, SIM-02).
+//!
+//! M4 (GP-21, GP-23): the `run` preset is a 1024-tile island of four
+//! regions whose settlements all have a drawn size, the largest being the
+//! rival's seat, with monuments in every region away from settlements. The
+//! `developed` preset has neither (D6).
+
+use std::collections::BTreeSet;
 
 use bevy_math::IVec2;
 use sim_core::{NameTable, SpawnId};
 use sim_headless::{HeadlessConfig, headless_app};
 use sim_world::worldgen::{GeneratedWorld, MAX_SITE_SLOPE};
-use sim_world::{NO_REGION, RoadNetwork, Settlement, Terrain, WorldGenSettings, generate_world};
+use sim_world::{
+    Monument, NO_REGION, RoadNetwork, Settlement, SettlementSize, Terrain, WorldGenSettings,
+    WorldPreset, generate_world,
+};
 
 const SEEDS: [u64; 4] = [42, 7, 1234, 2026];
 
 fn settings() -> WorldGenSettings {
     WorldGenSettings::default_data()
+}
+
+fn run_settings() -> WorldGenSettings {
+    WorldGenSettings::preset(WorldPreset::Run)
 }
 
 fn gen_world(seed: u64, threads: usize) -> GeneratedWorld {
@@ -35,6 +49,22 @@ fn same_seed_same_island_regardless_of_threads() {
         assert_eq!(a.settlements, other.settlements, "settlements differ");
         assert_eq!(a.roads, other.roads, "roads differ");
     }
+    // D6: the developed world draws no sizes and places no monuments.
+    assert!(a.monuments.is_empty());
+    assert!(a.settlements.iter().all(|s| s.size.is_none()));
+}
+
+#[test]
+fn run_preset_is_the_same_regardless_of_threads() {
+    let s = run_settings();
+    let a = generate_world(42, &s, 1);
+    let b = generate_world(42, &s, 4);
+    assert_eq!(a.map.size(), 1024);
+    assert_eq!(a.map.digest(), b.map.digest(), "map differs");
+    assert_eq!(a.settlements, b.settlements, "settlements or sizes differ");
+    assert_eq!(a.monuments, b.monuments, "monuments differ");
+    assert_eq!(a.roads, b.roads, "roads differ");
+    assert!(!a.monuments.is_empty());
 }
 
 #[test]
@@ -80,7 +110,10 @@ fn check_terrain(seed: u64, w: &GeneratedWorld) {
 
 fn check_settlements(seed: u64, w: &GeneratedWorld, s: &WorldGenSettings) {
     let n = w.settlements.len() as u32;
-    assert!((40..=80).contains(&n), "seed {seed}: {n} settlements");
+    assert!(
+        (s.settlements.min..=s.settlements.max).contains(&n),
+        "seed {seed}: {n} settlements"
+    );
     let min_gap = s.scaled(s.settlements.min_spacing_tiles_at_2048) * 0.5;
     for (i, a) in w.settlements.iter().enumerate() {
         let t = w.map.terrain(a.center);
@@ -170,12 +203,142 @@ fn check_roads(seed: u64, w: &GeneratedWorld) {
 }
 
 #[test]
+fn run_preset_meets_its_criteria() {
+    let s = run_settings();
+    for seed in SEEDS {
+        let w = generate_world(seed, &s, 4);
+        check_terrain(seed, &w);
+        check_settlements(seed, &w, &s);
+        check_roads(seed, &w);
+        check_regions(seed, &w, &s);
+        check_monuments(seed, &w, &s);
+        check_sizes(seed, &w, &s);
+    }
+}
+
+/// Exactly the requested regions, each with at least one settlement.
+fn check_regions(seed: u64, w: &GeneratedWorld, s: &WorldGenSettings) {
+    assert_eq!(w.map.region_count(), s.regions as usize, "seed {seed}");
+    let used: BTreeSet<u8> = w.settlements.iter().map(|x| x.region).collect();
+    assert_eq!(used.len(), s.regions as usize, "seed {seed}: {used:?}");
+}
+
+/// GP-23: 4 to 8 monuments per region on allowed ground, outside every
+/// village's threat radius, spaced apart, with unique names.
+fn check_monuments(seed: u64, w: &GeneratedWorld, s: &WorldGenSettings) {
+    let m = &s.monuments;
+    let mut per_region = vec![0; w.map.region_count()];
+    let mut names = BTreeSet::new();
+    let settlement_names: BTreeSet<&str> = w.settlements.iter().map(|x| x.name.as_str()).collect();
+    let mut closest_settlement = f32::INFINITY;
+    let mut closest_pair = f32::INFINITY;
+    for (i, a) in w.monuments.iter().enumerate() {
+        per_region[a.region as usize] += 1;
+        let t = w.map.terrain(a.center);
+        assert!(
+            !matches!(t, Terrain::Water | Terrain::Road | Terrain::Mountain),
+            "seed {seed}: {} sits on {}",
+            a.name,
+            t.name()
+        );
+        assert_eq!(w.map.region(a.center), a.region, "seed {seed}: {}", a.name);
+        for x in &w.settlements {
+            let d = a.center.as_vec2().distance(x.center.as_vec2());
+            closest_settlement = closest_settlement.min(d);
+            assert!(
+                d >= m.min_settlement_distance - 1e-3 && d > 45.0,
+                "seed {seed}: {} is {d} from {}",
+                a.name,
+                x.name
+            );
+        }
+        for b in &w.monuments[i + 1..] {
+            let d = a.center.as_vec2().distance(b.center.as_vec2());
+            closest_pair = closest_pair.min(d);
+            assert!(
+                d >= m.min_spacing - 1e-3,
+                "seed {seed}: {} and {} are {d} apart",
+                a.name,
+                b.name
+            );
+        }
+        assert!(
+            names.insert(a.name.clone()),
+            "seed {seed}: duplicate {}",
+            a.name
+        );
+        let place = a.name.split(' ').next().unwrap_or_default();
+        assert!(
+            !settlement_names.contains(place),
+            "seed {seed}: {} reuses a settlement name",
+            a.name
+        );
+    }
+    let kinds: BTreeSet<_> = w.monuments.iter().map(|a| a.kind).collect();
+    println!(
+        "seed {seed}: monuments per region {per_region:?}, {} kinds, nearest settlement {closest_settlement:.0}, closest pair {closest_pair:.0}",
+        kinds.len()
+    );
+    for (r, n) in per_region.iter().enumerate() {
+        assert!(
+            (4..=8).contains(n),
+            "seed {seed}: region {r} has {n} monuments"
+        );
+    }
+}
+
+/// GP-21: every settlement has a size within its tier; the seat is the
+/// unique largest; the island holds roughly 4,000-5,000 people.
+fn check_sizes(seed: u64, w: &GeneratedWorld, s: &WorldGenSettings) {
+    let sizes: Vec<SettlementSize> = w
+        .settlements
+        .iter()
+        .map(|x| {
+            x.size
+                .unwrap_or_else(|| panic!("seed {seed}: {} has no size", x.name))
+        })
+        .collect();
+    let max = sizes.iter().map(|z| z.people).max().expect("settlements");
+    assert_eq!(
+        sizes.iter().filter(|z| z.people == max).count(),
+        1,
+        "seed {seed}: the seat must be the unique largest"
+    );
+    assert!(max >= s.sizes.seat_min, "seed {seed}: seat has {max}");
+    for z in sizes.iter().filter(|z| z.people != max) {
+        let rule = s
+            .sizes
+            .tiers
+            .iter()
+            .find(|r| r.tier == z.tier)
+            .expect("tier");
+        assert!(
+            (rule.min..=rule.max).contains(&z.people),
+            "seed {seed}: {z:?}"
+        );
+    }
+    let total: u32 = sizes.iter().map(|z| z.people).sum();
+    println!(
+        "seed {seed}: {} settlements, {total} people, seat {max}",
+        sizes.len()
+    );
+    assert!(
+        (3_500..=5_500).contains(&total),
+        "seed {seed}: {total} people"
+    );
+}
+
+#[test]
 fn the_sim_spawns_settlements_and_roads() {
+    let s = settings();
     let mut app = headless_app(HeadlessConfig::new(42));
     let world = app.world_mut();
     let mut q = world.query::<(&SpawnId, &Settlement)>();
     let settlements: Vec<(SpawnId, Settlement)> = q.iter(world).map(|(i, s)| (*i, *s)).collect();
-    assert!((40..=80).contains(&settlements.len()));
+    assert!((s.settlements.min..=s.settlements.max).contains(&(settlements.len() as u32)));
+    // D6: no monuments and no drawn sizes in the developed world.
+    assert_eq!(world.query::<&Monument>().iter(world).count(), 0);
+    assert_eq!(world.query::<&SettlementSize>().iter(world).count(), 0);
     let names = world.resource::<NameTable>();
     for (_, s) in &settlements {
         assert!(!names.get(s.name).is_empty());

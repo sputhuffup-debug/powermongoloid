@@ -1,7 +1,12 @@
-//! Populating one region at world creation: households, villagers, their
+//! Populating settlements at world creation: households, villagers, their
 //! occupations and workplaces, and each settlement's buildings.
+//!
+//! - **Developed world** (M2): one region is populated; `villagers.ron`'s
+//!   total is apportioned over its settlements by farmland.
+//! - **Run island** (M4, GP-21): every settlement carries a drawn
+//!   [`SettlementSize`] and is populated at exactly that many people.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bevy_ecs::prelude::*;
 use bevy_math::IVec2;
@@ -17,7 +22,7 @@ use sim_economy::{
     Economy, Home, Inventory, Occupation, Occupied, SettlementEconomy, Stockpile, Transfers,
     Workplace, WorkplaceKind,
 };
-use sim_world::{Mobile, RegionId, Settlement, Terrain, WorldMap};
+use sim_world::{Mobile, RegionId, Settlement, SettlementSize, Terrain, WorldMap};
 
 use crate::components::{
     Activity, CombatStats, DecisionTrace, Employment, Needs, NextDecision, Strike, Threat, Travel,
@@ -29,7 +34,9 @@ use crate::food::FoodSecurity;
 /// What population did, for diagnostics and tests.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct PopulationReport {
-    pub region: Option<RegionId>,
+    /// Regions that were populated, in id order: the configured region in
+    /// the developed world, every region with a sized settlement in a run.
+    pub regions: Vec<RegionId>,
     /// (settlement, villagers) for each populated settlement.
     pub settlements: Vec<(Entity, u32)>,
     /// Workers moved to another occupation because their workplace
@@ -111,38 +118,15 @@ fn spawn(world: &mut World, bundle: impl Bundle) -> Entity {
     world.spawn((id, bundle)).id()
 }
 
-/// Populates the configured region. Runs once, after world generation.
-pub fn populate(world: &mut World) {
-    let _span = tracing::info_span!("sim_agents::populate").entered();
-    let villagers = world.resource::<Villagers>().clone();
-    let econ = world.resource::<Economy>().clone();
-    let calendar = world.resource::<Calendar>().clone();
-    let seed = *world.resource::<SimSeed>();
-    let days_per_year = calendar.days_per_year();
-    let hh = &villagers.data.households;
-    let pop = &villagers.data.population;
-
-    let mut settlements: Vec<(SpawnId, Entity, Settlement)> = world
-        .query::<(&SpawnId, Entity, &Settlement)>()
-        .iter(world)
-        .map(|(id, e, s)| (*id, e, *s))
-        .collect();
-    settlements.sort_unstable_by_key(|(id, ..)| *id);
-    let region = choose_region(&settlements, pop.region);
-    let chosen: Vec<(SpawnId, Entity, Settlement)> = settlements
-        .into_iter()
-        .filter(|(_, _, s)| Some(s.region) == region)
-        .collect();
-    let mut report = PopulationReport {
-        region,
-        ..Default::default()
-    };
-    if chosen.is_empty() || pop.total == 0 {
-        world.insert_resource(report);
-        return;
-    }
-
-    // Bigger farmland, bigger village.
+/// M2: splits `total` people over `chosen` (one region), at least
+/// `min_per_settlement` each, the rest by farmland: bigger farmland, bigger
+/// village.
+fn apportion_by_farmland(
+    world: &World,
+    chosen: &[(SpawnId, Entity, Settlement)],
+    total: u32,
+    min_per_settlement: u32,
+) -> Vec<u32> {
     let weights: Vec<f32> = {
         let map = world.resource::<WorldMap>();
         chosen
@@ -161,12 +145,67 @@ pub fn populate(world: &mut World) {
             })
             .collect()
     };
-    let floor = pop.min_per_settlement.min(pop.total / chosen.len() as u32);
-    let extra = pop.total - floor * chosen.len() as u32;
-    let sizes: Vec<u32> = apportion(extra, &weights)
+    let floor = min_per_settlement.min(total / chosen.len() as u32);
+    let extra = total - floor * chosen.len() as u32;
+    apportion(extra, &weights)
         .into_iter()
         .map(|n| n + floor)
+        .collect()
+}
+
+/// Populates the world, once, after world generation: every sized
+/// settlement at its [`SettlementSize`] when any has one (the run island,
+/// GP-21), otherwise the configured region (M2).
+pub fn populate(world: &mut World) {
+    let _span = tracing::info_span!("sim_agents::populate").entered();
+    let villagers = world.resource::<Villagers>().clone();
+    let econ = world.resource::<Economy>().clone();
+    let calendar = world.resource::<Calendar>().clone();
+    let seed = *world.resource::<SimSeed>();
+    let days_per_year = calendar.days_per_year();
+    let hh = &villagers.data.households;
+    let pop = &villagers.data.population;
+
+    let mut settlements: Vec<(SpawnId, Entity, Settlement)> = world
+        .query::<(&SpawnId, Entity, &Settlement)>()
+        .iter(world)
+        .map(|(id, e, s)| (*id, e, *s))
         .collect();
+    settlements.sort_unstable_by_key(|(id, ..)| *id);
+    let drawn: Vec<Option<u32>> = settlements
+        .iter()
+        .map(|(_, e, _)| world.get::<SettlementSize>(*e).map(|s| s.people))
+        .collect();
+    let mut report = PopulationReport::default();
+    let (chosen, sizes) = if drawn.iter().any(Option::is_some) {
+        // GP-21 (run island): every settlement at its drawn size, in SpawnId
+        // order. The total in villagers.ron (and any override) is ignored.
+        let (chosen, sizes): (Vec<_>, Vec<_>) = settlements
+            .into_iter()
+            .zip(drawn)
+            .filter_map(|(s, n)| n.filter(|n| *n > 0).map(|n| (s, n)))
+            .unzip();
+        let regions: BTreeSet<RegionId> = chosen.iter().map(|(_, _, s)| s.region).collect();
+        report.regions = regions.into_iter().collect();
+        if chosen.is_empty() {
+            world.insert_resource(report);
+            return;
+        }
+        (chosen, sizes)
+    } else {
+        let region = choose_region(&settlements, pop.region);
+        let chosen: Vec<(SpawnId, Entity, Settlement)> = settlements
+            .into_iter()
+            .filter(|(_, _, s)| Some(s.region) == region)
+            .collect();
+        report.regions = region.into_iter().collect();
+        if chosen.is_empty() || pop.total == 0 {
+            world.insert_resource(report);
+            return;
+        }
+        let sizes = apportion_by_farmland(world, &chosen, pop.total, pop.min_per_settlement);
+        (chosen, sizes)
+    };
 
     let size_weights: Vec<f32> = hh.size_weights.iter().map(|w| *w as f32).collect();
     let size_total: f32 = size_weights.iter().sum();

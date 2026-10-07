@@ -60,7 +60,7 @@ fn settlement_name(world: &World, s: Entity) -> String {
         .map_or_else(|| "?".into(), |st| names.get(st.name).to_string())
 }
 
-fn log(world: &mut World, text: String) {
+pub(crate) fn log(world: &mut World, text: String) {
     let tick = world.resource::<SimTick>().0;
     tracing::debug!(tick, "{text}");
     world.resource_mut::<MilitaryLog>().push(tick, text);
@@ -168,6 +168,13 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<(), &'static str> {
             Ok(())
         }
         CommandKind::AppointCaptain { follower } => appoint(world, cmd.issuer, follower),
+        // GP-27: boons, traits and invitations are picked by command, so
+        // picks replay.
+        CommandKind::ChooseOffer { offer, choice } => {
+            crate::progression::choose(world, cmd.issuer, offer, choice)
+        }
+        // GP-21: the player gives up the run.
+        CommandKind::AbandonRun => crate::progression::abandon(world, cmd.issuer),
     }
 }
 

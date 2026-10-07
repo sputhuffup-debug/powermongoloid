@@ -112,6 +112,34 @@ impl Calendar {
         self.days_per_season * self.seasons_per_year
     }
 
+    /// Ticks in a game hour: a 24th of a day (100 at the shipped 2,400 ticks
+    /// a day), at least 1. Data fields ending in `_hours` use this hour, not
+    /// the UI's clock face ([`ClockReading::hours_minutes`]), whose phases
+    /// stretch unevenly.
+    pub fn ticks_per_hour(&self) -> u64 {
+        (self.ticks_per_day / 24).max(1)
+    }
+
+    /// `hours` game hours as ticks, rounded to the nearest tick (negative is 0).
+    pub fn hours(&self, hours: f32) -> u64 {
+        (hours as f64 * self.ticks_per_hour() as f64).round() as u64
+    }
+
+    /// `days` days as ticks, rounded to the nearest tick (negative is 0).
+    pub fn days(&self, days: f32) -> u64 {
+        (days as f64 * self.ticks_per_day as f64).round() as u64
+    }
+
+    /// Whether `tick` starts a game hour (tick 0 does).
+    pub fn on_hour(&self, tick: u64) -> bool {
+        tick.is_multiple_of(self.ticks_per_hour())
+    }
+
+    /// Whether `tick` starts a day (tick 0 does).
+    pub fn on_day(&self, tick: u64) -> bool {
+        tick.is_multiple_of(self.ticks_per_day)
+    }
+
     /// Day, season, phase and time of day at `tick`.
     pub fn at(&self, tick: u64) -> ClockReading {
         let day = tick / self.ticks_per_day;
@@ -210,6 +238,23 @@ mod tests {
         assert_eq!(c.at(1440).hours_minutes(), (17, 0));
         assert_eq!(c.at(1800).hours_minutes(), (21, 0));
         assert_eq!(c.at(2399).hours_minutes().0, 5);
+    }
+
+    #[test]
+    fn an_hour_is_a_twentyfourth_of_a_day() {
+        let c = Calendar::default_data();
+        assert_eq!(c.ticks_per_hour(), 100);
+        assert_eq!(c.hours(1.0), 100);
+        assert_eq!(c.hours(24.0), c.ticks_per_day);
+        assert_eq!(c.hours(0.5), 50);
+        assert_eq!(c.hours(-3.0), 0);
+        assert_eq!(c.days(1.0), 2400);
+        assert_eq!(c.days(0.5), 1200);
+        assert_eq!(c.days(2.25), 5400);
+        assert!(c.on_hour(0) && c.on_hour(100) && c.on_hour(2400));
+        assert!(!c.on_hour(150) && !c.on_hour(1));
+        assert!(c.on_day(0) && c.on_day(4800));
+        assert!(!c.on_day(100) && !c.on_day(2399));
     }
 
     #[test]

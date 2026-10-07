@@ -7,7 +7,8 @@ NFR-08: the same seed and the same command stream give a bit-identical state has
 | Rule | Why |
 | --- | --- |
 | **The sim changes state only in `FixedUpdate`.** | Frame rate varies between machines; ticks don't. |
-| **Input arrives only as `SimCommand` messages,** consumed in `SimInputSet::Consume`. | A replay is just the recorded command stream. Anything else that changes the sim (a UI writing to a component, say) wouldn't be replayed. |
+| **Input arrives only as `SimCommand` messages,** consumed in `SimInputSet::Consume`. The sim's own AI writes its commands in `SimInputSet::Ai`, after scripted input. | A replay is just the recorded command stream. Anything else that changes the sim (a UI writing to a component, say) wouldn't be replayed. The fixed sub-set order fixes the order commands arrive in. |
+| **Events (`SimEvent`) are messages, not state.** `record_events` sorts each tick's events before appending them to the hashed `Chronicle`. | Writers in one set run in executor order. Messages live two ticks, so tests read the `Chronicle` or `EventFeed`. |
 | **All randomness comes from `SimRng` or `SimSeed::stream(key, tick)`.** Never `rand::rng()`, the thread RNG (`clippy.toml` forbids it). | Parallel systems take their own stream per agent and tick (`seed.stream(rng_key("crate::system") ^ id.0, tick)`), so results never depend on which thread runs first. |
 | **No iteration over a `HashMap` or `HashSet` in sim logic.** Lookups are fine. Use `BTreeMap`, or collect and sort. | Hash iteration order is random per process. |
 | **Order-dependent work is sorted by `SpawnId`.** | `Entity` ids are reused after despawns; `SpawnId`s are allocated in spawn order and never reused. |
@@ -29,7 +30,7 @@ NFR-08: the same seed and the same command stream give a bit-identical state has
 ## The harness
 
 - **`sim_headless::run(config, ticks, commands, checkpoint_every)`** returns the hash at each checkpoint.
-- **`record_replay` / `verify_replay`:** replay files are RON (format version in `sim_core::REPLAY_FORMAT`). They hold the seed, population, world size, scenario, the player's commands and the expected checkpoints.
+- **`record_replay` / `verify_replay`:** replay files are RON (format version in `sim_core::REPLAY_FORMAT`). They hold the seed, population, world size, scenario, the run's `RunConfig` (for a run), the player's commands and the expected checkpoints.
 - **The CLI:**
 
   ```sh
