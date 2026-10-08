@@ -18,6 +18,7 @@ use sim_world::{FlowField, Mobile, Settlement, TravelCosts, WorldMap};
 use crate::components::{Captain, Equipment, Factions, Follower, Raider, Soldier};
 use crate::data::{Army, UnitStats};
 use crate::soldiers::slot_offset;
+use crate::veterans::Veteran;
 
 /// What to spawn. `Copy`, so scenario configs can hold one.
 #[derive(Debug, Clone, Copy)]
@@ -205,6 +206,7 @@ pub fn spawn_army(world: &mut World, spec: &ArmySpec) -> Entity {
                         weapon: spec.armed,
                         tools: spec.tools,
                     },
+                    Veteran::default(),
                 ),
             ))
             .id()

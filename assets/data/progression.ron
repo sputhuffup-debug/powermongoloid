@@ -53,7 +53,9 @@
         ),
     ],
 
-    // SIM-34: the champion starts with one trait drawn from these (trait ids).
+    // SIM-34, SIM-35: the champion's trait pool (trait ids). The champion
+    // starts with one trait drawn from these, and each rank offers three of
+    // them (ones it doesn't hold first).
     champion_traits: [0, 1, 2, 3, 4, 5],
     // Traits: a name, the chronicle's phrase, and stat effects (fractions,
     // +0.05 is +5%; see `sim_core::Stat`).
@@ -244,5 +246,14 @@
         per_captain: 300,
         cap: 8,
         first_village_slots: 1,
+    ),
+
+    // SIM-35: the champion's ranks. Deeds earn points: a battle its army
+    // lived through, a monument taken, a settlement conquered or invited
+    // into, a village request answered. Each rank (the total points in
+    // `ranks`) offers three traits; the pick is the champion's for good.
+    champion: (
+        points: (battle: 1, monument: 2, settlement: 3, request: 1),
+        ranks: [3, 7, 12, 18, 25],
     ),
 )

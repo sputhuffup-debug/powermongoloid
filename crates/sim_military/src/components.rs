@@ -117,6 +117,15 @@ pub struct Captain {
     pub rally_window: (IVec2, IVec2),
     /// Last tick the army foraged from a settlement on its own.
     pub last_forage: u64,
+    /// SIM-36: the tick the army's current battle began (its first blow
+    /// struck or taken), `None` while it is not in one. A battle ends
+    /// (`veterans::end_battles`) once no blow has landed for army.ron
+    /// `veterans.quiet_hours`.
+    pub battle_since: Option<u64>,
+    /// SIM-36: the last tick a member of the army struck or was struck.
+    pub last_engaged: u64,
+    /// SIM-36: members of the army who died during its current battle.
+    pub battle_losses: u32,
 }
 
 impl Captain {
@@ -131,6 +140,9 @@ impl Captain {
             rally: None,
             rally_window: (IVec2::ZERO, IVec2::ZERO),
             last_forage: 0,
+            battle_since: None,
+            last_engaged: 0,
+            battle_losses: 0,
         }
     }
 }
@@ -172,6 +184,15 @@ impl StateHash for Captain {
         h.ivec2(self.rally_window.0);
         h.ivec2(self.rally_window.1);
         h.u64(self.last_forage);
+        match self.battle_since {
+            Some(t) => {
+                h.u8(1);
+                h.u64(t);
+            }
+            None => h.u8(0),
+        }
+        h.u64(self.last_engaged);
+        h.u32(self.battle_losses);
     }
 }
 

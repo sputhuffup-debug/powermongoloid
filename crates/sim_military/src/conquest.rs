@@ -107,6 +107,11 @@ pub fn transfer_seeded(
     if kind == SimEventKind::Conquest && to != FactionId::INDEPENDENT {
         world.resource_mut::<ArmyStats>().of(to).conquests += 1;
     }
+    // SIM-35: a settlement taken or invited into counts toward the
+    // champion's rank (a revolt's new owner is nobody).
+    if kind != SimEventKind::Revolt {
+        crate::progression::champion::credit(world, to, crate::progression::Feat::Settlement);
+    }
     if landless {
         world.resource_mut::<Factions>().set_seat(to, center);
     }

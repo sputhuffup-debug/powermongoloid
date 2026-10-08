@@ -12,12 +12,15 @@
 //! - [`RunProgress`]: what the run has drawn and picked so far.
 //! - [`dominion`]: the hourly dominion tally, its boon offers (GP-24) and
 //!   captain slots from the population held (GP-25).
+//! - [`champion`]: the champion's rank points, rank-ups with trait offers,
+//!   and succession (SIM-34, SIM-35).
 //! - [`progress`]: the hourly serial driver of settlement-level steps, in
 //!   every preset (`MilitarySet::Progress`).
 //!
 //! Developed worlds and the M2/M3 scenarios never call [`setup_run`]: their
 //! `RunState.config` is `None`, and nothing here runs or draws for them.
 
+pub mod champion;
 pub mod dominion;
 pub mod offers;
 pub mod start;
@@ -37,6 +40,7 @@ use crate::components::{Equipment, Factions, Follower};
 use crate::data::UnitStats;
 use crate::spawn::{ArmySpec, soldier_stats, spawn_army};
 
+pub use champion::{ChampionData, ChampionPoints, ChampionRank, Feat};
 pub use dominion::{DominionData, Holding, Holdings, RegionTally, captain_slots};
 pub use offers::{abandon, choose};
 pub use start::{RunWorld, SiteInfo, StartDraws, StartTerrain, draw_start};
@@ -409,7 +413,8 @@ pub struct ProgressionData {
     pub start: StartData,
     /// Band templates.
     pub bands: Vec<BandData>,
-    /// Trait ids the champion's starting trait is drawn from.
+    /// The champion's trait pool: its starting trait and the traits
+    /// offered at each rank are drawn from these trait ids.
     pub champion_traits: Vec<u16>,
     /// Every trait, by id.
     pub traits: Vec<TraitData>,
@@ -433,6 +438,8 @@ pub struct ProgressionData {
     pub monuments: MonumentData,
     /// Dominion boons and captain slots (GP-24, GP-25).
     pub dominion: DominionData,
+    /// The champion's rank points and ranks (SIM-35).
+    pub champion: ChampionData,
 }
 
 /// Progression data (GP-21, GP-27, SIM-34). Hashed as its RON text.
@@ -497,6 +504,14 @@ impl Progression {
         {
             return Err("progression: champion_traits must name traits".into());
         }
+        // SIM-35: a rank offers three distinct traits from the pool.
+        let mut pool = d.champion_traits.clone();
+        pool.sort_unstable();
+        pool.dedup();
+        if pool.len() < 3 {
+            return Err("progression: champion_traits needs at least three traits".into());
+        }
+        d.champion.validate()?;
         for (i, b) in d.boons.iter().enumerate() {
             if b.id as usize != i || !weight_ok(b.weight) {
                 return Err(format!(
@@ -720,7 +735,8 @@ pub struct RunProgress {
     pub modifiers: Vec<u16>,
     /// Boon cards picked, in pick order. Kept for the run (GP-24).
     pub boons: Vec<u16>,
-    /// Whether the one succession of the run has happened (SIM-35, step 6).
+    /// Whether the one succession of the run has happened (SIM-35; see
+    /// [`champion::fallen`]).
     pub succession_used: bool,
     /// GP-22: `(settlement SpawnId, tick)` pairs, sorted by settlement: no
     /// new invitation from that settlement before the tick (set when an
@@ -860,9 +876,11 @@ pub fn setup_run(world: &mut World) -> Option<RunStart> {
         },
     );
     outfit_groups(world, champion, &band);
-    world
-        .entity_mut(champion)
-        .insert((Champion, Traits(vec![draws.champion_trait])));
+    world.entity_mut(champion).insert((
+        Champion,
+        ChampionRank::default(),
+        Traits(vec![draws.champion_trait]),
+    ));
     apply_start_modifiers(world, &data, &draws.modifiers);
     // GP-23: every monument gets a holder; some get a guard camp.
     crate::monuments::setup(world, draws.start);
@@ -963,7 +981,7 @@ fn spoil_stores(world: &mut World, fraction: f32) {
 /// preset: conquest and revolts are general rules.
 ///
 /// The order, with the M4 steps that fill it in:
-/// 1. `veterans::end_battles` (step 6)
+/// 1. [`crate::veterans::end_battles`]
 /// 2. [`crate::monuments::hold`]
 /// 3. [`crate::conquest::revolts`] (daily)
 /// 4. [`crate::wild::regrow`] (daily, run)
@@ -971,13 +989,14 @@ fn spoil_stores(world: &mut World, fraction: f32) {
 /// 6. [`crate::requests::step`] (run)
 /// 7. [`crate::invitations::step`] (run)
 /// 8. [`dominion::tally`] (run)
-/// 9. `champion::rank_ups` (run; step 6)
+/// 9. [`champion::rank_ups`] (run)
 /// 10. [`rebuild_modifiers`], then [`dominion::refresh_slots`] (run), which
 ///     reads the rebuilt modifiers
 /// 11. `rival::clock` (run; step 7)
 /// 12. `director::step` (run; step 7)
 pub fn progress(world: &mut World) {
     let _span = tracing::info_span!("sim_military::progress").entered();
+    crate::veterans::end_battles(world);
     crate::monuments::hold(world);
     crate::conquest::revolts(world);
     crate::wild::regrow(world);
@@ -985,6 +1004,7 @@ pub fn progress(world: &mut World) {
     crate::requests::step(world);
     crate::invitations::step(world);
     dominion::tally(world);
+    champion::rank_ups(world);
     rebuild_modifiers(world);
     dominion::refresh_slots(world);
 }
@@ -1206,6 +1226,10 @@ pub(crate) mod tests {
         assert!(check(&|d| d.dominion.per_captain = 0).is_err());
         assert!(check(&|d| d.dominion.first_village_slots = d.dominion.cap + 1).is_err());
         assert!(check(&|d| d.boons[6].favour = vec![(Holding::Farms, -1.0)]).is_err());
+        assert!(check(&|d| d.champion_traits = vec![0, 1, 1]).is_err(), "3 distinct");
+        assert!(check(&|d| d.champion.ranks = vec![0, 5]).is_err());
+        assert!(check(&|d| d.champion.ranks = vec![5, 5]).is_err());
+        assert!(check(&|d| d.champion.ranks.clear()).is_ok(), "no ranks, no offers");
         assert!(
             check(&|d| d.boons.retain(|b| b.when == BoonWhen::Start)).is_err(),
             "thresholds need Dominion boons"

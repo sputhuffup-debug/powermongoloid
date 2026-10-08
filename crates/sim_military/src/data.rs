@@ -147,6 +147,93 @@ pub struct GarrisonData {
     pub crushed_loyalty: f32,
 }
 
+/// What one veteran rank adds (SIM-36; `veterans.gains` in army.ron).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RankGain {
+    /// Added to the soldier's attack.
+    pub attack: f32,
+    /// Added to the soldier's defense.
+    pub defense: f32,
+    /// Added to the morale the soldier recovers to.
+    pub morale: f32,
+    /// The fraction (0..1) taken off the soldier's chance to desert.
+    pub desertion: f32,
+}
+
+/// Veterans (SIM-36; `veterans` in army.ron): soldiers rank up by battles
+/// survived.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VeteranData {
+    /// A battle ends once the army has struck or taken no blow for this
+    /// many game hours.
+    pub quiet_hours: f32,
+    /// Battles needed for rank 1, 2, ... (strictly ascending, at least 1).
+    pub thresholds: Vec<u16>,
+    /// Rank names, from rank 0 (one more than `thresholds`).
+    pub names: Vec<String>,
+    /// What each rank from 1 up gives in all (not on top of the rank
+    /// below); one per threshold.
+    pub gains: Vec<RankGain>,
+}
+
+impl VeteranData {
+    /// The rank `battles` battles earn at a ranking pace of `rate` (the
+    /// faction's `Stat::VeteranRate` multiplier; 1.0 normally): the number
+    /// of thresholds that `battles x rate` reaches.
+    pub fn rank_for(&self, battles: u16, rate: f32) -> u8 {
+        let effective = battles as f32 * rate.max(0.0);
+        self.thresholds
+            .iter()
+            .take_while(|&&t| effective + 1e-4 >= t as f32)
+            .count() as u8
+    }
+
+    /// What rank `rank` gives; `None` for rank 0 (a recruit).
+    pub fn gain(&self, rank: u8) -> Option<&RankGain> {
+        rank.checked_sub(1)
+            .and_then(|i| self.gains.get(i as usize))
+    }
+
+    /// The rank's name ("?" past the last).
+    pub fn name(&self, rank: u8) -> &str {
+        self.names.get(rank as usize).map_or("?", |n| n.as_str())
+    }
+
+    /// Checks the ranks hang together.
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.quiet_hours.is_finite() || self.quiet_hours <= 0.0 {
+            return Err(format!(
+                "army: veterans.quiet_hours must be finite and > 0, not {}",
+                self.quiet_hours
+            ));
+        }
+        if self.thresholds.first() == Some(&0)
+            || self.thresholds.windows(2).any(|w| w[0] >= w[1])
+            || self.thresholds.len() > u8::MAX as usize
+        {
+            return Err("army: veterans.thresholds must be strictly ascending from 1".into());
+        }
+        if self.gains.len() != self.thresholds.len()
+            || self.names.len() != self.thresholds.len() + 1
+        {
+            return Err(
+                "army: veterans needs one gain per threshold and one name more than thresholds"
+                    .into(),
+            );
+        }
+        for g in &self.gains {
+            if [g.attack, g.defense, g.morale].iter().any(|v| !v.is_finite())
+                || !(0.0..=1.0).contains(&g.desertion)
+            {
+                return Err(
+                    "army: veterans.gains must be finite, with desertion in 0..=1".into(),
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The whole of army.ron, as written. See docs/dev/DATA.md.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArmyData {
@@ -174,10 +261,13 @@ pub struct ArmyData {
     pub conquest: ConquestData,
     /// Holding them: garrisons, supply and revolts (M4).
     pub garrison: GarrisonData,
+    /// Veteran ranks (SIM-36, M4).
+    pub veterans: VeteranData,
 }
 
 impl ArmyData {
-    /// Checks the M4 conquest, garrison and recruit-loyalty numbers.
+    /// Checks the M4 conquest, garrison, recruit-loyalty and veteran
+    /// numbers.
     pub fn validate(&self) -> Result<(), String> {
         let c = &self.conquest;
         let g = &self.garrison;
@@ -210,7 +300,7 @@ impl ArmyData {
                 g.crushed_loyalty
             ));
         }
-        Ok(())
+        self.veterans.validate()
     }
 }
 
@@ -368,6 +458,7 @@ mod tests {
 
     #[test]
     fn rejects_bad_conquest_and_garrison_data() {
+        // Also the veteran ranks (SIM-36).
         let (cal, econ) = (Calendar::default_data(), Economy::default_data());
         for (from, to) in [
             ("hold_radius: 12.0", "hold_radius: 0.0"),
@@ -377,6 +468,10 @@ mod tests {
             ("revolt_hours: 24.0", "revolt_hours: 12.0"),
             ("crushed_loyalty: 0.1", "crushed_loyalty: 1.5"),
             ("loyalty_bonus: 0.3", "loyalty_bonus: inf"),
+            ("thresholds: [1, 3, 6]", "thresholds: [1, 3]"),
+            ("thresholds: [1, 3, 6]", "thresholds: [0, 3, 6]"),
+            ("quiet_hours: 1.0", "quiet_hours: 0.0"),
+            ("desertion: 0.1)", "desertion: 1.1)"),
         ] {
             assert!(DEFAULT_ARMY_RON.contains(from), "{from} not in army.ron");
             let text = DEFAULT_ARMY_RON.replacen(from, to, 1);

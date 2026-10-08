@@ -715,6 +715,11 @@ fn recruit(world: &mut World, captain: Entity, s: Entity, count: u16) {
         let loyalty = world.get::<SettlementLoyalty>(s).map_or(0.0, |l| l.mean);
         p += army.data.recruit.loyalty_bonus * loyalty;
     }
+    // SIM-34: the faction's RecruitChance modifier (a Beloved champion);
+    // exactly 1.0 without one.
+    p *= world
+        .resource::<FactionModifiers>()
+        .mult(c.faction, Stat::RecruitChance);
     let candidates = recruit_candidates(world, s);
     let mut rng = world
         .resource::<SimSeed>()
@@ -834,6 +839,8 @@ pub fn enlist(world: &mut World, e: Entity, captain: Entity, faction: FactionId,
             deserting: false,
         },
         Equipment::default(),
+        // SIM-36: a recruit's service starts now.
+        crate::veterans::Veteran::default(),
     ));
 }
 

@@ -19,6 +19,8 @@ use sim_world::world_pos;
 use crate::components::{ArmyStats, Captain, Equipment, Follower, MilitaryLog};
 use crate::data::Army;
 use crate::index::FighterGrid;
+use crate::progression::Champion;
+use crate::veterans::{Veteran, army_of, rank_gain};
 
 /// Who fell this tick and where, for morale (cleared every tick).
 #[derive(Resource, Debug, Default, Clone)]
@@ -29,6 +31,10 @@ pub struct Casualties {
     pub fallen: Vec<(Vec2, FactionId, bool)>,
     /// The dead awaiting removal, in SpawnId order.
     pub pending: Vec<Entity>,
+    /// Who was slain by a blow this tick, and the striker's faction (for
+    /// the champion's cause of death, SIM-35). Cleared by
+    /// `resolve_strikes`.
+    pub slain_by: Vec<(Entity, FactionId)>,
 }
 
 /// Whether anyone fell this tick (run condition for [`casualties`]).
@@ -66,7 +72,14 @@ pub(crate) fn find_fallen(
     casualties.pending.extend(dead.into_iter().map(|(_, e)| e));
 }
 
-#[allow(clippy::type_complexity)]
+/// Act: blows land, in the strikers' SpawnId order. Damage is `(attack +
+/// weapon + rank gain) x leadership x roll x Attack - (defense + tools +
+/// rank gain)`, at least 1, divided by the victim's `Defence` (GP-23,
+/// SIM-36). A blow on a living victim marks both sides as having
+/// [`Veteran::fought`] and keeps both armies in battle (`Captain::
+/// battle_since`, `last_engaged`); whoever it kills is listed in
+/// [`Casualties::slain_by`].
+#[allow(clippy::type_complexity, clippy::too_many_arguments)] // Bevy system parameters.
 pub(crate) fn resolve_strikes(
     tick: Res<SimTick>,
     seed: Res<SimSeed>,
@@ -74,6 +87,7 @@ pub(crate) fn resolve_strikes(
     grid: Res<FighterGrid>,
     mods: Res<FactionModifiers>,
     mut stats: ResMut<ArmyStats>,
+    mut casualties: ResMut<Casualties>,
     mut q: Query<(
         Entity,
         &SpawnId,
@@ -81,15 +95,19 @@ pub(crate) fn resolve_strikes(
         &mut CombatStats,
         &mut Strike,
         Option<&Equipment>,
+        Option<&mut Veteran>,
     )>,
+    mut captains: Query<&mut Captain>,
+    followers: Query<&Follower>,
 ) {
     let _span = tracing::info_span!("sim_military::resolve_strikes").entered();
+    casualties.slain_by.clear();
     // Only fighters swing; blows land in SpawnId order.
     let mut order: Vec<(SpawnId, Entity)> = grid
         .fighters
         .iter()
         .copied()
-        .filter(|(_, e)| q.get(*e).is_ok_and(|(.., s, _)| s.swing))
+        .filter(|(_, e)| q.get(*e).is_ok_and(|(.., s, _, _)| s.swing))
         .collect();
     if order.is_empty() {
         return;
@@ -97,21 +115,27 @@ pub(crate) fn resolve_strikes(
     order.sort_unstable();
     let eq = &army.data.equipment;
     let c = &army.data.combat;
+    // Everyone a blow landed on or came from, for the battle bookkeeping.
+    let mut engaged: Vec<Entity> = Vec::new();
     for (id, e) in order {
-        let Ok((_, _, allegiance, cs, mut strike, equipment)) = q.get_mut(e) else {
+        let Ok((_, _, allegiance, cs, mut strike, equipment, vet)) = q.get_mut(e) else {
             continue;
         };
         strike.swing = false;
         let Some(target) = strike.target else {
             continue;
         };
-        let attack = cs.attack
+        let mut attack = cs.attack
             + equipment
                 .filter(|x| x.weapon)
                 .map_or(0.0, |_| eq.weapon_attack);
+        // SIM-36: a ranked striker hits harder (rank 0 adds nothing).
+        if let Some(g) = rank_gain(&army, vet.as_deref()) {
+            attack += g.attack;
+        }
         let bonus = strike.bonus.max(1.0);
         let faction = allegiance.0;
-        let Ok((_, _, victim_side, mut victim, _, armour)) = q.get_mut(target) else {
+        let Ok((_, _, victim_side, mut victim, _, armour, victim_vet)) = q.get_mut(target) else {
             continue;
         };
         if !victim.alive() {
@@ -119,18 +143,52 @@ pub(crate) fn resolve_strikes(
         }
         let mut rng = seed.stream(rng_key("sim_military::strike") ^ id.0, tick.0);
         let roll = rng.random_range(c.roll_min..=c.roll_max);
-        let defense = victim.defense + armour.filter(|x| x.tools).map_or(0.0, |_| eq.tools_defense);
+        let mut defense =
+            victim.defense + armour.filter(|x| x.tools).map_or(0.0, |_| eq.tools_defense);
+        if let Some(g) = rank_gain(&army, victim_vet.as_deref()) {
+            defense += g.defense;
+        }
+        if let Some(mut v) = victim_vet
+            && !v.fought
+        {
+            v.fought = true;
+        }
         // GP-23: the striker's Attack and the victim's Defence modifiers
         // (exactly 1.0 without any).
         let damage = (attack * bonus * roll * mods.mult(faction, Stat::Attack) - defense).max(1.0)
             / mods.mult(victim_side.0, Stat::Defence);
         victim.health -= damage;
         victim.morale = (victim.morale - 0.01).max(0.0);
-        if !victim.alive() {
+        let killed = !victim.alive();
+        if killed {
             stats.of(faction).kills += 1;
-            if let Ok((_, _, _, mut killer, ..)) = q.get_mut(e) {
-                killer.morale = (killer.morale + c.kill_morale).min(1.0);
+            casualties.slain_by.push((target, faction));
+        }
+        if let Ok((_, _, _, mut striker, _, _, vet)) = q.get_mut(e) {
+            if killed {
+                striker.morale = (striker.morale + c.kill_morale).min(1.0);
             }
+            if let Some(mut v) = vet
+                && !v.fought
+            {
+                v.fought = true;
+            }
+        }
+        engaged.push(e);
+        engaged.push(target);
+    }
+    // SIM-36: both sides' armies are in battle. Setting the same tick on
+    // each, so the order doesn't matter.
+    let mut armies: Vec<Entity> = engaged
+        .into_iter()
+        .filter_map(|p| army_of(p, &captains, &followers))
+        .collect();
+    armies.sort_unstable();
+    armies.dedup();
+    for a in armies {
+        if let Ok(mut c) = captains.get_mut(a) {
+            c.last_engaged = tick.0;
+            c.battle_since.get_or_insert(tick.0);
         }
     }
 }
@@ -173,6 +231,22 @@ pub(crate) fn casualties(world: &mut World) {
         let enlisted = world.get::<Enlisted>(e).is_some();
         if enlisted {
             world.resource_mut::<ArmyStats>().of(faction).lost += 1;
+            // SIM-36: a loss in the army's battle, if it is in one.
+            let army = if world.get::<Captain>(e).is_some() {
+                Some(e)
+            } else {
+                world.get::<Follower>(e).map(|f| f.captain)
+            };
+            if let Some(mut c) = army.and_then(|a| world.get_mut::<Captain>(a))
+                && c.battle_since.is_some()
+            {
+                c.battle_losses += 1;
+            }
+        }
+        // SIM-35: the champion's fall passes the title on once, or ends the
+        // run; decided before `succeed` makes an heir of its army.
+        if world.get::<Champion>(e).is_some() {
+            crate::progression::champion::fallen(world, e, faction);
         }
         if let Some(captain) = world.get::<Captain>(e).cloned() {
             succeed(world, e, captain, loss, tick);

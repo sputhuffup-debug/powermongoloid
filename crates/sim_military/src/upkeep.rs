@@ -21,6 +21,7 @@ use crate::data::Army;
 use crate::index::ArmyIndex;
 use crate::monuments::NoUpkeep;
 use crate::soldiers::led;
+use crate::veterans::{Veteran, rank_gain};
 
 /// EconomySet::Post: hungry soldiers eat carried food, else ask the
 /// baggage for a meal (applied by the transfer resolver).
@@ -81,7 +82,9 @@ pub(crate) fn eat(
 /// soldiers. Parallel; each writes only its own components. Monument
 /// guards ([`NoUpkeep`]) never get hungrier. The morale target is the
 /// unit's base morale times the faction's `Stat::Morale` multiplier
-/// (GP-23; exactly the base with no modifiers).
+/// (GP-23; exactly the base with no modifiers), plus the soldier's veteran
+/// rank gain (SIM-36). The desertion chance is scaled by the faction's
+/// `Stat::Desertion` multiplier and cut by the rank's `desertion` share.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // Bevy system parameters.
 pub(crate) fn soldier_upkeep(
     tick: Res<SimTick>,
@@ -103,6 +106,7 @@ pub(crate) fn soldier_upkeep(
             Option<&mut Follower>,
             Has<Captain>,
             Has<NoUpkeep>,
+            Option<&Veteran>,
         ),
         With<Enlisted>,
     >,
@@ -119,7 +123,19 @@ pub(crate) fn soldier_upkeep(
     let desert = army.per_tick(u.desert_chance_per_day);
     let hunger = villagers.hunger_per_tick;
     q.par_iter_mut().for_each(
-        |(id, pos, motion, allegiance, act, mut cs, mut needs, follower, is_captain, no_upkeep)| {
+        |(
+            id,
+            pos,
+            motion,
+            allegiance,
+            act,
+            mut cs,
+            mut needs,
+            follower,
+            is_captain,
+            no_upkeep,
+            veteran,
+        )| {
             if !cs.alive() {
                 return;
             }
@@ -131,16 +147,21 @@ pub(crate) fn soldier_upkeep(
             }
             let p = world_pos(pos, Some(motion));
             let unfed = needs.hunger >= u.hungry;
+            // SIM-36: a ranked soldier's gains (none for a recruit).
+            let gain = rank_gain(&army, veteran);
             let mut morale = cs.morale;
             if unfed {
                 morale -= unfed_loss;
             } else {
                 let is_led = led(&index, &army, follower.as_deref(), p);
-                let base = if is_captain {
+                let mut base = if is_captain {
                     army.data.captain.morale
                 } else {
                     army.data.soldier.morale
                 } * mods.mult(allegiance.0, Stat::Morale);
+                if let Some(g) = gain {
+                    base += g.morale;
+                }
                 let target = if is_led { (base + 0.1).min(1.0) } else { base };
                 let rate = fed_gain + if is_led { lead_gain } else { 0.0 };
                 morale = if morale < target {
@@ -168,8 +189,15 @@ pub(crate) fn soldier_upkeep(
                 && morale < u.desert_below
                 && (unfed || act.kind == ActionKind::Rout)
             {
+                // The faction's Desertion modifier (SIM-34 traits, boons)
+                // and the soldier's rank make it less likely; both are
+                // exact no-ops without any.
+                let mut chance = desert * mods.mult(allegiance.0, Stat::Desertion);
+                if let Some(g) = gain {
+                    chance *= 1.0 - g.desertion;
+                }
                 let mut rng = seed.stream(rng_key("sim_military::desert") ^ id.0, tick);
-                if rng.random::<f32>() < desert {
+                if rng.random::<f32>() < chance.max(0.0) {
                     f.deserting = true;
                 }
             }
@@ -309,7 +337,7 @@ pub(crate) fn apply_desertions(world: &mut World) {
         }
         world
             .entity_mut(e)
-            .remove::<(Enlisted, Follower, Equipment)>()
+            .remove::<(Enlisted, Follower, Equipment, Veteran)>()
             .insert((
                 civ,
                 Allegiance(owner),

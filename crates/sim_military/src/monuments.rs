@@ -299,6 +299,8 @@ fn changed_hands(
     };
     if to != FactionId::INDEPENDENT {
         world.write_message(event(SimEventKind::MonumentTaken, to, previous));
+        // SIM-35: a monument taken counts toward the champion's rank.
+        crate::progression::champion::credit(world, to, crate::progression::Feat::Monument);
     }
     if previous != FactionId::INDEPENDENT {
         world.write_message(event(SimEventKind::MonumentLost, previous, to));

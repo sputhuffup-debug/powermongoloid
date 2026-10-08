@@ -17,10 +17,12 @@
 //! 6. **Upkeep** (Needs): [`upkeep`] covers eating, morale, starvation and
 //!    desertion.
 //! 7. **Progress** (Needs, hourly): [`progression::progress`] drives
-//!    settlement-level steps in a fixed order, such as [`monuments::hold`],
+//!    settlement-level steps in a fixed order, such as
+//!    [`veterans::end_battles`], [`monuments::hold`],
 //!    [`conquest::revolts`], the daily [`wild::regrow`] and
 //!    [`drifters::draw`], [`requests::step`], [`invitations::step`], the
-//!    dominion tally ([`progression::dominion::tally`]) and
+//!    dominion tally ([`progression::dominion::tally`]), the champion's
+//!    rank-ups ([`progression::champion::rank_ups`]) and
 //!    [`progression::rebuild_modifiers`].
 //!
 //! Settlements change hands through [`conquest::transfer`]: an `Attack`
@@ -50,6 +52,11 @@
 //! [`setup_run`], offers and the champion, and dominion boons and captain
 //! slots from the land held ([`progression::dominion`], GP-24/25).
 //!
+//! Soldiers rank up by battles survived ([`veterans`], SIM-36); the
+//! champion ranks up by deeds, picks traits and, once a run, passes the
+//! title to a captain when it falls ([`progression::champion`], SIM-34,
+//! SIM-35).
+//!
 //! Systems go in [`sim_core::SimSet`]s. This crate never depends on
 //! rendering, windowing, audio or asset crates.
 
@@ -69,6 +76,7 @@ pub mod soldiers;
 pub mod spawn;
 pub mod threat;
 pub mod upkeep;
+pub mod veterans;
 pub mod wild;
 
 use bevy_app::{App, FixedUpdate, Plugin};
@@ -83,12 +91,12 @@ pub use components::{
     Soldier, describe,
 };
 pub use conquest::{militia_or_foes_near, owner_of, transfer, transfer_seeded};
-pub use data::Army;
+pub use data::{Army, RankGain, VeteranData};
 pub use index::{ArmyIndex, ArmyInfo, FighterGrid, Side};
 pub use monuments::{Guard, Holder, NoUpkeep};
 pub use orders::{CommandInbox, arm_followers, enlist, enlist_into, find_settlement, provoke};
 pub use progression::{
-    Champion, DominionData, DriftersData, ForageData, GoodwillDeeds, GuardData, GuardKind, Holding,
+    Champion, ChampionData, ChampionPoints, ChampionRank, DominionData, DriftersData, ForageData, GoodwillDeeds, GuardData, GuardKind, Holding,
     Holdings, InvitationData, MonumentBonus, MonumentData, Progression, RegionTally, RequestData,
     RunProgress, RunStart, RunWorld, StartDraws, StartTerrain, Traits, captain_slots, champion_of,
     draw_start, rebuild_modifiers, setup_run,
@@ -96,6 +104,7 @@ pub use progression::{
 pub use requests::{Request, RequestBoard, RequestKind, Reward};
 pub use soldiers::slot_offset;
 pub use spawn::{ArmySpec, Skirmish, nearest_passable, setup_battle, setup_skirmish, spawn_army};
+pub use veterans::Veteran;
 pub use wild::WildFood;
 
 /// Military systems, in tick order within their `SimSet`s.
@@ -230,6 +239,8 @@ impl Plugin for MilitaryPlugin {
             .register_hashed::<Holder>()
             .register_hashed::<Guard>()
             .register_hashed::<NoUpkeep>()
+            .register_hashed::<Veteran>()
+            .register_hashed::<ChampionRank>()
             .exempt_from_hash::<MilitaryLog>("UI history; its effects are in the hashed state")
             .exempt_from_hash::<CommandInbox>("always empty between ticks")
             .exempt_from_hash::<ArmyIndex>("rebuilt from hashed state every tick")

@@ -644,6 +644,12 @@ fn complete(world: &mut World, r: &Request, p: &Place, captain: Option<Entity>) 
         pay(world, &r.reward, p.entity, c);
     }
     goodwill_deed(world, p.entity, FactionId::PLAYER, Deed::Request);
+    // SIM-35: an answered request counts toward the champion's rank.
+    crate::progression::champion::credit(
+        world,
+        FactionId::PLAYER,
+        crate::progression::Feat::Request,
+    );
     world.write_message(event(SimEventKind::RequestDone, r, p).cause(Cause::Request { id: r.id }));
     let (who, name) = (
         faction_name(world, FactionId::PLAYER),
