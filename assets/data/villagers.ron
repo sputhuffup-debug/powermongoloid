@@ -91,8 +91,11 @@
     // `independent_target`, which is also every villager's starting loyalty.
     // A settlement whose mean is below `revolt_threshold` for a day may rise.
     loyalty: (
-        // Morning food security of a fed village is about 0.4 to 2 days.
-        food_days: 1.0,
+        // At the day tick, when the drift runs, a fed village holds about
+        // 0.45 to 2 days of food (storehouse and homes; farm stock isn't
+        // counted), so half a day is fully secure. The conquest scenario
+        // (fed garrison rises, starved conquest revolts) guards it.
+        food_days: 0.5,
         w_food: 0.55,
         w_goodwill: 0.3,
         w_time: 0.15,

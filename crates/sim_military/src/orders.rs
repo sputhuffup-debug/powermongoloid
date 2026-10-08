@@ -951,8 +951,8 @@ fn forage(world: &mut World, e: Entity, tick: u64) {
     }
     let days = baggage_days(world, e);
     let tile = world.get::<Position>(e).expect("position").0;
-    let army = world.resource::<Army>().clone();
-    let radius = army.data.upkeep.forage_radius;
+    let data = &world.resource::<Army>().data;
+    let (radius, target_days) = (data.upkeep.forage_radius, data.gather_target_days);
     let mut q = world.query_filtered::<(Entity, &SpawnId, &Settlement), With<SettlementEconomy>>();
     let nearest = q
         .iter(world)
@@ -966,7 +966,7 @@ fn forage(world: &mut World, e: Entity, tick: u64) {
         // Supply: a draw that found nothing spare doesn't use up the day,
         // so the army tries again (every 30 ticks) once the farms deliver.
         let due = c.last_forage == 0 || tick >= c.last_forage + tpd;
-        if due && days < army.data.gather_target_days && supply(world, e, s) > 0.0 {
+        if due && days < target_days && supply(world, e, s) > 0.0 {
             world.get_mut::<Captain>(e).expect("captain").last_forage = tick.max(1);
         }
         return;

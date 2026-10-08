@@ -62,8 +62,15 @@ M4 lets warlords own settlements ([M4_PLAN.md](../M4_PLAN.md), "Conquest and loy
 - **A conquest moves a landless faction's seat**, and so where `Return` leads: in a run, from the start spot to the player's first village.
 - **Risings rarely beat a sizeable garrison.** Only a handful of residents take up arms against soldiers standing in their village (1-6 of about 250 against 50 in the skirmish probe). A weak garrison loses. A strong one is beaten only by hunger or by leaving.
 - **`Threat.provoked_by` is a single slot.** A raid during a rising overwrites it (last writer wins), and the rising is then put down at the next check.
-- **Loyalty tuning is still open.** At the day tick, a fed skirmish village holds about 0.45 days of food, so a fed conquest drifts from its 0.5 seed down to about 0.42 rather than up. The conquest scenario is expected to retune `loyalty.food_days` or the weights.
+- **Loyalty is tuned on the day tick's food security.** `FoodSecurity.days` counts the storehouse and homes but not farm stock, so at the day tick, when the drift runs, a fed village holds only about 0.45-1 day. With `loyalty.food_days` at 1.0, a fed conquest scored about 0.5 on food and drifted from its 0.5 seed down to about 0.42. At **0.5** a fed village scores (nearly) full food, so a fed conquest grows loyal, while a starved one still aims at about 0.16, below `revolt_threshold`. `garrison.keep_days` (1.0) stays at least `food_days`, so supply never costs a village its food term; sim_military's `shipped_data_loads` checks it.
+- **The conquest scenario** (`tests/tests/conquest.rs`, run island of seed 42) plays the M4_PLAN criterion. The champion's band of ten takes the nearest hamlet (56 people) at tick 1603. From that shared prefix:
+  - **Passive garrison, fed:** mean loyalty 0.50, 0.58, 0.64, 0.68 at the next three day ticks.
+  - **Plundered:** the band leaves and a raiding band plunders the hamlet and moves on. The raid costs the hamlet its reserve and half a day's work, and it can't feed itself back: food falls to 0.05 days, and loyalty to 0.56, 0.47, 0.38.
+  - **Starved, no garrison:** the hamlet revolts at tick 7200, 2.33 days after the conquest.
+- **Harsh treatment by the owner reaches loyalty only through goodwill.** An owner's army never plunders its own village, so until goodwill moves (M4 step 3: seizing, plundering, provoking and killing lower the actor's goodwill), the M4_PLAN's "aggressive garrison that plunders" is played by a raiding band, whose harm reaches loyalty through food. Food outweighs treatment (`w_food` 0.55, `w_goodwill` 0.3): a fed village under an owner it hates still aims at about 0.55. Step 3 should revisit the weights if harsh owners must lose fed villages.
+- **A small village rarely has food to spare:** a hamlet's storehouse holds well under a day, so its garrison lives on its own baggage (the scenario picks the start boon with food).
 - **Tests:**
   - sim_agents unit tests for drift, aggregation and `set_owner`;
   - sim_military unit tests for `transfer` (events, seat, win, refusals) and `revolts` (freed, risen, left alone, put down);
-  - the strengthened `orders` attack test.
+  - the strengthened `orders` attack test;
+  - the `conquest` scenario above, and `run_state_hash_covers_every_sim_component`, whose run now includes a conquest and a garrison.

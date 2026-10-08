@@ -64,7 +64,7 @@ Example: `Hide` (SIM-13).
    - Pop the order when it's done.
    - Anything that moves goods between stockpiles belongs here: it is the serial logistics step.
 4. **Make it reachable from the UI** in `crates/game_ui/src/army.rs` (menu entry or hotkey). The UI only writes `SimCommand`s.
-5. **Add it to the random orders** in `sample_orders` in `crates/sim_headless/src/lib.rs`, so the determinism test exercises it. Add a scenario test in `tests/tests/orders.rs`.
+5. **Add it to the random orders** in `sample_orders` in `crates/sim_headless/src/lib.rs`, so the determinism test exercises it. Add a scenario test in `tests/tests/orders.rs`, or in a file of its own for an order that plays out over days (Garrison's is `tests/tests/conquest.rs`).
 
 ## Add a data field
 
@@ -85,7 +85,7 @@ UI code reads sim state and writes `SimCommand`s only. Copy the captain panel in
 
 Copy `tests/tests/posture.rs`. Shared helpers (commands, positions, village lists) are in `tests/tests/common/mod.rs`.
 1. **Build a world:** `headless_app(HeadlessConfig::new(SEED))`, or `Scenario::Skirmish` for armies, or `common::run_app(SEED)` for a run on the run island (`HeadlessConfig::run(SEED, RunConfig::default())`; its start boon waits for a pick: `common::choose(&mut app, offer, 0)` with `offer` from `common::start_offer(&app)`). Set up extra state before the first tick (`spawn_army`, `cut_off_farmers`). `tests/tests/run_start.rs` is a run example.
-2. **Send input** as commands: `common::order(...)`, never by editing components mid-run.
+2. **Send input** as commands: `common::order(...)`, never by editing components mid-run. Another faction's band takes orders the same way, with its faction as the issuer (`common::order(&mut app, 2, raiders, ...)`). A scenario that branches from a shared prefix, as the conquest scenario (`tests/tests/conquest.rs`) does until saves arrive, may make each branch's setup edits (spawning a band, spoiling stores) right after the prefix, between ticks, as it would after loading a save.
 3. **Step** with `app.step(n)`, and read results through queries or `sim_headless::stats`.
 4. **Assert** the requirement, and print the numbers so a failure explains itself.
 5. **Note what the test guards** in [TESTING.md](TESTING.md).

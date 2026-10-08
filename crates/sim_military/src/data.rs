@@ -346,6 +346,13 @@ mod tests {
             a.data.garrison.revolt_hours >= 24.0,
             "a rising lasts until the next daily check"
         );
+        // GP-05, SIM-24: supply leaves at least a fully secure store, so
+        // feeding a garrison never costs the village loyalty.
+        let villagers = sim_agents::Villagers::default_data(&Calendar::default_data());
+        assert!(
+            a.data.garrison.keep_days >= villagers.data.loyalty.food_days,
+            "garrison.keep_days below villagers.ron loyalty.food_days"
+        );
     }
 
     #[test]

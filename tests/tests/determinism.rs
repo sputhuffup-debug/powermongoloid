@@ -1,15 +1,17 @@
 //! NFR-08: same seed + same command stream -> bit-identical state hash.
 //! See ADR 0003 (state hash) and ADR 0004 (harness and replays).
 
+use bevy_ecs::prelude::*;
 use sim_core::{
-    CommandKind, CommandLog, CommandScript, Difficulty, FactionId, LoggedCommand, Replay,
-    RunConfig, RunState, SimCommand, SimStepper, SimTick, unhashed_state,
+    CommandKind, CommandLog, CommandScript, Difficulty, FactionId, LoggedCommand, OrderSpec,
+    Replay, RunConfig, RunState, SimCommand, SimStepper, SimTick, SpawnId, unhashed_state,
 };
 use sim_headless::{
     HeadlessConfig, RunResult, Scenario, Threading, headless_app, record_replay, run,
     sample_commands, sample_orders, start_boon_pick, verify_replay,
 };
-use sim_military::RunProgress;
+use sim_military::{ArmySpec, ArmyStats, Captain, RunProgress, spawn_army};
+use sim_world::{Settlement, SettlementSize, SizeTier};
 
 /// SEED.md "Testing requirements": 10,000 ticks with a command log.
 const TICKS: u64 = 10_000;
@@ -157,13 +159,43 @@ fn state_hash_covers_every_sim_component() {
 /// The same coverage on a run (M4, GP-21, GP-27): the run island, the
 /// start boon picked at tick 0 and random orders, so the run's components
 /// and resources exist. Later M4 steps extend this run with their state.
+/// Step 2 (GP-05, GP-06): a second warband, spawned before the first tick
+/// beside the hamlet nearest the start, takes it with an Attack and then
+/// garrisons it, so owned land, its loyalty and a garrison exist too.
 #[test]
 fn run_state_hash_covers_every_sim_component() {
     let mut app = headless_app(HeadlessConfig::run(42, RunConfig::default()));
     let mut commands: Vec<LoggedCommand> = start_boon_pick(&app, 0).into_iter().collect();
     commands.extend(sample_orders(&mut app, 42, 600, 30));
     app.insert_resource(CommandScript::from_log(&commands));
-    app.step(1_500);
+    let (hamlet, hamlet_id, warband) = spawn_beside_nearest_hamlet(&mut app);
+    let warband_id = app.world().get::<SpawnId>(warband).unwrap().0;
+    let issue = |app: &mut sim_headless::App, order: OrderSpec| {
+        let kind = CommandKind::IssueOrder {
+            captain: warband_id,
+            order,
+            queue: false,
+        };
+        app.world_mut()
+            .write_message(SimCommand::player(FactionId::PLAYER, kind));
+    };
+    issue(
+        &mut app,
+        OrderSpec::Attack {
+            settlement: hamlet_id,
+        },
+    );
+    let mut garrisoned = false;
+    for _ in 0..15 {
+        app.step(100);
+        if !garrisoned && sim_military::owner_of(app.world(), hamlet) == FactionId::PLAYER {
+            let garrison = OrderSpec::Garrison {
+                settlement: hamlet_id,
+            };
+            issue(&mut app, garrison);
+            garrisoned = true;
+        }
+    }
     assert_eq!(
         app.world().resource::<SimTick>().0,
         1_500,
@@ -175,6 +207,31 @@ fn run_state_hash_covers_every_sim_component() {
         1,
         "the start boon was picked"
     );
+    let stats = app.world().resource::<ArmyStats>().get(FactionId::PLAYER);
+    let taken = app
+        .world()
+        .resource::<sim_core::Chronicle>()
+        .entries()
+        .iter()
+        .find(|e| e.event.kind == sim_core::SimEventKind::Conquest && e.event.subject == hamlet_id)
+        .map(|e| e.tick);
+    println!(
+        "hamlet #{hamlet_id} taken at {taken:?}; conquests {}",
+        stats.conquests
+    );
+    assert!(stats.conquests >= 1, "no conquest: {stats:?}");
+    assert!(garrisoned, "hamlet #{hamlet_id} not taken");
+    let front = app
+        .world()
+        .get::<Captain>(warband)
+        .and_then(|c| c.orders.front().copied());
+    assert_eq!(
+        front.map(|o| o.spec),
+        Some(OrderSpec::Garrison {
+            settlement: hamlet_id
+        }),
+        "the warband garrisons its hamlet"
+    );
     let missing = unhashed_state(app.world_mut());
     assert!(
         missing.is_empty(),
@@ -182,6 +239,29 @@ fn run_state_hash_covers_every_sim_component() {
          register_hashed_resource, or exempt_from_hash with a reason:\n  {}",
         missing.join("\n  ")
     );
+}
+
+/// The hamlet nearest the run's start (never the rival's seat), and a
+/// 30-man armed player warband spawned before the first tick 20 tiles from
+/// its centre, toward the start: (hamlet, its SpawnId, the captain).
+fn spawn_beside_nearest_hamlet(app: &mut sim_headless::App) -> (Entity, u64, Entity) {
+    let world = app.world_mut();
+    let run = world.resource::<RunProgress>();
+    let (start, seat) = (run.start, run.rival_seat);
+    let mut q = world.query::<(Entity, &SpawnId, &Settlement, &SettlementSize)>();
+    let (_, id, hamlet, center) = q
+        .iter(world)
+        .filter(|(_, id, _, size)| size.tier == SizeTier::Hamlet && Some(id.0) != seat)
+        .map(|(e, id, s, _)| ((s.center - start).as_vec2().length(), id.0, e, s.center))
+        .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
+        .expect("a hamlet on the run island");
+    let toward = (start - center).as_vec2().normalize_or_zero();
+    let at = center + (toward * 20.0).round().as_ivec2();
+    let spec = ArmySpec {
+        armed: true,
+        ..ArmySpec::new(FactionId::PLAYER, at, 30)
+    };
+    (hamlet, id, spawn_army(world, &spec))
 }
 
 /// NFR-08 for runs (GP-21): a run's replay carries its `RunConfig` in the

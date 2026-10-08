@@ -92,7 +92,7 @@ SIM-20 and SIM-21 ([ADR 0007](../adr/0007-economy-and-transfer-resolver.md)). Gu
 | `initial_home_food_per_resident` | Starting food in each house, per resident |
 
 ## villagers.ron (`sim_agents::Villagers`)
-SIM-10..13 ([ADR 0006](../adr/0006-utility-ai-and-decision-traces.md)), and loyalty (GP-06, SIM-24). Guarded by `village_day`, `famine` and `posture`; `loyalty` by the sim_agents unit tests in `crates/sim_agents/src/loyalty.rs`. Every utility score is `weight x` the product of its considerations; a `Logistic(mid, steepness)` curve maps an input in 0..1 to an S-curve centred on `mid`.
+SIM-10..13 ([ADR 0006](../adr/0006-utility-ai-and-decision-traces.md)), and loyalty (GP-06, SIM-24). Guarded by `village_day`, `famine` and `posture`; `loyalty` by the sim_agents unit tests in `crates/sim_agents/src/loyalty.rs` and the `conquest` scenario (`tests/tests/conquest.rs`: a fed garrisoned conquest grows loyal, a plundered one loses faith, a starved one revolts within 2-3 days). Every utility score is `weight x` the product of its considerations; a `Logistic(mid, steepness)` curve maps an input in 0..1 to an S-curve centred on `mid`.
 
 | Field | Meaning |
 | --- | --- |
@@ -126,7 +126,7 @@ SIM-10..13 ([ADR 0006](../adr/0006-utility-ai-and-decision-traces.md)), and loya
 | `idle.min_ticks`, `idle.max_ticks`, `idle.wander_radius` | How long an idle stroll lasts and how far it goes |
 | `combat.health`, `combat.attack`, `combat.defense`, `combat.morale` | A civilian's fighting stats (for militia) |
 | `loyalty` | Loyalty to a settlement's owner (GP-06, SIM-24), 0..1 per villager. Once a day each villager who isn't enlisted closes `drift_per_day` of the gap to a target. Under an owner the target is the weighted mean `(w_food x food + w_goodwill x treatment + w_time x time) / (w_food + w_goodwill + w_time)`; an independent settlement's target is `independent_target`. The sim_agents unit test `the_target_weighs_food_goodwill_and_time` checks that a starved conquest aims below `revolt_threshold` and a fed one above its neutral seed of 0.5 |
-| `loyalty.food_days` | Days of food (storehouse and homes, `FoodSecurity.days`) that count as fully secure: food = days / `food_days`, capped at 1. A fed village holds about 0.4-2 days at the start of a day, when the drift runs |
+| `loyalty.food_days` | Days of food (storehouse and homes, `FoodSecurity.days`) that count as fully secure: food = days / `food_days`, capped at 1. Farm stock isn't counted, so at the day tick, when the drift runs, a fed village holds only about 0.45-2 days (the conquest scenario's garrisoned hamlet 0.7-1). At 0.5 a fed village scores (nearly) full food and its conquest grows loyal from the neutral seed; at 1.0 the same village scored about 0.5 and drifted down (M4 step 2 tuning). A starved village scores 0 |
 | `loyalty.w_food`, `loyalty.w_goodwill`, `loyalty.w_time` | Relative weights (>= 0, not all 0) of food security, treatment (goodwill toward the owner as `(g + 1) / 2`, so 0.5 at neutral goodwill) and time under the owner in the target |
 | `loyalty.settle_days` | Days under one owner until the time term is full: time = days owned / `settle_days`, capped at 1 |
 | `loyalty.drift_per_day` | Fraction (0..1) of the gap to the target closed each day, times the owner's `LoyaltyDrift` modifier (`FactionModifiers`) |
@@ -135,7 +135,7 @@ SIM-10..13 ([ADR 0006](../adr/0006-utility-ai-and-decision-traces.md)), and loya
 | `names.given`, `names.family` | Original names for villagers |
 
 ## army.ron (`sim_military::Army`)
-GP-01..04 and SIM-30..32 ([ADR 0010](../adr/0010-armies-orders-and-combat.md)), and conquest, garrisons and revolts (GP-05, GP-06; [ADR 0014](../adr/0014-ownership-conquest-and-loyalty.md)). Guarded by `army_march`, `posture`, `starving_army` and `orders`; `conquest`, `garrison` and `recruit.loyalty_bonus` by `rejects_bad_conquest_and_garrison_data` (in `crates/sim_military/src/data.rs`), the sim_military conquest unit tests and `orders`' `attacking_a_village_raises_its_militia`. `Army::from_ron` refuses negative or non-finite values. An hour is a game hour, a 24th of a day (100 ticks).
+GP-01..04 and SIM-30..32 ([ADR 0010](../adr/0010-armies-orders-and-combat.md)), and conquest, garrisons and revolts (GP-05, GP-06; [ADR 0014](../adr/0014-ownership-conquest-and-loyalty.md)). Guarded by `army_march`, `posture`, `starving_army` and `orders`; `conquest`, `garrison` and `recruit.loyalty_bonus` by `rejects_bad_conquest_and_garrison_data` (in `crates/sim_military/src/data.rs`), the sim_military conquest unit tests, `orders`' `attacking_a_village_raises_its_militia` and the `conquest` scenario (`tests/tests/conquest.rs`). `Army::from_ron` refuses negative or non-finite values. An hour is a game hour, a 24th of a day (100 ticks).
 
 | Field | Meaning |
 | --- | --- |
@@ -181,7 +181,7 @@ GP-01..04 and SIM-30..32 ([ADR 0010](../adr/0010-armies-orders-and-combat.md)), 
 | `conquest.timeout_hours` | Game hours after the defenders broke when a hold not yet won fails and the order ends |
 | `garrison` | Holding settlements (GP-05, GP-06). A `Garrison` order (only on a settlement the issuer owns) keeps the army at the centre until it is given other orders or the settlement is lost. A settlement's own owner's armies never frighten it (unless it has risen against them), never pay, plunder or provoke it, and draw its spare food (`FactionStats.supplied`) |
 | `garrison.radius` | Tiles from the centre: the owner's soldiers (not routed) this close are the settlement's garrison, and militia risen against the owner this close are its rebels |
-| `garrison.keep_days` | An owned settlement feeds its owner's armies (at most once a day each, up to `gather_target_days` of baggage) from the food its storehouse holds beyond this many days for its people. At villagers.ron `loyalty.food_days` (1.0) it never costs the village its food security, and so its loyalty |
+| `garrison.keep_days` | An owned settlement feeds its owner's armies (at most once a day each, up to `gather_target_days` of baggage) from the food its storehouse holds beyond this many days for its people. Keep it at least villagers.ron `loyalty.food_days` (sim_military's `shipped_data_loads` checks it), so supply never costs the village its food security, and so its loyalty. A small village rarely has that much in its storehouse: a garrison there lives on its own baggage |
 | `garrison.revolt_hours` | Game hours a rising's provocation lasts; keep it at least 24 so the rising lasts until the next daily check, which settles it |
 | `garrison.crushed_loyalty` | Loyalty (0..1) every resident loses when a rising is put down |
 

@@ -24,7 +24,7 @@
 | **Follower** | A soldier attached to a captain, with a formation slot |
 | **Food security** | Days of food a settlement holds at its population's eating rate |
 | **Game hour** | A 24th of a day: 100 ticks (`Calendar::ticks_per_hour`). Data fields ending in `_hours` use it; the UI's clock face does not |
-| **Garrison** | The owner's soldiers within `garrison.radius` of a settlement's centre. The `Garrison { settlement }` order keeps an army there; it is valid only on a settlement the issuer owns. A garrison deters revolts, and is fed by owned-village supply |
+| **Garrison** | The owner's soldiers within `garrison.radius` of a settlement's centre. The `Garrison { settlement }` order keeps an army there; it is valid only on a settlement the issuer owns. A garrison deters revolts, and is fed by owned-village supply when the village has food to spare; a hamlet's garrison lives on its own baggage |
 | **Goodwill** (`Goodwill`) | A settlement's standing with each faction, -1..1, sorted by faction (GP-22). Helping raises it and plundering lowers it (M4 step 3); goodwill toward the owner is the treatment term of loyalty, and seeds loyalty when the settlement changes hands |
 | **Logistics step** | `orders::run_orders`: the serial step where captains deal with settlements (recruit, food, arms, trade) |
 | **Loyalty** (`Loyalty`, `SettlementLoyalty`) | A villager's loyalty to its settlement's owner, 0..1 (GP-06, SIM-24). Once a day it drifts toward a target set by food security, goodwill toward the owner and time under the owner (`loyalty` in villagers.ron); independent settlements aim at a fixed level. `SettlementLoyalty` holds each settlement's mean and minimum, and `below_since`, when its mean fell below the revolt threshold (unrest) |

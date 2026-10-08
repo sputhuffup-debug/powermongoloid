@@ -1,6 +1,6 @@
 //! Helpers shared by the scenario tests: M3 armies (commands, positions,
 //! village lists) and M4 runs (`run_app`, offers, the champion, the
-//! chronicle).
+//! chronicle, who owns a settlement).
 #![allow(dead_code)] // Each test crate uses a different subset.
 
 use bevy_ecs::prelude::*;
@@ -115,6 +115,12 @@ pub fn champion(app: &mut App) -> Entity {
 /// `SimEvent` messages, which live two ticks.
 pub fn chronicle(app: &App) -> Vec<ChronicleEntry> {
     app.world().resource::<Chronicle>().entries().to_vec()
+}
+
+/// The faction holding settlement `s` (GP-05): independent until it is
+/// conquered or invites someone in.
+pub fn owner_of(app: &App, s: Entity) -> FactionId {
+    sim_military::owner_of(app.world(), s)
 }
 
 /// Commands refused for `faction` so far.
