@@ -338,7 +338,10 @@ mod tests {
         assert!(a.keep_days(Posture::Aggressive) < a.keep_days(Posture::Passive));
         assert!(a.trade_value(GoodId(7)) > 0.0, "weapons trade for food");
         let c = &a.data.conquest;
-        assert!(c.hold_radius <= c.militia_radius, "the hold sits inside the contest radius");
+        assert!(
+            c.hold_radius <= c.militia_radius,
+            "the hold sits inside the contest radius"
+        );
         assert!(
             a.data.garrison.revolt_hours >= 24.0,
             "a rising lasts until the next daily check"

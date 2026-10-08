@@ -56,9 +56,9 @@ Example: `Hide` (SIM-13).
 
 ## Add a captain order
 
-1. **Add the variant** to `OrderSpec` in `crates/sim_core/src/command.rs`. Name entities by SpawnId (`u64`), never `Entity`. Bump `REPLAY_FORMAT` in `crates/sim_core/src/replay.rs` if a command's meaning changes.
-2. **Hash and describe it:** `hash_spec` and `describe` in `crates/sim_military/src/components.rs`.
-3. **Validate it** in `validate_spec`, and **execute it** in `step_order`, both in `crates/sim_military/src/orders.rs`:
+1. **Add the variant** at the end of `OrderSpec` in `crates/sim_core/src/command.rs`. Append only: saves encode the variant's position. Name entities by SpawnId (`u64`), never `Entity`. Bump `REPLAY_FORMAT` in `crates/sim_core/src/replay.rs` if a command's meaning changes.
+2. **Hash and describe it:** `hash_spec` (the next free tag byte) and `describe` in `crates/sim_military/src/components.rs`.
+3. **Validate it** in `validate_spec`, which knows the issuer, and **execute it** in `step_order`, both in `crates/sim_military/src/orders.rs`. `Garrison` is a small example. It is refused unless the issuer owns the settlement (`conquest::owner_of`), and it keeps the army at the centre until the settlement is lost. For the execution:
    - Set the captain's goal.
    - Do the order's work when the army arrives.
    - Pop the order when it's done.

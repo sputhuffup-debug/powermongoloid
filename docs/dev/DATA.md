@@ -135,7 +135,7 @@ SIM-10..13 ([ADR 0006](../adr/0006-utility-ai-and-decision-traces.md)), and loya
 | `names.given`, `names.family` | Original names for villagers |
 
 ## army.ron (`sim_military::Army`)
-GP-01..04 and SIM-30..32 ([ADR 0010](../adr/0010-armies-orders-and-combat.md)). Guarded by `army_march`, `posture`, `starving_army` and `orders`.
+GP-01..04 and SIM-30..32 ([ADR 0010](../adr/0010-armies-orders-and-combat.md)), and conquest, garrisons and revolts (GP-05, GP-06; [ADR 0014](../adr/0014-ownership-conquest-and-loyalty.md)). Guarded by `army_march`, `posture`, `starving_army` and `orders`; `conquest`, `garrison` and `recruit.loyalty_bonus` by `rejects_bad_conquest_and_garrison_data` (in `crates/sim_military/src/data.rs`), the sim_military conquest unit tests and `orders`' `attacking_a_village_raises_its_militia`. `Army::from_ron` refuses negative or non-finite values. An hour is a game hour, a 24th of a day (100 ticks).
 
 | Field | Meaning |
 | --- | --- |
@@ -166,11 +166,26 @@ GP-01..04 and SIM-30..32 ([ADR 0010](../adr/0010-armies-orders-and-combat.md)). 
 | `recruit.radius` | The army must be this close to the village centre to deal with it |
 | `recruit.willing` (`passive`, `neutral`, `aggressive`) | Chance per adult asked to join, by posture |
 | `recruit.hungry_village_bonus`, `recruit.fed_army_bonus` | Extra chance when the village is short of food, or the army well fed |
+| `recruit.loyalty_bonus` | In a village the recruiter's faction owns, extra chance of this times the village's mean loyalty (`SettlementLoyalty.mean`, GP-06). A village owned by another warlord (not independent, not the recruiter) sends nobody, and the refusal is logged |
 | `threat.radius`, `threat.passive`, `threat.neutral`, `threat.aggressive` | How frightening an army is to a settlement within `radius`, by posture. Keep `radius` below worldgen.ron run `monuments.min_settlement_distance` (52), or a monument's guard camp keeps a village frightened; `run_preset_meets_its_criteria` in tests/tests/worldgen.rs checks this |
 | `gather_keep_days` (`passive`, `neutral`, `aggressive`) | Days of food a village keeps when an army gathers food |
 | `gather_target_days` | Gathering fills the baggage up to this many days of food |
 | `trade_keep_days` | Villages sell food beyond this many days |
 | `trade_value` | `(good, food value)` per unit when an army barters |
+| `conquest` | How an `Attack` takes a settlement (GP-05). The army marches until within half `threat.radius` of the centre, then provokes the village and fights its militia. Once the defenders break it calls off the provocation and holds the centre; holding it uncontested hands the settlement over (`conquest::transfer`). Attacking a settlement you own is refused |
+| `conquest.break_ticks` | Ticks of fighting before the defenders can count as broken (no militia standing within `militia_radius`) |
+| `conquest.give_up_days` | Days of fighting after which an assault whose militia still stands is given up |
+| `conquest.militia_radius` | Tiles from the centre: militia defending against the attacker (not routed) this close keep the defenders unbroken, and they or soldiers at war with the attacker contest a hold. Keep it at least `hold_radius` |
+| `conquest.hold_radius` | The captain must be this close to the centre (tiles) to hold it |
+| `conquest.hold_hours` | Game hours of uncontested holding that take the settlement; any contest restarts the count |
+| `conquest.timeout_hours` | Game hours after the defenders broke when a hold not yet won fails and the order ends |
+| `garrison` | Holding settlements (GP-05, GP-06). A `Garrison` order (only on a settlement the issuer owns) keeps the army at the centre until it is given other orders or the settlement is lost. A settlement's own owner's armies never frighten it (unless it has risen against them), never pay, plunder or provoke it, and draw its spare food (`FactionStats.supplied`) |
+| `garrison.radius` | Tiles from the centre: the owner's soldiers (not routed) this close are the settlement's garrison, and militia risen against the owner this close are its rebels |
+| `garrison.keep_days` | An owned settlement feeds its owner's armies (at most once a day each, up to `gather_target_days` of baggage) from the food its storehouse holds beyond this many days for its people. At villagers.ron `loyalty.food_days` (1.0) it never costs the village its food security, and so its loyalty |
+| `garrison.revolt_hours` | Game hours a rising's provocation lasts; keep it at least 24 so the rising lasts until the next daily check, which settles it |
+| `garrison.crushed_loyalty` | Loyalty (0..1) every resident loses when a rising is put down |
+
+Revolts (GP-06) run once a day, settlements in SpawnId order. An owned settlement whose mean loyalty has been below villagers.ron `loyalty.revolt_threshold` for a day goes independent at once if it has no garrison. If the garrison is smaller than the residents able to fight (adult, alive, not starving, not already fighting, with morale at least villagers.ron `ai.fight.break_morale`), they rise: the settlement is provoked against its owner for `revolt_hours`. A day later the rising wins (independence) if no garrison is left or the rebels still standing outnumber it; otherwise it is put down.
 
 ## progression.ron (`sim_military::Progression`)
 Runs: GP-21, GP-27 and SIM-34 (M4, see [M4_PLAN.md](../M4_PLAN.md)). Read only in a run (`RunState.config` is `Some`); the developed world and the M2/M3 tests never draw from it. Guarded by the `sim_military` progression unit tests (`shipped_data_is_valid`, `a_run_start_is_seeded_and_fits`, `a_run_is_set_up_its_boon_picked_once_and_abandoned`), by `run_start` ([tests/tests/run_start.rs](../../tests/tests/run_start.rs); `twenty_seeds_draw_valid_varied_starts` checks 2-3 nearby monuments and start variety over 20 seeds, so re-run it after changing `start.*`, `bands`, `modifiers` or their weights), and by the run tests in `determinism` (`run_state_hash_covers_every_sim_component`, `a_run_replays`). Cards are numbered by their position: each `id` must equal its index, and lists are append only, because offers, `RunProgress` and saves store the index.

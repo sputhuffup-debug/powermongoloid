@@ -13,6 +13,7 @@
 | **Champion** (`Champion`) | The player's own figure in a run: the captain of the starting band, with `Traits`. A marker on the person, never in `Captain`, so it stays with the person. Its death ends the run unless a successor is left (SIM-35, M4 step 6) |
 | **Chronicle** (`Chronicle`) | The run's append-only history of notable events with their causes (UI-09). Hashed and saved; tests assert on it, never on messages |
 | **Command** (`SimCommand`) | The only way input reaches the sim: player or AI, logged for replays if the player issued it |
+| **Conquest** | Taking a settlement by force (GP-05). An `Attack` provokes the village and fights its militia. Once the defenders break, the army holds the centre uncontested for `conquest.hold_hours`, and `conquest::transfer` hands the settlement and its residents over (`SimEventKind::Conquest`, `FactionStats.conquests`). In a run, taking the rival's seat wins |
 | **DecisionTrace** | The scored options behind a person's last decision, shown in the inspector. Not hashed |
 | **Enlisted** | Marks a soldier: villager AI, movement and needs skip it, and `sim_military` drives it |
 | **Event feed** (`EventFeed`) | The last 256 events, chronicled or not, numbered by `seq` for the UI's feed (UI-05). Not hashed |
@@ -23,6 +24,7 @@
 | **Follower** | A soldier attached to a captain, with a formation slot |
 | **Food security** | Days of food a settlement holds at its population's eating rate |
 | **Game hour** | A 24th of a day: 100 ticks (`Calendar::ticks_per_hour`). Data fields ending in `_hours` use it; the UI's clock face does not |
+| **Garrison** | The owner's soldiers within `garrison.radius` of a settlement's centre. The `Garrison { settlement }` order keeps an army there; it is valid only on a settlement the issuer owns. A garrison deters revolts, and is fed by owned-village supply |
 | **Goodwill** (`Goodwill`) | A settlement's standing with each faction, -1..1, sorted by faction (GP-22). Helping raises it and plundering lowers it (M4 step 3); goodwill toward the owner is the treatment term of loyalty, and seeds loyalty when the settlement changes hands |
 | **Logistics step** | `orders::run_orders`: the serial step where captains deal with settlements (recruit, food, arms, trade) |
 | **Loyalty** (`Loyalty`, `SettlementLoyalty`) | A villager's loyalty to its settlement's owner, 0..1 (GP-06, SIM-24). Once a day it drifts toward a target set by food security, goodwill toward the owner and time under the owner (`loyalty` in villagers.ron); independent settlements aim at a fixed level. `SettlementLoyalty` holds each settlement's mean and minimum, and `below_since`, when its mean fell below the revolt threshold (unrest) |
@@ -34,9 +36,11 @@
 | **Owner** (`Owner`) | The faction holding a settlement and since when (GP-05): `FactionId::INDEPENDENT` until conquest or invitation. Changed only by `sim_agents::set_owner`, which also sets the residents' allegiance and loyalty and calls off their militia |
 | **Posture** | Passive, neutral or aggressive. How an army treats villages: buy, ask, or take and frighten |
 | **Preset** (`WorldPreset`) | One of the two complete settings blocks in `worldgen.ron`: `developed` (the 2048-tile M1-M3 world; `WorldGenSettings::default_data()`) or `run` (the 1024-tile run island) |
+| **Progress driver** | `progression::progress`: the one exclusive, hourly system in `MilitarySet::Progress` that runs settlement- and run-level steps in a fixed order (guide D7). In step 2 it runs only `conquest::revolts` |
 | **Rally field** | A flow field toward the captain, over the army's extent. Followers far from their place walk it |
 | **Region** (`RegionId`) | A part of the island: settlements are grouped around farthest-apart seeds and every land tile takes the region of the nearest settlement over land. Region 0 is always the central one; count them with `WorldMap::region_count()`. A region edge borders water or another region |
 | **Replay** | A seed, scenario and the player's commands, plus expected hashes (RON). Re-running it must reproduce every hash |
+| **Revolt** (rising) | An owned settlement throwing off its owner (GP-06). After a day with mean loyalty below `loyalty.revolt_threshold` (unrest), it goes independent at once if it has no garrison. If the garrison is smaller than the residents able to fight, they rise: militia provoked against the owner. A day later the rising wins if it outnumbers what is left of the garrison, or is put down, costing every resident `garrison.crushed_loyalty` (`conquest::revolts`) |
 | **Rival** (rival warlord) | The run's opposing warlord (`FactionId::RIVAL`). Its **seat** is drawn at the start of a run, and taking it wins the run. From M4 step 7 it holds its region's settlements, grows on a clock and raids from mid-run (GP-28), scripted: its commands are `SimCommand::ai` and aren't recorded |
 | **Rout** | A soldier whose morale broke, fleeing until it rallies |
 | **Run modifier** | One or two cards drawn at the start of a run that change its rules for everyone: a lean year, rats in the stores, a stronger rival... (`modifiers` in `progression.ron`, GP-27) |
@@ -58,6 +62,7 @@
 | **State hash** | An FNV hash of every registered component and resource. Equal hashes mean equal state |
 | **Stream** (RNG stream) | `SimSeed::stream(key, tick)`: an independent random generator for a system, agent and tick |
 | **Strike** | A person's next blow: target, swing and cooldown. Resolved serially in SpawnId order |
+| **Supply** (owned-village supply) | An army drawing food from a settlement its faction owns: up to its baggage target, at most once a day, from the storehouse's food beyond `garrison.keep_days`, never paid for and never provoking (`FactionStats.supplied`). Replaces gathering by posture there, so an aggressive army never plunders its own village |
 | **Threat** | How frightening nearby armies are to a settlement (0..1), and which faction provoked it. Drives villagers' safety need |
 | **Tick** | One fixed simulation step; 10 per game-second at 1x, 2,400 per day |
 | **Trait** (`Traits`) | A small, named quality of a person (Brave, Forager...) with stat effects; the champion starts with one (SIM-34) |

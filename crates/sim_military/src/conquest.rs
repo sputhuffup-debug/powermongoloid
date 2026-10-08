@@ -54,12 +54,7 @@ fn faction_name(world: &World, f: FactionId) -> String {
 /// residents' loyalty seeded from their goodwill toward `to` (or
 /// `loyalty.independent_target` when `to` is independent). See
 /// [`transfer_seeded`].
-pub fn transfer(
-    world: &mut World,
-    s: Entity,
-    to: FactionId,
-    cause: Cause,
-) -> Option<OwnerChange> {
+pub fn transfer(world: &mut World, s: Entity, to: FactionId, cause: Cause) -> Option<OwnerChange> {
     transfer_seeded(world, s, to, cause, None)
 }
 
@@ -191,8 +186,7 @@ fn would_be_militia(world: &mut World, s: Entity) -> u32 {
     let break_morale = villagers.data.ai.fight.break_morale;
     let adult = villagers.data.households.working_age.min;
     let days_per_year = world.resource::<Calendar>().days_per_year().max(1);
-    let mut q = world
-        .query_filtered::<(&Villager, &CombatStats, &Needs), Without<Enlisted>>();
+    let mut q = world.query_filtered::<(&Villager, &CombatStats, &Needs), Without<Enlisted>>();
     q.iter(world)
         .filter(|(v, cs, needs)| {
             v.settlement == s
@@ -289,7 +283,8 @@ fn crush(world: &mut World, s: Entity, owner: FactionId, penalty: f32) {
     if let Some(mut sl) = world.get_mut::<SettlementLoyalty>(s) {
         sl.revolt_since = None;
     }
-    let mut q = world.query_filtered::<(Entity, &SpawnId, &Villager), (With<Loyalty>, Without<Enlisted>)>();
+    let mut q =
+        world.query_filtered::<(Entity, &SpawnId, &Villager), (With<Loyalty>, Without<Enlisted>)>();
     let mut residents: Vec<(SpawnId, Entity)> = q
         .iter(world)
         .filter(|(_, _, v)| v.settlement == s)
@@ -383,7 +378,11 @@ mod tests {
         assert_eq!(owner_of(world, a), FactionId::PLAYER);
         assert_eq!(world.get::<Owner>(a).unwrap().since, tick);
         let seat = |world: &World| world.resource::<Factions>().seat(FactionId::PLAYER);
-        assert_eq!(seat(world), Some(ac), "a landless band is seated at its first village");
+        assert_eq!(
+            seat(world),
+            Some(ac),
+            "a landless band is seated at its first village"
+        );
         transfer(world, b, FactionId::PLAYER, cause).expect("populated");
         assert_eq!(seat(world), Some(ac), "the seat stays at the first");
         let conquests = |world: &World| {
@@ -405,7 +404,11 @@ mod tests {
         let world = app.world_mut();
         let change = transfer(world, b, FactionId::INDEPENDENT, Cause::Revolt).unwrap();
         assert_eq!(change.previous, FactionId::PLAYER);
-        let free = world.resource::<Villagers>().data.loyalty.independent_target;
+        let free = world
+            .resource::<Villagers>()
+            .data
+            .loyalty
+            .independent_target;
         assert!(
             residents(world, b)
                 .iter()
@@ -497,7 +500,10 @@ mod tests {
             Some(day)
         );
         assert_eq!(owner_of(world, c), FactionId::PLAYER);
-        assert_eq!(world.get::<SettlementLoyalty>(c).unwrap().revolt_since, None);
+        assert_eq!(
+            world.get::<SettlementLoyalty>(c).unwrap().revolt_since,
+            None
+        );
         assert_eq!(world.get::<Threat>(c).unwrap().provoked_by, None);
 
         // A day later no rebel stands in the (unchanged) grid: put down.
@@ -505,7 +511,10 @@ mod tests {
         world.resource_mut::<SimTick>().0 = 2 * day;
         revolts(world);
         assert_eq!(owner_of(world, b), FactionId::PLAYER);
-        assert_eq!(world.get::<SettlementLoyalty>(b).unwrap().revolt_since, None);
+        assert_eq!(
+            world.get::<SettlementLoyalty>(b).unwrap().revolt_since,
+            None
+        );
         assert_eq!(world.get::<Threat>(b).unwrap().provoked_by, None);
         let penalty = world.resource::<Army>().data.garrison.crushed_loyalty;
         let after = residents(world, b);
@@ -516,7 +525,10 @@ mod tests {
         let log = &world.resource::<MilitaryLog>().entries;
         let lines: Vec<&str> = log.iter().map(|(_, l)| l.as_str()).collect();
         assert!(lines.iter().any(|l| l.contains("is free")), "{lines:?}");
-        assert!(lines.iter().any(|l| l.contains("rises against")), "{lines:?}");
+        assert!(
+            lines.iter().any(|l| l.contains("rises against")),
+            "{lines:?}"
+        );
         assert!(lines.iter().any(|l| l.contains("put down")), "{lines:?}");
     }
 }

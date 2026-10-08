@@ -49,7 +49,7 @@ Times are on a 4-core machine.
 | `posture.rs` | `posture_orders_how_an_army_treats_a_village` | M3 / GP-03, SIM-13: food taken, harm and villager reactions order passive < neutral < aggressive | ~15 s |
 | `starving_army.rs` | `an_unfed_army_loses_morale_then_deserts_then_starves` | M3 / SIM-31: morale falls, desertion begins within `first_desertion_within_days`, starvation only afterwards; a fed army is fine | ~16 s |
 | `orders.rs` | `invalid_commands_are_refused` | Command validation (someone else's captain, unknown targets) | ~3 s |
-| | `posture_and_cancel_apply_to_own_captain`, `appointing_a_captain_splits_the_army`, `recruiting_turns_villagers_into_followers`, `equip_trade_and_scout`, `attacking_a_village_raises_its_militia`, `skirmish_scenario_is_reachable_from_config` | GP-01 and GP-02: each order does what it says | ~3 s each |
+| | `posture_and_cancel_apply_to_own_captain`, `appointing_a_captain_splits_the_army`, `recruiting_turns_villagers_into_followers`, `equip_trade_and_scout`, `attacking_a_village_raises_its_militia`, `skirmish_scenario_is_reachable_from_config` | GP-01 and GP-02: each order does what it says. The attack also checks GP-05: the militia breaks, the army holds the centre, and the village changes hands (`conquests` 1, a `Conquest` in the chronicle, every resident sworn to the warband) | ~3 s each |
 | `docs.rs` | `every_data_field_is_documented`, `howto_paths_exist`, `markdown_links_resolve`, `field_extraction_finds_nested_fields_and_skips_comments` | M3b: [DATA.md](DATA.md) covers every RON field; the handbook names only real files and its links resolve | <1 s |
 
 ## Unit tests (in the crates)
@@ -88,6 +88,17 @@ These run in seconds and sit next to the code they test.
   - `progression.ron` loads and its validation rejects bad cards (`shipped_data_is_valid`, `rejects_bad_data`)
   - start draws (GP-21, GP-27, `a_run_start_is_seeded_and_fits`): on the run island of seed 42 the same seed gives the same start, the seat is the largest settlement, the band starts in another region with 2-3 monuments nearby and a path to the seat, and three distinct start boons are offered; weighted card draws skip zero weights and respect groups; a start spot is labelled by a kind its tile has (`a_spot_is_labelled_by_a_kind_it_has`)
   - a run app (`a_run_is_set_up_its_boon_picked_once_and_abandoned`, ~1 s): setup spawns the drawn band (seed 42: a mixed band, each follower with its group's stats and gear, the champion with the captain's) under a champion with one trait and posts the start offer; the "Rats in the stores" modifier takes a tenth of each food, rounded down, from every storehouse and nothing from homes; the pick adds the boon's food once and a second is refused; only the player can abandon, and abandoning stops the clock
+  - army.ron's `conquest`, `garrison` and `recruit.loyalty_bonus` are refused when negative, zero where they must be positive, or non-finite (`rejects_bad_conquest_and_garrison_data`)
+  - conquest (GP-05, GP-28, a run app, <1 s each). `transfer_hands_over_reports_seats_and_wins_the_seat`:
+    - it hands the settlement and its residents over, seats the landless player at its first village only, and counts conquests, but not revolts;
+    - it reports `Conquest`/`Revolt` events with the previous owner and the cause;
+    - Garrison is refused on land the player doesn't hold, and Attack on land it does;
+    - taking the rival's seat wins the run.
+  - revolts (GP-06). `unrest_frees_the_unguarded_and_raises_the_weakly_held` calls `revolts` at day ticks:
+    - after a day of unrest, an unguarded conquest goes free;
+    - a garrison of 2 faces a rising (provoked against its owner until the next check);
+    - a garrison of more than the able residents is left alone;
+    - a rising nobody still fights is put down, and every resident loses `crushed_loyalty`.
   - `survey_twenty_seeds` (`#[ignore]`, run with `--include-ignored survey --nocapture`): prints each seed's start draws for tuning `progression.ron`; `SURVEY_SEEDS=42,7` picks seeds
 - **sim_headless:** scenario names round-trip, a run's config travels in the replay header (`scenario_names_round_trip`); a run config selects the run island and everything else the developed world (`a_run_config_selects_the_run_island`); `verify_replay` refuses a scenario it doesn't know (`an_unknown_replay_scenario_is_an_error`).
 - **game_render:**

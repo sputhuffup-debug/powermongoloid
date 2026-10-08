@@ -314,8 +314,13 @@ fn attacking_a_village_raises_its_militia() {
     let (sworn, all) = q
         .iter(world)
         .filter(|(v, _)| v.settlement == village)
-        .fold((0, 0), |(n, t), (_, a)| (n + (a.0 == FactionId(1)) as u32, t + 1));
-    assert!(all > 0 && sworn == all, "{sworn} of {all} follow the warband");
+        .fold((0, 0), |(n, t), (_, a)| {
+            (n + (a.0 == FactionId(1)) as u32, t + 1)
+        });
+    assert!(
+        all > 0 && sworn == all,
+        "{sworn} of {all} follow the warband"
+    );
     let conquest = chronicle(&app)
         .into_iter()
         .find(|e| e.event.kind == SimEventKind::Conquest)
