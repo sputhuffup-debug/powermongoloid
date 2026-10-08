@@ -211,7 +211,10 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<(), &'static str> {
 }
 
 /// GP-01: promotes a follower to captain. The new captain takes every
-/// second follower (by SpawnId) and half the baggage.
+/// second follower (by SpawnId) and half the baggage. Refused at army.ron
+/// `max_captains` (the champion counts), and in a run (GP-25) when the
+/// player's other captains already fill
+/// [`crate::progression::captain_slots`] ("no captain slot").
 fn appoint(world: &mut World, issuer: FactionId, follower: u64) -> Result<(), &'static str> {
     let mut q = world.query::<(Entity, &SpawnId, &Follower)>();
     let (f, old) = q
@@ -229,6 +232,13 @@ fn appoint(world: &mut World, issuer: FactionId, follower: u64) -> Result<(), &'
     let captains = q.iter(world).filter(|c| c.faction == issuer).count() as u32;
     if captains >= max {
         return Err("too many captains");
+    }
+    // GP-25: in a run, the player's captains also need slots from the land
+    // held; the champion's own army takes none.
+    if let Some(slots) = crate::progression::captain_slots(world, issuer)
+        && captains.saturating_sub(1) >= slots
+    {
+        return Err("no captain slot");
     }
     // Split the army.
     let mut q = world.query::<(Entity, &SpawnId, &Follower)>();

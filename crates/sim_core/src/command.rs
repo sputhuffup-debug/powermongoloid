@@ -143,7 +143,8 @@ pub enum CommandKind {
     CancelOrders {
         captain: u64,
     },
-    /// Promote one of a captain's followers to captain (GP-01).
+    /// Promote one of a captain's followers to captain (GP-01). In a run,
+    /// the player needs a free captain slot (GP-25).
     AppointCaptain {
         follower: u64,
     },

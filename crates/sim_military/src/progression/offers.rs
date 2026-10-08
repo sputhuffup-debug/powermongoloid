@@ -108,8 +108,14 @@ pub fn abandon(world: &mut World, issuer: FactionId) -> Result<(), &'static str>
 /// - `Goodwill`: posted to the goodwill ledger (`sim_agents::GoodwillLedger`,
 ///   as [`Deed::Boon`]) for the populated settlement nearest the champion;
 ///   it is applied, and spreads to its neighbours, later this tick (GP-22).
-/// - `Stat`: nothing now; `FactionModifiers` folds the picked boons in
-///   (M4 step 4).
+/// - `Stat`: nothing now; [`super::rebuild_modifiers`] folds the picked
+///   boons into `FactionModifiers` at the next game hour (a `VeteranRate`
+///   boon waits there for the veterans of M4 step 6).
+/// - `CaptainSlots`: nothing now; [`super::captain_slots`] counts the picked
+///   boons' slots, so they count from this pick on (GP-25).
+///
+/// A pick refreshes [`RunProgress::captain_slots`] at once, so the UI shows
+/// a slot boon without waiting for the hour.
 fn apply_boon(world: &mut World, faction: FactionId, card: u16) -> String {
     let Some(boon) = world.resource::<Progression>().boon(card).cloned() else {
         return format!("boon {card}");
@@ -138,6 +144,7 @@ fn apply_boon(world: &mut World, faction: FactionId, card: u16) -> String {
                 }
             }
             Effect::Stat(..)
+            | Effect::CaptainSlots(_)
             | Effect::Stores(_)
             | Effect::RaiderPace(_)
             | Effect::RivalStrength(_)
@@ -145,6 +152,7 @@ fn apply_boon(world: &mut World, faction: FactionId, card: u16) -> String {
         }
     }
     world.resource_mut::<RunProgress>().boons.push(card);
+    super::dominion::refresh_slots(world);
     boon.name
 }
 

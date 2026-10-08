@@ -10,12 +10,15 @@
 //! - [`offers`]: answering offers ([`choose`]) and abandoning the run
 //!   ([`abandon`]), both reached only through `SimCommand`s.
 //! - [`RunProgress`]: what the run has drawn and picked so far.
+//! - [`dominion`]: the hourly dominion tally, its boon offers (GP-24) and
+//!   captain slots from the population held (GP-25).
 //! - [`progress`]: the hourly serial driver of settlement-level steps, in
 //!   every preset (`MilitarySet::Progress`).
 //!
 //! Developed worlds and the M2/M3 scenarios never call [`setup_run`]: their
 //! `RunState.config` is `None`, and nothing here runs or draws for them.
 
+pub mod dominion;
 pub mod offers;
 pub mod start;
 
@@ -34,6 +37,7 @@ use crate::components::{Equipment, Factions, Follower};
 use crate::data::UnitStats;
 use crate::spawn::{ArmySpec, soldier_stats, spawn_army};
 
+pub use dominion::{DominionData, Holding, Holdings, RegionTally, captain_slots};
 pub use offers::{abandon, choose};
 pub use start::{RunWorld, SiteInfo, StartDraws, StartTerrain, draw_start};
 
@@ -135,6 +139,9 @@ pub enum Effect {
     RivalStrength(f32),
     /// A band of this many sellswords for hire near the start (later step).
     Sellswords(u32),
+    /// This many more captain slots for the picker (GP-25), from the pick
+    /// on (see [`captain_slots`]).
+    CaptainSlots(u8),
 }
 
 /// A boon card (GP-24, GP-27).
@@ -152,6 +159,12 @@ pub struct BoonData {
     pub weight: f32,
     /// What it does.
     pub effects: Vec<Effect>,
+    /// GP-24: what the player holds raises the chance of a Dominion boon:
+    /// its weight is multiplied by `1 + sum(w x amount)` over these
+    /// `(holding, w)` pairs (see [`dominion::boon_weight`]). Optional;
+    /// Start boons leave it out.
+    #[serde(default)]
+    pub favour: Vec<(Holding, f32)>,
 }
 
 /// A run modifier card (GP-27).
@@ -418,6 +431,8 @@ pub struct ProgressionData {
     pub drifters: DriftersData,
     /// Monuments: holding, guards and bonuses (GP-23).
     pub monuments: MonumentData,
+    /// Dominion boons and captain slots (GP-24, GP-25).
+    pub dominion: DominionData,
 }
 
 /// Progression data (GP-21, GP-27, SIM-34). Hashed as its RON text.
@@ -492,6 +507,26 @@ impl Progression {
         }
         if d.boons.iter().filter(|b| b.when == BoonWhen::Start).count() < 3 {
             return Err("progression: need at least three Start boons".into());
+        }
+        for b in &d.boons {
+            if b.favour.iter().any(|(_, w)| !non_negative(*w)) {
+                return Err(format!(
+                    "progression: boon {:?}: favour must be >= 0",
+                    b.name
+                ));
+            }
+        }
+        d.dominion.validate()?;
+        if !d.dominion.thresholds.is_empty()
+            && d.boons
+                .iter()
+                .filter(|b| b.when == BoonWhen::Dominion)
+                .count()
+                < 3
+        {
+            return Err(
+                "progression: dominion thresholds need at least three Dominion boons".into(),
+            );
         }
         for (i, m) in d.modifiers.iter().enumerate() {
             if m.id as usize != i || !weight_ok(m.weight) {
@@ -693,6 +728,14 @@ pub struct RunProgress {
     pub invite_cooldowns: Vec<(u64, u64)>,
     /// Drifters who have joined the player's bands this run (GP-22).
     pub drifters: u32,
+    /// GP-24: the dominion tally, indexed by region (`WorldMap::region_count`
+    /// entries), refreshed hourly by [`dominion::tally`]. Empty before the
+    /// first tally.
+    pub dominion: Vec<RegionTally>,
+    /// GP-25: the player's captain slots ([`captain_slots`]), stored hourly
+    /// (and after a boon pick) for the UI. `AppointCaptain` checks the live
+    /// value.
+    pub captain_slots: u32,
 }
 
 impl RunProgress {
@@ -744,6 +787,13 @@ impl StateHash for RunProgress {
             h.u64(until);
         }
         h.u32(self.drifters);
+        h.u32(self.dominion.len() as u32);
+        for t in &self.dominion {
+            h.u32(t.total);
+            h.u32(t.held_by_player);
+            h.u8(t.flags);
+        }
+        h.u32(self.captain_slots);
     }
 }
 
@@ -791,6 +841,8 @@ pub fn setup_run(world: &mut World) -> Option<RunStart> {
         succession_used: false,
         invite_cooldowns: Vec::new(),
         drifters: 0,
+        dominion: Vec::new(),
+        captain_slots: 0,
     });
     // Seat the player first, so spawn_army doesn't seat it at a snapped tile.
     world
@@ -918,9 +970,10 @@ fn spoil_stores(world: &mut World, fraction: f32) {
 /// 5. [`crate::drifters::draw`] (daily, run)
 /// 6. [`crate::requests::step`] (run)
 /// 7. [`crate::invitations::step`] (run)
-/// 8. `dominion::tally` (run; step 5)
+/// 8. [`dominion::tally`] (run)
 /// 9. `champion::rank_ups` (run; step 6)
-/// 10. [`rebuild_modifiers`]
+/// 10. [`rebuild_modifiers`], then [`dominion::refresh_slots`] (run), which
+///     reads the rebuilt modifiers
 /// 11. `rival::clock` (run; step 7)
 /// 12. `director::step` (run; step 7)
 pub fn progress(world: &mut World) {
@@ -931,7 +984,9 @@ pub fn progress(world: &mut World) {
     crate::drifters::draw(world);
     crate::requests::step(world);
     crate::invitations::step(world);
+    dominion::tally(world);
     rebuild_modifiers(world);
+    dominion::refresh_slots(world);
 }
 
 /// GP-23, GP-24, SIM-34: rebuilds [`FactionModifiers`] from scratch, once a
@@ -1100,6 +1155,13 @@ pub(crate) mod tests {
                 b.name
             );
         }
+        // GP-25: the slot cap leaves army.ron's hard limit (which counts
+        // the champion) room for the champion.
+        let army = crate::Army::default_data(
+            &sim_core::Calendar::default_data(),
+            &Economy::default_data(),
+        );
+        assert!(p.data.dominion.cap < army.data.max_captains);
     }
 
     #[test]
@@ -1140,6 +1202,22 @@ pub(crate) mod tests {
         );
         assert!(check(&|d| d.monuments.guards[0].chance = 0.9).is_err());
         assert!(check(&|d| d.monuments.guards[0].base = d.monuments.guards[0].max + 1).is_err());
+        assert!(check(&|d| d.dominion.thresholds = vec![0.5, 0.25]).is_err());
+        assert!(check(&|d| d.dominion.per_captain = 0).is_err());
+        assert!(check(&|d| d.dominion.first_village_slots = d.dominion.cap + 1).is_err());
+        assert!(check(&|d| d.boons[6].favour = vec![(Holding::Farms, -1.0)]).is_err());
+        assert!(
+            check(&|d| d.boons.retain(|b| b.when == BoonWhen::Start)).is_err(),
+            "thresholds need Dominion boons"
+        );
+        assert!(
+            check(&|d| {
+                d.boons.retain(|b| b.when == BoonWhen::Start);
+                d.dominion.thresholds.clear();
+            })
+            .is_ok(),
+            "no thresholds, no Dominion boons needed"
+        );
     }
 
     /// GP-23: the shipped monument data lists every kind once, and a

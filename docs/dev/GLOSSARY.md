@@ -8,14 +8,17 @@
 | **Band** (detail band) | How a person or building is drawn at a camera distance: textured detail, flat low-poly, billboard or dot (`render.ron`) |
 | **Band template** | Who follows the champion at the start of a run: groups of followers with their stats, weapons and tools, plus days of food (`bands` in `progression.ron`). One is drawn per run (GP-27) |
 | **Baggage** | An army's food and goods: a `Stockpile` on the captain's entity |
-| **Boon** | A card picked from an offer of three: the starting boon before the first tick (GP-27), dominion boons later (GP-24). Kept for the run in `RunProgress.boons` |
+| **Boon** | A card picked from an offer of three: the starting boon before the first tick (GP-27), dominion boons later (GP-24, see Dominion boon). Kept for the run in `RunProgress.boons` |
 | **Captain** | A commander with an order queue and a posture. The player commands captains, not soldiers |
+| **Captain slot** | Room for one more of the player's captains in a run (GP-25): `max(dominion.first_village_slots once a settlement is held, floor(people held / dominion.per_captain))` plus `CaptainSlots` boons and modifiers, at most `dominion.cap` (8). The champion's own army needs none; `AppointCaptain` beyond the slots is refused ("no captain slot"). Live in `sim_military::captain_slots`, stored hourly in `RunProgress.captain_slots`. Outside a run only army.ron `max_captains` applies |
 | **Champion** (`Champion`) | The player's own figure in a run: the captain of the starting band, with `Traits`. A marker on the person, never in `Captain`, so it stays with the person. Its death ends the run unless a successor is left (SIM-35, M4 step 6) |
 | **Chronicle** (`Chronicle`) | The run's append-only history of notable events with their causes (UI-09). Hashed and saved; tests assert on it, never on messages |
 | **Command** (`SimCommand`) | The only way input reaches the sim: player or AI, logged for replays if the player issued it |
 | **Conquest** | Taking a settlement by force (GP-05). An `Attack` provokes the village and fights its militia. Once the defenders break, the army holds the centre uncontested for `conquest.hold_hours`, and `conquest::transfer` hands the settlement and its residents over (`SimEventKind::Conquest`, `FactionStats.conquests`). In a run, taking the rival's seat wins |
 | **Deed** (`Deed`) | What moved a settlement's goodwill (GP-22): trade, equip, seize, plunder, provoke, killing, request or boon. Deltas per deed are in progression.ron `goodwill_deeds` |
 | **DecisionTrace** | The scored options behind a person's last decision, shown in the inspector. Not hashed |
+| **Dominion** | The player's share of a region's people, held in settlements it owns (GP-24): tallied hourly per region into `RunProgress.dominion` (`RegionTally`: total, held, threshold flags) |
+| **Dominion boon** | A boon offered the first time the player's dominion of a region reaches a `dominion.thresholds` share (25%, then 50%): an `OfferKind::DominionBoon {region, step}` of three distinct Dominion boons, weighed by what the player holds there (`boons[].favour`). Once per threshold and region, even after the land is lost and retaken; kept for the run |
 | **Drifter** | A villager who leaves a settlement that likes the player to join a player band passing near (GP-22): once a day in a run, a seeded few per settlement within progression.ron `drifters.radius` with goodwill at least `drifters.goodwill`, enlisted with `enlist_into` like a recruit (`DriftersJoined`) |
 | **Enlisted** | Marks a soldier: villager AI, movement and needs skip it, and `sim_military` drives it |
 | **Event feed** (`EventFeed`) | The last 256 events, chronicled or not, numbered by `seq` for the UI's feed (UI-05). Not hashed |

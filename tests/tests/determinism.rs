@@ -307,6 +307,21 @@ fn run_state_hash_covers_every_sim_component() {
         }),
         "the warband garrisons its hamlet"
     );
+    // Step 5 (GP-24, GP-25): the hourly tally counts the conquered hamlet
+    // in its region, and the stored captain slots match the live rule.
+    let regions = app.world().resource::<sim_world::WorldMap>().region_count();
+    let progress = app.world().resource::<RunProgress>().clone();
+    let held: u32 = progress.dominion.iter().map(|t| t.held_by_player).sum();
+    println!(
+        "dominion {:?}, captain slots {}",
+        progress.dominion, progress.captain_slots
+    );
+    assert_eq!(progress.dominion.len(), regions);
+    assert!(held > 0, "the hamlet's people are tallied as held");
+    assert_eq!(
+        Some(progress.captain_slots),
+        sim_military::captain_slots(app.world_mut(), FactionId::PLAYER)
+    );
     let missing = unhashed_state(app.world_mut());
     assert!(
         missing.is_empty(),

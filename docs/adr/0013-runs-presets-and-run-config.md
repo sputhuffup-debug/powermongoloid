@@ -1,6 +1,6 @@
 # ADR 0013: Runs, presets and the run config
 
-Date: 2026-10-07 · Status: Accepted · Requirements: GP-21, GP-23, GP-27, NFR-08
+Date: 2026-10-07 · Status: Accepted · Requirements: GP-21, GP-23, GP-24, GP-25, GP-27, NFR-08
 
 ## Context
 
@@ -43,3 +43,12 @@ M4 turns the sandbox into roguelite runs ([PROGRESSION_DESIGN.md](../PROGRESSION
   - `run_state_hash_covers_every_sim_component`, which every later M4 step extends with its state.
   - `a_run_replays`.
 - **Events infrastructure landed with this step** (`SimEvent`, `Chronicle`, `EventFeed`, sorted recording), so later steps can report as they go. Its design is recorded with the chronicle in step 9.
+
+## Addendum: dominion boons and captain slots (M4 step 5, GP-24, GP-25)
+
+- **Dominion is tallied, not tracked.** Once a game hour, in a run, slot 8 of the progress driver (`progression::dominion::tally`) sums each region's people (`SettlementEconomy.population`, settlements in SpawnId order, `NO_REGION` left out) and the part in settlements the player owns into `RunProgress.dominion` (one `RegionTally {total, held_by_player, flags}` per region, `WorldMap::region_count` of them). No event drives it, so conquest, invitations, revolts, recruiting and deaths are all counted the same way.
+- **One offer per threshold and region, for the whole run.** The first time a region's share reaches a progression.ron `dominion.thresholds` entry (25%, 50%; compared exactly, in f64), its bit in `flags` is set and a `DominionBoon {region, step}` offer is posted. Flags are never cleared, so losing land and taking it back offers nothing new, and boons are kept even if the land is lost (PROGRESSION_DESIGN open question 2). An hour that crosses both thresholds posts both offers, region by region, then step by step.
+- **The offer reflects the holdings.** Three distinct Dominion boons are drawn without replacement, each weighted `weight x (1 + sum(w x amount))` over its optional `favour` list: farms and a smithy in the region's player-owned settlements, owning the region's most populous settlement, `Battle` chronicle entries (from step 6), enemies killed. The draw uses stream `sim_military::progression::boons ^ offer id` at the posting tick; the start offer (id 0) drew from `boons ^ 0` at tick 0, so no two offers share a stream. Picked boons may be offered again later and stack.
+- **Captain slots come from the land.** `sim_military::captain_slots(world, faction)` is `Some` only in a run and for the player: `min(cap, max(first_village_slots once a settlement is held, floor(people held / per_captain)) + CaptainSlots(n) boons + floor(the flat CaptainSlots modifier))`, never below 0 (8, 300 and 1 shipped). `orders::appoint` keeps army.ron `max_captains` (9, the champion counted) as the hard limit and, in a run, refuses with "no captain slot" once the player's captains other than the champion fill the slots. Outside a run, and for any other faction, the old rule alone applies, so skirmish appointments (and `sample_orders`) are unchanged. Successions (`casualties`' `succeed`) make captains without a slot check. Slot boons are a dedicated `Effect::CaptainSlots(n)`, read from `RunProgress.boons` at the moment of the check, so a pick counts at once rather than at the next hourly modifier rebuild; `Stat::CaptainSlots` stays for traits and future sources.
+- **The UI reads a stored copy.** `RunProgress.captain_slots` is refreshed after the hourly modifier rebuild (`dominion::refresh_slots`, right after slot 10) and after every boon pick; `AppointCaptain` always checks the live value, so a settlement won mid-hour counts at once.
+- **Consequences.** `--run` replays' random `AppointCaptain`s are now mostly refused (no land at the start); skirmish and developed are unaffected. `RunProgress` hashes the tally and the slots. Tests: `dominion` (tests/tests/dominion.rs: crossing, picking, losing and re-crossing 25%, 50%, slots by the formula, refusals, the cap) and the dominion.rs unit tests (the slot formula, weighting, the exact threshold comparison).

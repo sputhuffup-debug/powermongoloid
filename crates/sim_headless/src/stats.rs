@@ -416,7 +416,9 @@ pub fn armies(app: &mut App) -> Vec<String> {
 }
 
 /// In a run, one line on band life (GP-22): requests, invitations,
-/// drifters and the best goodwill toward the player. `None` outside a run.
+/// drifters, the player's share of each region with its dominion flags
+/// (GP-24), captain slots (GP-25) and the best goodwill toward the player.
+/// `None` outside a run.
 pub fn run_line(world: &mut World) -> Option<String> {
     use sim_core::{FactionId, OfferKind, Offers, RunState};
     use sim_military::{RequestBoard, RunProgress};
@@ -437,6 +439,18 @@ pub fn run_line(world: &mut World) -> Option<String> {
         board.done,
         board.failed,
         world.resource::<RunProgress>().drifters,
+    );
+    let progress = world.resource::<RunProgress>();
+    let shares: Vec<String> = progress
+        .dominion
+        .iter()
+        .enumerate()
+        .map(|(r, t)| format!("r{r} {:.0}%/{:02b}", t.share() * 100.0, t.flags))
+        .collect();
+    let line = format!(
+        "{line} | dominion {} | captain slots {}",
+        shares.join(" "),
+        progress.captain_slots
     );
     let mut q = world.query::<&sim_agents::Goodwill>();
     let best = q

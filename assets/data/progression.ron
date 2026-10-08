@@ -76,11 +76,14 @@
         (id: 3, name: "Hardy", text: "+5% morale.", when: Start, weight: 0.8, effects: [Stat(Morale, 0.05)]),
         (id: 4, name: "Woodwise", text: "+25% food from foraging.", when: Start, weight: 0.8, effects: [Stat(ForageYield, 0.25)]),
         (id: 5, name: "Silver tongue", text: "+10% trade value.", when: Start, weight: 0.6, effects: [Stat(TradeValue, 0.1)]),
-        (id: 6, name: "Granary of the region", text: "+10% food yield in owned settlements.", when: Dominion, weight: 1.0, effects: [Stat(FoodYield, 0.1)]),
-        (id: 7, name: "Seat of power", text: "+1 captain slot.", when: Dominion, weight: 1.0, effects: [Stat(CaptainSlots, 1.0)]),
-        (id: 8, name: "Hardened", text: "Veterans rank up 25% faster.", when: Dominion, weight: 1.0, effects: [Stat(VeteranRate, 0.25)]),
-        (id: 9, name: "Smiths' guild", text: "+10% smithing speed.", when: Dominion, weight: 1.0, effects: [Stat(SmithSpeed, 0.1)]),
-        (id: 10, name: "Iron discipline", text: "+5% defence and 10% less desertion.", when: Dominion, weight: 0.8, effects: [Stat(Defence, 0.05), Stat(Desertion, -0.1)]),
+        // Dominion boons may name a `favour`: (holding, w) pairs that
+        // multiply the weight by 1 + w x amount, so the three on offer
+        // reflect what the player holds in the region (GP-24).
+        (id: 6, name: "Granary of the region", text: "+10% food yield in owned settlements.", when: Dominion, weight: 1.0, effects: [Stat(FoodYield, 0.1)], favour: [(Farms, 0.15)]),
+        (id: 7, name: "Seat of power", text: "+1 captain slot.", when: Dominion, weight: 1.0, effects: [CaptainSlots(1)], favour: [(LargestSettlement, 2.0)]),
+        (id: 8, name: "Hardened", text: "Veterans rank up 25% faster.", when: Dominion, weight: 1.0, effects: [Stat(VeteranRate, 0.25)], favour: [(Battles, 0.25), (Kills, 0.01)]),
+        (id: 9, name: "Smiths' guild", text: "+10% smithing speed.", when: Dominion, weight: 1.0, effects: [Stat(SmithSpeed, 0.1)], favour: [(Smithy, 2.0)]),
+        (id: 10, name: "Iron discipline", text: "+5% defence and 10% less desertion.", when: Dominion, weight: 0.8, effects: [Stat(Defence, 0.05), Stat(Desertion, -0.1)], favour: [(Kills, 0.01)]),
     ],
 
     // GP-27: run modifiers, drawn by weight without repeats at the start and
@@ -226,5 +229,20 @@
             (kind: RaiderCamp, chance: 0.3, base: 4, per_tile: 0.02, max: 24, armed: true),
             (kind: Beasts, chance: 0.2, base: 3, per_tile: 0.015, max: 18, armed: false),
         ],
+    ),
+
+    // GP-24, GP-25: dominion boons and captain slots. Once a game hour the
+    // run tallies each region's people and the part of them in settlements
+    // the player owns. The first time that share reaches a threshold, the
+    // player is offered three Dominion boons (once per threshold and
+    // region: losing land and taking it back offers nothing new). Captain
+    // slots: max(first_village_slots once a settlement is held,
+    // floor(people held / per_captain)) plus slot boons, at most `cap`;
+    // the champion's own army needs none.
+    dominion: (
+        thresholds: [0.25, 0.5],
+        per_captain: 300,
+        cap: 8,
+        first_village_slots: 1,
     ),
 )

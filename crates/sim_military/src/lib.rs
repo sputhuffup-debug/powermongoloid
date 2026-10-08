@@ -19,7 +19,8 @@
 //! 7. **Progress** (Needs, hourly): [`progression::progress`] drives
 //!    settlement-level steps in a fixed order, such as [`monuments::hold`],
 //!    [`conquest::revolts`], the daily [`wild::regrow`] and
-//!    [`drifters::draw`], [`requests::step`], [`invitations::step`] and
+//!    [`drifters::draw`], [`requests::step`], [`invitations::step`], the
+//!    dominion tally ([`progression::dominion::tally`]) and
 //!    [`progression::rebuild_modifiers`].
 //!
 //! Settlements change hands through [`conquest::transfer`]: an `Attack`
@@ -46,7 +47,8 @@
 //! Also here: army data ([`Army`], `army.ron`), [`spawn::spawn_army`] and
 //! the playtest setup, the scripted [`raiders`] (in `SimInputSet::Ai`), and
 //! runs ([`progression`], `progression.ron`, GP-21/27): the start draws,
-//! [`setup_run`], offers and the champion.
+//! [`setup_run`], offers and the champion, and dominion boons and captain
+//! slots from the land held ([`progression::dominion`], GP-24/25).
 //!
 //! Systems go in [`sim_core::SimSet`]s. This crate never depends on
 //! rendering, windowing, audio or asset crates.
@@ -86,9 +88,10 @@ pub use index::{ArmyIndex, ArmyInfo, FighterGrid, Side};
 pub use monuments::{Guard, Holder, NoUpkeep};
 pub use orders::{CommandInbox, arm_followers, enlist, enlist_into, find_settlement, provoke};
 pub use progression::{
-    Champion, DriftersData, ForageData, GoodwillDeeds, GuardData, GuardKind, InvitationData,
-    MonumentBonus, MonumentData, Progression, RequestData, RunProgress, RunStart, RunWorld,
-    StartDraws, StartTerrain, Traits, champion_of, draw_start, rebuild_modifiers, setup_run,
+    Champion, DominionData, DriftersData, ForageData, GoodwillDeeds, GuardData, GuardKind, Holding,
+    Holdings, InvitationData, MonumentBonus, MonumentData, Progression, RegionTally, RequestData,
+    RunProgress, RunStart, RunWorld, StartDraws, StartTerrain, Traits, captain_slots, champion_of,
+    draw_start, rebuild_modifiers, setup_run,
 };
 pub use requests::{Request, RequestBoard, RequestKind, Reward};
 pub use soldiers::slot_offset;
