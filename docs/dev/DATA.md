@@ -92,7 +92,7 @@ SIM-20 and SIM-21 ([ADR 0007](../adr/0007-economy-and-transfer-resolver.md)). Gu
 | `initial_home_food_per_resident` | Starting food in each house, per resident |
 
 ## villagers.ron (`sim_agents::Villagers`)
-SIM-10..13 ([ADR 0006](../adr/0006-utility-ai-and-decision-traces.md)), and loyalty (GP-06, SIM-24). Guarded by `village_day`, `famine` and `posture`; `loyalty` by the sim_agents unit tests in `crates/sim_agents/src/loyalty.rs` and the `conquest` scenario (`tests/tests/conquest.rs`: a fed garrisoned conquest grows loyal, a plundered one loses faith, a starved one revolts within 2-3 days). Every utility score is `weight x` the product of its considerations; a `Logistic(mid, steepness)` curve maps an input in 0..1 to an S-curve centred on `mid`.
+SIM-10..13 ([ADR 0006](../adr/0006-utility-ai-and-decision-traces.md)), and loyalty (GP-06, SIM-24). Guarded by `village_day`, `famine` and `posture`; `loyalty` by the sim_agents unit tests in `crates/sim_agents/src/loyalty.rs` and the `conquest` scenario (`tests/tests/conquest.rs`: a fed garrisoned conquest grows loyal, a plundered one loses faith, a starved one revolts within 1-3 days). Every utility score is `weight x` the product of its considerations; a `Logistic(mid, steepness)` curve maps an input in 0..1 to an S-curve centred on `mid`.
 
 | Field | Meaning |
 | --- | --- |
@@ -132,6 +132,9 @@ SIM-10..13 ([ADR 0006](../adr/0006-utility-ai-and-decision-traces.md)), and loya
 | `loyalty.drift_per_day` | Fraction (0..1) of the gap to the target closed each day, times the owner's `LoyaltyDrift` modifier (`FactionModifiers`) |
 | `loyalty.independent_target` | Target loyalty in independent settlements, every villager's starting loyalty, and the loyalty a settlement handed back to independence starts from |
 | `loyalty.revolt_threshold` | An owned settlement whose mean loyalty is below this is in unrest (`SettlementLoyalty.below_since`); a day of it risks revolt (sim_military) |
+| `goodwill` | How word of a deed travels (GP-22). Deeds (progression.ron `goodwill_deeds`, the "Known" boon) post goodwill changes to `GoodwillLedger`; once a tick (`apply_goodwill`, first in `AgentSet::Standing`) each change counts in full at its settlement and `spread_fraction` of it at every other populated settlement within `spread_radius`, the sums are added (clamped to -1..1) and the ledger is cleared. Checked by `spread_is_order_independent` (standing.rs) |
+| `goodwill.spread_radius` | Tiles, centre to centre, within which word of a deed spreads (a day's march is about 312) |
+| `goodwill.spread_fraction` | Fraction (0..1) of a change that reaches each settlement in range |
 | `names.given`, `names.family` | Original names for villagers |
 
 ## army.ron (`sim_military::Army`)
@@ -172,6 +175,7 @@ GP-01..04 and SIM-30..32 ([ADR 0010](../adr/0010-armies-orders-and-combat.md)), 
 | `gather_target_days` | Gathering fills the baggage up to this many days of food |
 | `trade_keep_days` | Villages sell food beyond this many days |
 | `trade_value` | `(good, food value)` per unit when an army barters |
+| `give_keep_days` | A `Give` order (GP-22) hands the settlement's storehouse the food the baggage holds beyond this many days of the army's need (most nourishing first, as far as the storehouse has room). What actually arrives is counted in `FactionStats.donated`. Checked by sim_military's `giving_hands_over_food_beyond_the_keep` |
 | `conquest` | How an `Attack` takes a settlement (GP-05). The army marches until within half `threat.radius` of the centre, then provokes the village and fights its militia. Once the defenders break it calls off the provocation and holds the centre; holding it uncontested hands the settlement over (`conquest::transfer`). Attacking a settlement you own is refused |
 | `conquest.break_ticks` | Ticks of fighting before the defenders can count as broken (no militia standing within `militia_radius`) |
 | `conquest.give_up_days` | Days of fighting after which an assault whose militia still stands is given up |
@@ -188,7 +192,7 @@ GP-01..04 and SIM-30..32 ([ADR 0010](../adr/0010-armies-orders-and-combat.md)), 
 Revolts (GP-06) run once a day, settlements in SpawnId order. An owned settlement whose mean loyalty has been below villagers.ron `loyalty.revolt_threshold` for a day goes independent at once if it has no garrison. If the garrison is smaller than the residents able to fight (adult, alive, not starving, not already fighting, with morale at least villagers.ron `ai.fight.break_morale`), they rise: the settlement is provoked against its owner for `revolt_hours`. A day later the rising wins (independence) if no garrison is left or the rebels still standing outnumber it; otherwise it is put down.
 
 ## progression.ron (`sim_military::Progression`)
-Runs: GP-21, GP-27 and SIM-34 (M4, see [M4_PLAN.md](../M4_PLAN.md)). Read only in a run (`RunState.config` is `Some`); the developed world and the M2/M3 tests never draw from it. Guarded by the `sim_military` progression unit tests (`shipped_data_is_valid`, `a_run_start_is_seeded_and_fits`, `a_run_is_set_up_its_boon_picked_once_and_abandoned`), by `run_start` ([tests/tests/run_start.rs](../../tests/tests/run_start.rs); `twenty_seeds_draw_valid_varied_starts` checks 2-3 nearby monuments and start variety over 20 seeds, so re-run it after changing `start.*`, `bands`, `modifiers` or their weights), and by the run tests in `determinism` (`run_state_hash_covers_every_sim_component`, `a_run_replays`). Cards are numbered by their position: each `id` must equal its index, and lists are append only, because offers, `RunProgress` and saves store the index.
+Runs: GP-21, GP-27 and SIM-34 (M4, see [M4_PLAN.md](../M4_PLAN.md)). The start, bands, traits, boons and modifiers are read only in a run (`RunState.config` is `Some`); the developed world and the M2/M3 tests never draw from them. `goodwill_deeds` and `forage` apply wherever the deeds and the `Forage` order happen, in every preset (goodwill feeds loyalty only in owned settlements, so the developed world behaves as before). Guarded by the `sim_military` progression unit tests (`shipped_data_is_valid`, `a_run_start_is_seeded_and_fits`, `a_run_is_set_up_its_boon_picked_once_and_abandoned`), by `run_start` ([tests/tests/run_start.rs](../../tests/tests/run_start.rs); `twenty_seeds_draw_valid_varied_starts` checks 2-3 nearby monuments and start variety over 20 seeds, so re-run it after changing `start.*`, `bands`, `modifiers` or their weights), and by the run tests in `determinism` (`run_state_hash_covers_every_sim_component`, `a_run_replays`). Cards are numbered by their position: each `id` must equal its index, and lists are append only, because offers, `RunProgress` and saves store the index.
 
 **The start spot** (`sim_military::draw_start`). The rival's seat is the most populous settlement. The other regions are tried from the farthest (by settlement centroid) to the nearest; the band starts in the first one with a tile that has `min_monuments..=max_monuments` monuments nearby (else in the farthest). Tiles are ranked by class (monument count fits, then on the far side of the region from the seat, then of the drawn kind, then near the region's edge); in the best class the tile farthest from the seat plus a seeded jitter wins.
 
@@ -211,12 +215,27 @@ Runs: GP-21, GP-27 and SIM-34 (M4, see [M4_PLAN.md](../M4_PLAN.md)). Read only i
 | `boons[].id`, `boons[].name`, `boons[].text` | A boon card: its index, display name and card text |
 | `boons[].when` | `Start` (the starting boon, GP-27) or `Dominion` (holding 25% or 50% of a region, GP-24, M4 step 5) |
 | `boons[].weight` | Relative chance to be offered. Three distinct cards are drawn by weight, without repeats |
-| `boons[].effects` | What the boon does: `FoodDays(d)` adds d days of food for the whole army to the champion's baggage; `ArmBand` gives the champion and every follower a weapon; `Goodwill(g)` raises goodwill in the settlement nearest the champion (recorded now, applied with goodwill in M4 step 3); `Stat(stat, v)` is a modifier for the picker's faction (from M4 step 4). Effects apply when the card is picked |
+| `boons[].effects` | What the boon does: `FoodDays(d)` adds d days of food for the whole army to the champion's baggage; `ArmBand` gives the champion and every follower a weapon; `Goodwill(g)` changes the goodwill of the populated settlement nearest the champion by g (through the goodwill ledger, so it also spreads; villagers.ron `goodwill`); `Stat(stat, v)` is a modifier for the picker's faction (from M4 step 4). Effects apply when the card is picked |
 | `modifiers_per_run` | `(min, max)` run modifiers drawn per run (GP-27) |
 | `modifiers[].id`, `modifiers[].name`, `modifiers[].text` | A run modifier card: its index, display name and text |
 | `modifiers[].group` | Cards sharing a group (e.g. "harvest") never come in the same run; `None` for no group |
 | `modifiers[].weight` | Relative chance to be drawn (without repeats) |
 | `modifiers[].effects` | `Stores(f)` removes fraction f of the food in every storehouse at the start; `Stat(stat, v)` applies to everyone (the world row of `FactionModifiers`, from M4 step 4); `RaiderPace(x)` (raiders come x times as often) and `RivalStrength(x)` (the rival's levies and defence scale by x) take effect in M4 step 7; `Sellswords(n)` (a band for hire near the start) in a later step |
+| `goodwill_deeds` | Goodwill change (-1..1) at a settlement, toward the doer's faction, for each deed done there (GP-22). Deeds post to `sim_agents::GoodwillLedger`; villagers.ron `goodwill` spreads a fraction to nearby settlements. Checked by sim_military's `deeds_move_goodwill_and_word_spreads` |
+| `goodwill_deeds.trade` | Food bought with goods: a `Trade` order or a passive army's gathering |
+| `goodwill_deeds.equip` | Arms bought with food (a passive `Equip`) |
+| `goodwill_deeds.seize` | A hungry neutral army takes food from the reserve |
+| `goodwill_deeds.plunder` | An aggressive army plunders food (it also provokes) |
+| `goodwill_deeds.provoke` | The settlement is provoked into arms by the faction (once per provocation, not per tick) |
+| `goodwill_deeds.killing` | Each of the settlement's militia killed, toward the faction they fought |
+| `goodwill_deeds.request` | A request of the settlement answered (M4 step 3b) |
+| `forage` | Wild food (SIM-38, `sim_military::wild`). The map is cut into 16-tile patches (`WildFood`); a `Forage { radius }` order makes the band stand where it is and gather from the patches with any tile within the radius, in patch order, until its baggage holds army.ron `gather_target_days` of food or no wild food is left there. The food is the least nourishing food good (grain). Checked by `patches_deplete_and_regrow` (wild.rs) and `a_foraging_band_lives_off_the_land` (orders.rs) |
+| `forage.per_tile` | Food value a full patch holds per grass or forest tile (a 16 x 16 patch of grass: 2.56) |
+| `forage.regrow_per_day` | Fraction (0..1) of a patch's capacity that grows back each day (the progress driver, once the patches exist: built at run setup, elsewhere by the first `Forage` order) |
+| `forage.every_ticks` | Ticks between a foraging band's harvests (100 = a game hour) |
+| `forage.per_member` | Food value each member (the captain too) gathers per harvest, times the faction's `ForageYield` modifier; units are rounded stochastically. 0.05 per hour is about 1.3 days of food per head per day of foraging |
+| `forage.max_radius` | The largest `Forage` radius; a radius of 0 or above this is refused ("bad forage radius") |
+| `forage.default_radius` | The radius the game's Forage button and F key use |
 
 ## render.ron (`game_render::RenderSettings`)
 RND-03 and RND-06 ([ADR 0009](../adr/0009-art-direction-and-detail-bands.md)). Guarded by `game_render` band tests.

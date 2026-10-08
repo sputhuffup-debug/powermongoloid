@@ -14,6 +14,7 @@
 | **Chronicle** (`Chronicle`) | The run's append-only history of notable events with their causes (UI-09). Hashed and saved; tests assert on it, never on messages |
 | **Command** (`SimCommand`) | The only way input reaches the sim: player or AI, logged for replays if the player issued it |
 | **Conquest** | Taking a settlement by force (GP-05). An `Attack` provokes the village and fights its militia. Once the defenders break, the army holds the centre uncontested for `conquest.hold_hours`, and `conquest::transfer` hands the settlement and its residents over (`SimEventKind::Conquest`, `FactionStats.conquests`). In a run, taking the rival's seat wins |
+| **Deed** (`Deed`) | What moved a settlement's goodwill (GP-22): trade, equip, seize, plunder, provoke, killing, request or boon. Deltas per deed are in progression.ron `goodwill_deeds` |
 | **DecisionTrace** | The scored options behind a person's last decision, shown in the inspector. Not hashed |
 | **Enlisted** | Marks a soldier: villager AI, movement and needs skip it, and `sim_military` drives it |
 | **Event feed** (`EventFeed`) | The last 256 events, chronicled or not, numbered by `seq` for the UI's feed (UI-05). Not hashed |
@@ -21,11 +22,14 @@
 | **Faction** (`FactionId`) | `FactionId::INDEPENDENT` (0), `PLAYER` (1), `RAIDERS` (2, the scripted raiders), `RIVAL` (3, the rival warlord of a run) and `BEASTS` (4, monument guards); names and colours in `army.ron` |
 | **Fighter grid** (`FighterGrid`) | Everyone who can fight, bucketed in 8-tile cells with a bitmask of sides per cell, rebuilt each tick |
 | **Flow field** | A Dijkstra cost field toward a goal over a window of the map; following it downhill walks the cheap way around obstacles. Captains walk the **goal field** |
+| **Forage** (wild foraging) | A `Forage { radius }` order (SIM-38): the band stands and gathers wild food from the patches around it until its baggage is full or the land is bare. Not the automatic gathering from settlements an army passes (`orders::forage`, "foraging" in the M3 code) |
 | **Follower** | A soldier attached to a captain, with a formation slot |
 | **Food security** | Days of food a settlement holds at its population's eating rate |
 | **Game hour** | A 24th of a day: 100 ticks (`Calendar::ticks_per_hour`). Data fields ending in `_hours` use it; the UI's clock face does not |
 | **Garrison** | The owner's soldiers within `garrison.radius` of a settlement's centre. The `Garrison { settlement }` order keeps an army there; it is valid only on a settlement the issuer owns. A garrison deters revolts, and is fed by owned-village supply when the village has food to spare; a hamlet's garrison lives on its own baggage |
-| **Goodwill** (`Goodwill`) | A settlement's standing with each faction, -1..1, sorted by faction (GP-22). Helping raises it and plundering lowers it (M4 step 3); goodwill toward the owner is the treatment term of loyalty, and seeds loyalty when the settlement changes hands |
+| **Give** | A `Give { settlement }` order (GP-22): the army hands the food its baggage holds beyond `give_keep_days` of its need to the settlement's storehouse; what arrives is `FactionStats.donated` |
+| **Goodwill** (`Goodwill`) | A settlement's standing with each faction, -1..1, sorted by faction (GP-22). Deeds move it through the goodwill ledger: fair trade and requests answered raise it; seizing, plundering, provoking and killing its militia lower it, and word spreads to nearby settlements. Goodwill toward the owner is the treatment term of loyalty, and seeds loyalty when the settlement changes hands |
+| **Goodwill ledger** (`GoodwillLedger`) | This tick's goodwill changes (`GoodwillChange`: settlement, faction, delta, deed), posted by deeds from serial steps and applied with their spread, sorted, by `apply_goodwill` first in `AgentSet::Standing`. Hashed |
 | **Logistics step** | `orders::run_orders`: the serial step where captains deal with settlements (recruit, food, arms, trade) |
 | **Loyalty** (`Loyalty`, `SettlementLoyalty`) | A villager's loyalty to its settlement's owner, 0..1 (GP-06, SIM-24). Once a day it drifts toward a target set by food security, goodwill toward the owner and time under the owner (`loyalty` in villagers.ron); independent settlements aim at a fixed level. `SettlementLoyalty` holds each settlement's mean and minimum, and `below_since`, when its mean fell below the revolt threshold (unrest) |
 | **Militia** | Villagers whose AI chose `Fight` to defend a provoked settlement (stance `Militia { against }`) |
@@ -68,3 +72,4 @@
 | **Trait** (`Traits`) | A small, named quality of a person (Brave, Forager...) with stat effects; the champion starts with one (SIM-34) |
 | **Transfers** / **transfer resolver** | Agents post goods orders on themselves; `resolve_transfers` applies them in SpawnId order. The only way agents touch a building's stockpile |
 | **Utility AI** | Each option is scored as weight x considerations, and the best wins (with inertia for the current action) |
+| **Wild food** (`WildFood`) | The map's 16-tile patches of food a foraging band gathers (SIM-38). A patch holds `forage.per_tile` per grass or forest tile, empties as it is foraged and grows back daily. Built at run setup, elsewhere by the first `Forage` order. Hashed |

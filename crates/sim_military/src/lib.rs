@@ -17,12 +17,19 @@
 //! 6. **Upkeep** (Needs): [`upkeep`] covers eating, morale, starvation and
 //!    desertion.
 //! 7. **Progress** (Needs, hourly): [`progression::progress`] drives
-//!    settlement-level steps in a fixed order, such as [`conquest::revolts`].
+//!    settlement-level steps in a fixed order, such as [`conquest::revolts`]
+//!    and the daily [`wild::regrow`].
 //!
 //! Settlements change hands through [`conquest::transfer`]: an `Attack`
 //! that breaks the militia and holds the centre, or a revolt (GP-05,
 //! GP-06). A `Garrison` order holds an owned settlement, which feeds its
 //! owner's armies from its spare food.
+//!
+//! A landless band lives off the land with a `Forage` order ([`wild`],
+//! SIM-38) and hands food to a village with `Give`. Deeds at a settlement
+//! (fair trade, seizure, plunder, provocation, killing its militia) post
+//! goodwill changes to `sim_agents::GoodwillLedger`, with deltas from
+//! progression.ron `goodwill_deeds` (GP-22).
 //!
 //! Also here: army data ([`Army`], `army.ron`), [`spawn::spawn_army`] and
 //! the playtest setup, the scripted [`raiders`] (in `SimInputSet::Ai`), and
@@ -44,6 +51,7 @@ pub mod soldiers;
 pub mod spawn;
 pub mod threat;
 pub mod upkeep;
+pub mod wild;
 
 use bevy_app::{App, FixedUpdate, Plugin};
 use bevy_ecs::prelude::*;
@@ -61,11 +69,12 @@ pub use data::Army;
 pub use index::{ArmyIndex, ArmyInfo, FighterGrid, Side};
 pub use orders::{CommandInbox, arm_followers, enlist, find_settlement, provoke};
 pub use progression::{
-    Champion, Progression, RunProgress, RunStart, RunWorld, StartDraws, StartTerrain, Traits,
-    champion_of, draw_start, setup_run,
+    Champion, ForageData, GoodwillDeeds, Progression, RunProgress, RunStart, RunWorld, StartDraws,
+    StartTerrain, Traits, champion_of, draw_start, setup_run,
 };
 pub use soldiers::slot_offset;
 pub use spawn::{ArmySpec, Skirmish, nearest_passable, setup_battle, setup_skirmish, spawn_army};
+pub use wild::WildFood;
 
 /// Military systems, in tick order within their `SimSet`s.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -106,6 +115,7 @@ impl Plugin for MilitaryPlugin {
         app.insert_resource(Army::default_data(&calendar, &econ))
             .insert_resource(Progression::default_data())
             .init_resource::<RunProgress>()
+            .init_resource::<WildFood>()
             .init_resource::<Factions>()
             .init_resource::<ArmyStats>()
             .init_resource::<MilitaryLog>()
@@ -192,6 +202,7 @@ impl Plugin for MilitaryPlugin {
             .register_hashed_resource::<RunProgress>()
             .register_hashed::<Champion>()
             .register_hashed::<Traits>()
+            .register_hashed_resource::<WildFood>()
             .exempt_from_hash::<MilitaryLog>("UI history; its effects are in the hashed state")
             .exempt_from_hash::<CommandInbox>("always empty between ticks")
             .exempt_from_hash::<ArmyIndex>("rebuilt from hashed state every tick")

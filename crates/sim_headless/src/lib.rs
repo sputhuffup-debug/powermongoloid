@@ -445,7 +445,7 @@ pub fn sample_orders(app: &mut App, seed: u64, ticks: u64, count: usize) -> Vec<
         .map(|_| {
             let (cid, _, at) = captains[rng.random_range(0..captains.len())];
             let s = settlements[rng.random_range(0..settlements.len())];
-            let kind = match rng.random_range(0..13) {
+            let kind = match rng.random_range(0..15) {
                 0..=2 => {
                     let (x, y) = near(&mut rng, at);
                     OrderSpec::MoveTo { x, y }
@@ -468,6 +468,11 @@ pub fn sample_orders(app: &mut App, seed: u64, ticks: u64, count: usize) -> Vec<
                 },
                 // GP-05: refused unless the player holds `s` by then.
                 11 => OrderSpec::Garrison { settlement: s },
+                // SIM-38: radius 0 and beyond `forage.max_radius` are refused.
+                12 => OrderSpec::Forage {
+                    radius: rng.random_range(0..80),
+                },
+                13 => OrderSpec::Give { settlement: s },
                 _ => OrderSpec::MoveTo { x: -5, y: 3 },
             };
             let command = match rng.random_range(0..12) {

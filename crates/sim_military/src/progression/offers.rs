@@ -4,7 +4,7 @@
 
 use bevy_ecs::prelude::*;
 use bevy_math::IVec2;
-use sim_agents::Villagers;
+use sim_agents::{Deed, GoodwillLedger, Villagers};
 use sim_core::{
     Cause, FactionId, OfferKind, Offers, Position, RunOutcome, RunState, SimEvent, SimEventKind,
     SpawnId,
@@ -98,8 +98,9 @@ pub fn abandon(world: &mut World, issuer: FactionId) -> Result<(), &'static str>
 /// - `FoodDays`: grain for that many days, for the champion's whole army,
 ///   into the champion's baggage (its capacity grows to fit).
 /// - `ArmBand`: a weapon for the champion and every follower.
-/// - `Goodwill`: recorded in [`RunProgress::pending_goodwill`] for the
-///   settlement nearest the champion (applied in M4 step 3).
+/// - `Goodwill`: posted to the goodwill ledger (`sim_agents::GoodwillLedger`,
+///   as [`Deed::Boon`]) for the populated settlement nearest the champion;
+///   it is applied, and spreads to its neighbours, later this tick (GP-22).
 /// - `Stat`: nothing now; `FactionModifiers` folds the picked boons in
 ///   (M4 step 4).
 fn apply_boon(world: &mut World, faction: FactionId, card: u16) -> String {
@@ -125,9 +126,8 @@ fn apply_boon(world: &mut World, faction: FactionId, card: u16) -> String {
                     .unwrap_or(world.resource::<RunProgress>().start);
                 if let Some(s) = nearest_settlement(world, at) {
                     world
-                        .resource_mut::<RunProgress>()
-                        .pending_goodwill
-                        .push((s, amount));
+                        .resource_mut::<GoodwillLedger>()
+                        .push(s, faction, amount, Deed::Boon);
                 }
             }
             Effect::Stat(..)

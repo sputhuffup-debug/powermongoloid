@@ -3,9 +3,10 @@
 //! player's faction; the UI never changes the simulation itself.
 //!
 //! Mouse: right-click ground = move there (Shift queues); right-click a
-//! village = attack, recruit, gather food, trade, equip or move.
-//! Keys (army selected): R return to camp, Backspace cancel orders,
-//! P cycle posture.
+//! village = attack, recruit, gather food, trade, equip, give food,
+//! garrison or move.
+//! Keys (army selected): R return to camp, F forage where the army stands,
+//! Backspace cancel orders, P cycle posture.
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -13,7 +14,9 @@ use game_render::CameraRig;
 use sim_agents::{ActionKind, Activity, CombatStats, Villager};
 use sim_core::{CommandKind, FactionId, NameTable, OrderSpec, Posture, SimCommand, SpawnId};
 use sim_economy::{Economy, SettlementEconomy, Stockpile};
-use sim_military::{Army, Captain, Equipment, Follower, MilitaryLog, Soldier, describe};
+use sim_military::{
+    Army, Captain, Equipment, Follower, MilitaryLog, Progression, Soldier, describe,
+};
 use sim_world::{Settlement, WorldMap};
 
 use crate::selection::{Selection, ground_hit};
@@ -63,6 +66,7 @@ struct ArmyText;
 enum PanelButton {
     Posture(Posture),
     Return,
+    Forage,
     Cancel,
     Appoint,
 }
@@ -93,16 +97,18 @@ enum MenuAction {
     GatherFood,
     Trade,
     Equip,
+    Give,
     Garrison,
     Move,
 }
 
 impl MenuAction {
-    const ALL: [MenuAction; 7] = [
+    const ALL: [MenuAction; 8] = [
         MenuAction::GatherFood,
         MenuAction::Recruit,
         MenuAction::Trade,
         MenuAction::Equip,
+        MenuAction::Give,
         MenuAction::Attack,
         MenuAction::Garrison,
         MenuAction::Move,
@@ -115,6 +121,8 @@ impl MenuAction {
             MenuAction::GatherFood => "Gather food",
             MenuAction::Trade => "Trade",
             MenuAction::Equip => "Equip",
+            // GP-22: food beyond the army's own few days.
+            MenuAction::Give => "Give food",
             // GP-05: refused unless you hold the settlement.
             MenuAction::Garrison => "Garrison",
             MenuAction::Move => "Move here",
@@ -158,6 +166,7 @@ fn spawn_army_panel(mut commands: Commands) {
                 ],
                 vec![
                     PanelButton::Return,
+                    PanelButton::Forage,
                     PanelButton::Cancel,
                     PanelButton::Appoint,
                 ],
@@ -171,6 +180,7 @@ fn spawn_army_panel(mut commands: Commands) {
                         let label = match b {
                             PanelButton::Posture(p) => capitalise(p.name()),
                             PanelButton::Return => "Return (R)".into(),
+                            PanelButton::Forage => "Forage (F)".into(),
                             PanelButton::Cancel => "Cancel".into(),
                             PanelButton::Appoint => "Appoint captain".into(),
                         };
@@ -358,6 +368,7 @@ fn menu_buttons(
             MenuAction::GatherFood => OrderSpec::GatherFood { settlement: s },
             MenuAction::Trade => OrderSpec::Trade { settlement: s },
             MenuAction::Equip => OrderSpec::Equip { settlement: s },
+            MenuAction::Give => OrderSpec::Give { settlement: s },
             MenuAction::Garrison => OrderSpec::Garrison { settlement: s },
             MenuAction::Move => OrderSpec::MoveTo {
                 x: t.tile.x,
@@ -394,6 +405,7 @@ fn panel_buttons(
     captains: Query<(&SpawnId, &Captain)>,
     followers: Query<(&SpawnId, &Follower)>,
     buttons: Query<(&Interaction, &PanelButton), Changed<Interaction>>,
+    progression: Res<Progression>,
     mut out: MessageWriter<SimCommand>,
 ) {
     let Some((captain_e, captain)) = own_army(&selection, &captains) else {
@@ -415,6 +427,7 @@ fn panel_buttons(
                     queue: false,
                 },
             ),
+            PanelButton::Forage => send(&mut out, forage(captain, &progression)),
             PanelButton::Cancel => send(&mut out, CommandKind::CancelOrders { captain }),
             PanelButton::Appoint => {
                 // The selected person, if they follow this captain.
@@ -430,10 +443,23 @@ fn panel_buttons(
     }
 }
 
+/// SIM-38: forage where the army stands, within progression.ron
+/// `forage.default_radius`.
+fn forage(captain: u64, progression: &Progression) -> CommandKind {
+    CommandKind::IssueOrder {
+        captain,
+        order: OrderSpec::Forage {
+            radius: progression.data.forage.default_radius,
+        },
+        queue: false,
+    }
+}
+
 fn hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
     selection: Res<Selection>,
     captains: Query<(&SpawnId, &Captain)>,
+    progression: Res<Progression>,
     mut out: MessageWriter<SimCommand>,
 ) {
     let Some((e, captain)) = own_army(&selection, &captains) else {
@@ -448,6 +474,9 @@ fn hotkeys(
                 queue: false,
             },
         );
+    }
+    if keys.just_pressed(KeyCode::KeyF) {
+        send(&mut out, forage(captain, &progression));
     }
     if keys.just_pressed(KeyCode::Backspace) {
         send(&mut out, CommandKind::CancelOrders { captain });
@@ -549,6 +578,7 @@ fn army_panel(
         | OrderSpec::Equip { settlement }
         | OrderSpec::Attack { settlement }
         | OrderSpec::Trade { settlement }
+        | OrderSpec::Give { settlement }
         | OrderSpec::Garrison { settlement } => {
             format!("{} at {}", describe(spec), settlement_name(settlement))
         }

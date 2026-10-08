@@ -5,7 +5,7 @@
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
 use rand::RngExt;
-use sim_agents::{CombatStats, Employment, Enlisted, Stance, Strike, Villager};
+use sim_agents::{CombatStats, Deed, Employment, Enlisted, Stance, Strike, Villager};
 use sim_core::rng::rng_key;
 use sim_core::{Allegiance, FactionId, Motion, Position, SimSeed, SimTick, SpawnId};
 use sim_economy::{Home, SettlementEconomy, Stockpile, Workplace};
@@ -31,12 +31,16 @@ pub(crate) fn anyone_fell(c: Res<Casualties>) -> bool {
     !c.pending.is_empty()
 }
 
-/// Act, after blows: lists fighters whose health ran out (in combat or
-/// starving). Only fighters can die, so only they are checked.
+/// Act, after blows: lists everyone whose health ran out, in SpawnId
+/// order. Fighters on the grid fall in combat; soldiers and captains
+/// (`Enlisted`) can also starve in `soldier_upkeep`, after the grid was
+/// built, and the grid skips the dead, so they are found here by a scan of
+/// the enlisted (G4). Both lists are merged, sorted and deduplicated.
 pub(crate) fn find_fallen(
     grid: Res<FighterGrid>,
     mut casualties: ResMut<Casualties>,
     q: Query<&CombatStats>,
+    enlisted: Query<(Entity, &SpawnId, &CombatStats), With<Enlisted>>,
 ) {
     casualties.fallen.clear();
     casualties.pending.clear();
@@ -46,7 +50,14 @@ pub(crate) fn find_fallen(
         .copied()
         .filter(|(_, e)| q.get(*e).is_ok_and(|cs| !cs.alive()))
         .collect();
+    dead.extend(
+        enlisted
+            .iter()
+            .filter(|(_, _, cs)| !cs.alive())
+            .map(|(e, id, _)| (*id, e)),
+    );
     dead.sort_unstable();
+    dead.dedup();
     casualties.pending.extend(dead.into_iter().map(|(_, e)| e));
 }
 
@@ -145,6 +156,10 @@ pub(crate) fn casualties(world: &mut World) {
                 .resource_mut::<ArmyStats>()
                 .of(against)
                 .villagers_killed += 1;
+            // GP-22: the village remembers who its dead fought.
+            if let Some(home) = world.get::<Villager>(e).map(|v| v.settlement) {
+                crate::orders::goodwill_deed(world, home, against, Deed::Killing);
+            }
         }
         let enlisted = world.get::<Enlisted>(e).is_some();
         if enlisted {
@@ -216,4 +231,61 @@ fn succeed(world: &mut World, fallen: Entity, captain: Captain, loss: f32, tick:
         tick,
         format!("{who}: the captain fell; {} takes command", heir_id.0),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::progression::tests::run_app;
+    use crate::spawn::{ArmySpec, spawn_army};
+    use sim_agents::Needs;
+    use sim_core::SimStepper;
+
+    /// G4: a soldier and a captain who starve to death in `soldier_upkeep`
+    /// (after the fighter grid was built, which skips the dead) are found
+    /// by `find_fallen` on the next tick and removed; the captain's command
+    /// passes on.
+    #[test]
+    fn a_starved_soldier_and_captain_are_removed() {
+        let (mut app, start) = run_app(42);
+        let world = app.world_mut();
+        let at = world.resource::<crate::RunProgress>().start;
+        let cap = spawn_army(
+            world,
+            &ArmySpec {
+                food_days: 0.0,
+                ..ArmySpec::new(FactionId::PLAYER, at, 4)
+            },
+        );
+        let mut q = world.query::<(Entity, &SpawnId, &Follower)>();
+        let mut men: Vec<(SpawnId, Entity)> = q
+            .iter(world)
+            .filter(|(_, _, f)| f.captain == cap)
+            .map(|(e, id, _)| (*id, e))
+            .collect();
+        men.sort_unstable();
+        let man = men[0].1;
+        for e in [cap, man] {
+            world.get_mut::<Needs>(e).unwrap().hunger = 1.0;
+            world.get_mut::<CombatStats>(e).unwrap().health = 0.001;
+        }
+        let lost = world.resource::<ArmyStats>().get(FactionId::PLAYER).lost;
+        app.step(3);
+        let world = app.world_mut();
+        assert!(world.get_entity(man).is_err(), "the starved soldier stayed");
+        assert!(world.get_entity(cap).is_err(), "the starved captain stayed");
+        assert_eq!(
+            world.resource::<ArmyStats>().get(FactionId::PLAYER).lost,
+            lost + 2
+        );
+        let mut q = world.query::<&Captain>();
+        assert_eq!(
+            q.iter(world)
+                .filter(|c| c.faction == FactionId::PLAYER)
+                .count(),
+            2,
+            "the champion, and the follower who took command"
+        );
+        assert!(world.get_entity(start.champion).is_ok(), "the band is fed");
+    }
 }

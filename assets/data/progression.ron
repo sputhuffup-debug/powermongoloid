@@ -97,4 +97,36 @@
         (id: 5, name: "Stronger rival", text: "The rival levies more men and builds faster.", group: Some("rival"), weight: 0.8, effects: [RivalStrength(1.25)]),
         (id: 6, name: "Weaker rival", text: "The rival levies fewer men.", group: Some("rival"), weight: 0.8, effects: [RivalStrength(0.8)]),
     ],
+
+    // GP-22: goodwill change (-1..1) at a settlement for each deed done
+    // there, toward the doer's faction. villagers.ron `goodwill` spreads a
+    // fraction of it to nearby settlements. The "Known" boon's goodwill is
+    // its own `Goodwill(..)` effect above.
+    goodwill_deeds: (
+        trade: 0.02,     // food bought with goods (Trade, passive gathering)
+        equip: 0.02,     // arms bought with food (passive Equip)
+        seize: -0.05,    // a hungry neutral army takes from the reserve
+        plunder: -0.1,   // an aggressive army plunders
+        provoke: -0.1,   // the settlement is provoked into arms
+        killing: -0.02,  // each of its militia killed
+        request: 0.2,    // a request answered (M4 step 3b)
+    ),
+
+    // SIM-38: wild food. The island is cut into 16-tile patches; a full
+    // patch holds `per_tile` food value per grass or forest tile and grows
+    // back `regrow_per_day` of that each day. A band on a Forage order
+    // stands still and, every `every_ticks`, gathers `per_member` per head
+    // (times its ForageYield modifier) from the patches within its radius,
+    // emptying them, until its baggage is full or nothing is left. A day's
+    // foraging (24 harvests) brings about 1.3 days of food per head. A band
+    // of eleven foraging within 32 tiles (about 20 patches, ~35 food value)
+    // empties them in about four days, so it has to keep moving.
+    forage: (
+        per_tile: 0.01,
+        regrow_per_day: 0.1,
+        every_ticks: 100,
+        per_member: 0.05,
+        max_radius: 64,
+        default_radius: 32,
+    ),
 )

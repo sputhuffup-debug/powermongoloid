@@ -22,7 +22,8 @@ cargo run -p game_app -- --seed 7      # another island
 | Inspect | Click a villager or soldier: needs, what they're doing and why. Click a settlement or its name: population, food, stores, threat. Esc clears |
 | Select an army | Click one of its soldiers or its captain. The captain panel opens (bottom centre) |
 | Move | Right-click the ground (Shift queues) |
-| Village orders | Right-click a village: gather food, recruit 10, trade, equip, attack, garrison (a village you hold), move here |
+| Village orders | Right-click a village: gather food, recruit 10, trade, equip, give food (what the baggage holds beyond a day's need), attack, garrison (a village you hold), move here |
+| Forage | F or the panel's *Forage* button: the army stands and gathers wild food around it until the baggage is full or the land is bare |
 | Posture | Panel buttons, or P to cycle passive / neutral / aggressive |
 | Return to camp / cancel orders | R / Backspace |
 | Appoint a captain | Select one of your followers, then *Appoint captain* in the panel |

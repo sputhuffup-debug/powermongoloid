@@ -150,8 +150,11 @@ pub(crate) fn soldier_upkeep(
             if morale != cs.morale {
                 cs.morale = morale;
             }
+            // A follower who starved to death this tick doesn't desert:
+            // `find_fallen` removes him next tick (G4).
             if let Some(mut f) = follower
                 && !f.deserting
+                && cs.alive()
                 && morale < u.desert_below
                 && (unfed || act.kind == ActionKind::Rout)
             {

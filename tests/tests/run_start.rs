@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 use bevy_ecs::prelude::*;
 use bevy_math::IVec2;
 use common::*;
-use sim_agents::{CombatStats, Villagers};
+use sim_agents::{CombatStats, Goodwill, GoodwillLedger, Villagers};
 use sim_core::{
     Calendar, Cause, CommandKind, FactionId, OfferKind, Offers, Position, RunOutcome, RunState,
     SimEventKind, SimSeed, SimStepper, SimTick, SpawnId, compute_state_hash,
@@ -542,6 +542,15 @@ fn choosing_the_start_boon_applies_once() {
     }
 }
 
+/// Settlement `id`'s goodwill toward the player.
+fn goodwill(app: &mut App, id: u64) -> f32 {
+    let world = app.world_mut();
+    let mut q = world.query::<(&SpawnId, &Goodwill)>();
+    q.iter(world)
+        .find(|(s, _)| s.0 == id)
+        .map_or(0.0, |(_, g)| g.get(FactionId::PLAYER))
+}
+
 /// One pass of `choosing_the_start_boon_applies_once`: a fresh seed-42 run
 /// whose start offer's first choice is `card`.
 fn pick_once(data: &Progression, card: u16) {
@@ -631,9 +640,12 @@ fn pick_once(data: &Progression, card: u16) {
                 checked += 1;
             }
             Effect::Goodwill(g) => {
+                // GP-22: posted to the ledger and applied the same tick;
+                // its spread reaches only other settlements.
+                assert!(app.world().resource::<GoodwillLedger>().is_empty());
                 assert_eq!(
-                    progress.pending_goodwill,
-                    vec![(nearest, g)],
+                    goodwill(&mut app, nearest),
+                    g,
                     "goodwill for the settlement nearest the champion"
                 );
                 checked += 1;
@@ -649,6 +661,7 @@ fn pick_once(data: &Progression, card: u16) {
     }
     assert!(checked > 0, "{} has an effect the state shows", boon.name);
 
+    let goodwill_after = goodwill(&mut app, nearest);
     // A double click: refused, counted, and nothing applies twice.
     choose(&mut app, offer, choice);
     app.step(1);
@@ -659,6 +672,7 @@ fn pick_once(data: &Progression, card: u16) {
     );
     let again = app.world().resource::<RunProgress>().clone();
     assert_eq!(again, progress, "nothing applies twice");
+    assert_eq!(goodwill(&mut app, nearest), goodwill_after);
     assert_eq!(food(&app), food_after);
     assert_eq!(armed(&mut app), armed_after);
     let chosen: Vec<_> = chronicle(&app)

@@ -63,8 +63,17 @@ Example: `Hide` (SIM-13).
    - Do the order's work when the army arrives.
    - Pop the order when it's done.
    - Anything that moves goods between stockpiles belongs here: it is the serial logistics step.
+   - An order that stays put and works on a clock, like `Forage` (SIM-38, `crates/sim_military/src/wild.rs`), sets the goal to `None`, records its start in `order.since` at step 0, and acts every N ticks from it.
 4. **Make it reachable from the UI** in `crates/game_ui/src/army.rs` (menu entry or hotkey). The UI only writes `SimCommand`s.
 5. **Add it to the random orders** in `sample_orders` in `crates/sim_headless/src/lib.rs`, so the determinism test exercises it. Add a scenario test in `tests/tests/orders.rs`, or in a file of its own for an order that plays out over days (Garrison's is `tests/tests/conquest.rs`).
+
+## Make a deed move goodwill
+
+Goodwill (GP-22) changes only through the ledger in `crates/sim_agents/src/standing.rs`, so the spread to nearby settlements and the order of application stay deterministic.
+1. **Name the deed:** append a variant to `Deed` (append only: the tag is hashed and saved).
+2. **Give it a delta** in `assets/data/progression.ron` `goodwill_deeds`, read through `GoodwillDeeds::delta` in `crates/sim_military/src/progression/mod.rs`, and document it in [DATA.md](DATA.md).
+3. **Post it from a serial step** with `orders::goodwill_deed(world, settlement, faction, deed)` (in `crates/sim_military/src/orders.rs`), once per deed, not once per tick of an ongoing one (see `provoke`, which posts only a fresh provocation). Never write `Goodwill` directly.
+4. **Test it** like `deeds_move_goodwill_and_word_spreads`: check the ledger right after the deed, then step a tick and check the settlement and a neighbour within `goodwill.spread_radius`.
 
 ## Add a data field
 
@@ -94,7 +103,7 @@ Copy `tests/tests/posture.rs`. Shared helpers (commands, positions, village list
 
 Runs (GP-21, M4) add rules that the developed world, the benchmarks and the M2/M3 tests must never feel ([ADR 0013](../adr/0013-runs-presets-and-run-config.md)). Example: the start boon, applied in `crates/sim_military/src/progression/offers.rs`.
 1. **Put the data** in `assets/data/progression.ron` and document every field in [DATA.md](DATA.md). Cards are append only: a card's `id` is its index, and offers and saves store it.
-2. **Gate it:** add the system with `.run_if(in_run)`, or check `RunState::in_run()` in a serial step, so nothing runs or draws outside a run.
+2. **Gate it:** add the system with `.run_if(in_run)`, or check `RunState::in_run()` in a serial step, so nothing runs or draws outside a run. Hourly or daily steps go inside the progress driver (`progression::progress`) in its documented order, like `wild::regrow`, never as systems of their own. A rule that changes goodwill posts to the `GoodwillLedger` (see "Make a deed move goodwill").
 3. **Draw from a new stream key** (`rng_key("sim_military::your_step")`), never an existing one, and spawn only in a serial step with `NextSpawnId::allocate`.
 4. **Keep multipliers exact no-ops:** read `FactionModifiers::mult`, which is exactly 1.0 when nothing applies.
 5. **Player choices arrive as commands.** Post an offer with `sim_core::post_offer` and apply the pick in `progression::choose`; a run ends only through `RunState::finish(outcome, cause)` from a serial step (`settle_outcome` records `RunEnded`).

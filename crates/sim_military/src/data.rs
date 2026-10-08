@@ -167,6 +167,9 @@ pub struct ArmyData {
     pub gather_target_days: f32,
     pub trade_keep_days: f32,
     pub trade_value: Vec<(String, f32)>,
+    /// `Give` (GP-22, M4): the army keeps this many days of its own food
+    /// and hands the rest to the settlement.
+    pub give_keep_days: f32,
     /// Taking settlements (M4).
     pub conquest: ConquestData,
     /// Holding them: garrisons, supply and revolts (M4).
@@ -185,6 +188,7 @@ impl ArmyData {
             ("conquest.hold_hours", c.hold_hours),
             ("conquest.timeout_hours", c.timeout_hours),
             ("garrison.keep_days", g.keep_days),
+            ("give_keep_days", self.give_keep_days),
         ];
         for (name, v) in finite_non_negative {
             if !v.is_finite() || v < 0.0 {

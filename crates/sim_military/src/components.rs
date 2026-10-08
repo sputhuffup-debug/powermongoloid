@@ -72,6 +72,14 @@ fn hash_spec(spec: &OrderSpec, h: &mut StateHasher) {
             h.u8(8);
             h.u64(settlement);
         }
+        OrderSpec::Forage { radius } => {
+            h.u8(9);
+            h.u16(radius);
+        }
+        OrderSpec::Give { settlement } => {
+            h.u8(10);
+            h.u64(settlement);
+        }
     }
 }
 
@@ -87,6 +95,8 @@ pub fn describe(spec: &OrderSpec) -> String {
         OrderSpec::Trade { .. } => "trade".into(),
         OrderSpec::Scout { x, y } => format!("scout ({x}, {y})"),
         OrderSpec::Garrison { .. } => "garrison".into(),
+        OrderSpec::Forage { radius } => format!("forage within {radius}"),
+        OrderSpec::Give { .. } => "give food".into(),
     }
 }
 
@@ -290,6 +300,11 @@ pub struct FactionStats {
     /// faction owns (garrison supply, M4). Not counted in `seized`,
     /// `bought` or `given`.
     pub supplied: f32,
+    /// Food value handed to settlements by `Give` orders (GP-22, M4): what
+    /// was actually delivered. Not `given`, which is village to army.
+    pub donated: f32,
+    /// Food value gathered from the wild by `Forage` orders (SIM-38, M4).
+    pub foraged: f32,
 }
 
 /// Totals for every faction, by faction id. Hashed.
@@ -333,6 +348,8 @@ impl StateHash for ArmyStats {
             h.u32(s.rejected_commands);
             h.u32(s.conquests);
             h.f32(s.supplied);
+            h.f32(s.donated);
+            h.f32(s.foraged);
         }
     }
 }

@@ -112,6 +112,17 @@ pub enum OrderSpec {
     Garrison {
         settlement: u64,
     },
+    /// Live off the land (SIM-38, M4): the band stands where it is and
+    /// gathers wild food from the patches within `radius` tiles until its
+    /// baggage is full or nothing is left (`sim_military::wild`).
+    Forage {
+        radius: u16,
+    },
+    /// Hand the food the baggage holds beyond a few days' need to the
+    /// settlement's storehouse (GP-22, M4): a gift, or a request answered.
+    Give {
+        settlement: u64,
+    },
 }
 
 /// Command payloads.

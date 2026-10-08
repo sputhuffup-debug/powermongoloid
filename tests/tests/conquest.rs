@@ -473,8 +473,12 @@ fn starve(app: &mut App, s: Entity) -> u32 {
 /// GP-06, SIM-24: a conquest left without food or a garrison revolts. The
 /// stores spoil and the farmers are cut off, and the warband rides away.
 /// Mean loyalty sinks below `loyalty.revolt_threshold`; a day later the
-/// hamlet throws off its owner. Within two to three days of the conquest
-/// it is independent again, its residents with it.
+/// hamlet throws off its owner. Within one to three days of the conquest
+/// it is independent again, its residents with it. (Before M4 step 3 it
+/// took two to three: since goodwill moves, the attack's provocation and
+/// killings lower goodwill toward the conqueror, so loyalty is seeded
+/// below the neutral 0.5 and sinks below the threshold at the first day
+/// tick.)
 #[test]
 fn a_starved_conquest_revolts() {
     let (mut app, s) = conquered(SEED);
@@ -517,8 +521,8 @@ fn a_starved_conquest_revolts() {
         "the Revolt names the old owner, the hamlet, the new owner and the cause"
     );
     assert!(
-        (2 * tpd..=3 * tpd).contains(&after),
-        "revolt {after} ticks after the conquest, not within 2-3 days"
+        (tpd..=3 * tpd).contains(&after),
+        "revolt {after} ticks after the conquest, not within 1-3 days"
     );
     let below = log
         .iter()

@@ -259,6 +259,30 @@ pub struct LoyaltyData {
     pub revolt_threshold: f32,
 }
 
+/// How word of a deed travels (GP-22): `goodwill` in villagers.ron. A
+/// fraction of every goodwill change at one settlement reaches each other
+/// settlement whose centre lies within the radius of its centre.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GoodwillData {
+    /// Tiles (centre to centre) within which word of a deed spreads.
+    pub spread_radius: f32,
+    /// Fraction (0..1) of a change that reaches each settlement in range.
+    pub spread_fraction: f32,
+}
+
+impl GoodwillData {
+    /// Checks the ranges: a finite radius >= 0 and a fraction in 0..1.
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.spread_radius.is_finite() || self.spread_radius < 0.0 {
+            return Err("villagers: goodwill.spread_radius must be >= 0".into());
+        }
+        if !(0.0..=1.0).contains(&self.spread_fraction) {
+            return Err("villagers: goodwill.spread_fraction must be in 0..1".into());
+        }
+        Ok(())
+    }
+}
+
 /// Original given and family names.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NameData {
@@ -278,6 +302,7 @@ pub struct VillagerData {
     pub idle: IdleData,
     pub combat: CivilianCombat,
     pub loyalty: LoyaltyData,
+    pub goodwill: GoodwillData,
     pub names: NameData,
 }
 
@@ -334,6 +359,7 @@ impl Villagers {
             return Err("villagers: ai.decision_interval must be > 0".into());
         }
         data.loyalty.validate()?;
+        data.goodwill.validate()?;
         let day = calendar.ticks_per_day as f32;
         let mut per_terrain = [None; 8];
         for t in Terrain::ALL {
@@ -462,6 +488,30 @@ mod tests {
         ];
         for l in bad {
             assert!(l.validate().is_err(), "{l:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_bad_goodwill() {
+        let good = Villagers::default_data(&Calendar::default_data())
+            .data
+            .goodwill;
+        assert_eq!(good.validate(), Ok(()));
+        for bad in [
+            GoodwillData {
+                spread_radius: -1.0,
+                ..good.clone()
+            },
+            GoodwillData {
+                spread_fraction: 1.5,
+                ..good.clone()
+            },
+            GoodwillData {
+                spread_fraction: f32::NAN,
+                ..good.clone()
+            },
+        ] {
+            assert!(bad.validate().is_err(), "{bad:?}");
         }
     }
 

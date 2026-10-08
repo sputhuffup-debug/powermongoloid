@@ -8,8 +8,8 @@ use bevy_ecs::prelude::*;
 use bevy_math::IVec2;
 use rand::RngExt;
 use sim_agents::{
-    ActionKind, Activity, CombatStats, Employment, Enlisted, SettlementLoyalty, Stage, Stance,
-    Threat, Travel, TravelState, Villager, Villagers,
+    ActionKind, Activity, CombatStats, Deed, Employment, Enlisted, GoodwillLedger,
+    SettlementLoyalty, Stage, Stance, Threat, Travel, TravelState, Villager, Villagers,
 };
 use sim_core::rng::rng_key;
 use sim_core::{
@@ -25,6 +25,8 @@ use crate::components::{
 use crate::conquest::{militia_or_foes_near, owner_of, transfer};
 use crate::data::Army;
 use crate::index::FighterGrid;
+use crate::progression::Progression;
+use crate::wild::{Harvest, harvest};
 
 /// Commands read this tick, waiting to be applied by `apply_commands`.
 /// Always empty between ticks.
@@ -129,6 +131,17 @@ fn validate_spec(
             }
             Ok(())
         }
+        // SIM-38: within progression.ron `forage.max_radius`.
+        OrderSpec::Forage { radius } => {
+            let max = world.resource::<Progression>().data.forage.max_radius;
+            if radius == 0 || radius > max {
+                return Err("bad forage radius");
+            }
+            Ok(())
+        }
+        OrderSpec::Give { settlement } => find_settlement(world, settlement)
+            .map(|_| ())
+            .ok_or("no such settlement"),
     }
 }
 
@@ -323,7 +336,8 @@ fn spare_food(world: &World, s: Entity, keep_days: f32) -> f32 {
     (held - keep_days * daily_need(world, se.population)).max(0.0)
 }
 
-fn army_size(world: &mut World, captain: Entity) -> u32 {
+/// People in captain `captain`'s army, the captain included.
+pub(crate) fn army_size(world: &mut World, captain: Entity) -> u32 {
     let mut q = world.query::<&Follower>();
     q.iter(world).filter(|f| f.captain == captain).count() as u32 + 1
 }
@@ -350,6 +364,7 @@ pub fn provoke(world: &mut World, s: Entity, faction: FactionId) {
     threat.level = 1.0;
     if fresh {
         world.resource_mut::<ArmyStats>().of(faction).provocations += 1;
+        goodwill_deed(world, s, faction, Deed::Provoke);
         let (who, name) = (faction_name(world, faction), settlement_name(world, s));
         log(world, format!("{name} takes up arms against {who}"));
     }
@@ -363,6 +378,22 @@ pub(crate) fn call_off(world: &mut World, s: Entity, faction: FactionId) {
     {
         threat.provoked_by = None;
         threat.provoked_until = 0;
+    }
+}
+
+/// GP-22: posts `faction`'s `deed` at settlement `s` to the goodwill
+/// ledger, with its delta from progression.ron `goodwill_deeds`. Nothing
+/// for an entity without a SpawnId or a zero delta.
+pub(crate) fn goodwill_deed(world: &mut World, s: Entity, faction: FactionId, deed: Deed) {
+    let delta = world
+        .resource::<Progression>()
+        .data
+        .goodwill_deeds
+        .delta(deed);
+    if let Some(id) = world.get::<SpawnId>(s).map(|id| id.0) {
+        world
+            .resource_mut::<GoodwillLedger>()
+            .push(id, faction, delta, deed);
     }
 }
 
@@ -401,11 +432,16 @@ fn barter(world: &mut World, captain: Entity, s: Entity, keep_days: f32, room: f
         let paid = move_good(world, captain, store, g, n);
         owed -= paid as f32 * v;
     }
+    if bought > 0.0
+        && let Some(faction) = world.get::<Captain>(captain).map(|c| c.faction)
+    {
+        goodwill_deed(world, s, faction, Deed::Trade);
+    }
     bought
 }
 
 /// Food value the baggage lacks to feed the army for `gather_target_days`.
-fn baggage_room(world: &mut World, captain: Entity) -> f32 {
+pub(crate) fn baggage_room(world: &mut World, captain: Entity) -> f32 {
     let days = world.resource::<Army>().data.gather_target_days;
     let people = army_size(world, captain);
     let econ = world.resource::<Economy>();
@@ -460,6 +496,7 @@ fn gather_food(world: &mut World, captain: Entity, s: Entity, hungry: bool) {
             stats.of(c.faction).given += given;
             stats.of(c.faction).seized += seized;
             if seized > 0.0 {
+                goodwill_deed(world, s, c.faction, Deed::Seize);
                 log(world, format!("{who} took food from {name}"));
             } else if given > 0.0 {
                 log(world, format!("{name} shared food with {who}"));
@@ -470,6 +507,7 @@ fn gather_food(world: &mut World, captain: Entity, s: Entity, hungry: bool) {
             let seized = move_food(world, store, captain, spare);
             world.resource_mut::<ArmyStats>().of(c.faction).seized += seized;
             if seized > 0.0 {
+                goodwill_deed(world, s, c.faction, Deed::Plunder);
                 log(world, format!("{who} plundered {name}"));
                 provoke(world, s, c.faction);
             }
@@ -496,6 +534,37 @@ fn supply(world: &mut World, captain: Entity, s: Entity) -> f32 {
         log(world, format!("{name} supplied {who}"));
     }
     got
+}
+
+/// Give (GP-22): the army hands the food its baggage holds beyond
+/// `give_keep_days` of its daily need to the settlement's storehouse (most
+/// nourishing first, as far as the storehouse has room). Returns the food
+/// value delivered, which is what `move_food` actually moved, and counts it
+/// in `FactionStats::donated`. M4 step 3b's BringFood request is answered
+/// by this value.
+pub(crate) fn give(world: &mut World, captain: Entity, s: Entity) -> f32 {
+    let faction = world.get::<Captain>(captain).expect("captain").faction;
+    let Some(store) = storehouse(world, s) else {
+        return 0.0;
+    };
+    let keep = world.resource::<Army>().data.give_keep_days;
+    let people = army_size(world, captain);
+    let held = {
+        let econ = world.resource::<Economy>();
+        world
+            .get::<Stockpile>(captain)
+            .map_or(0.0, |b| b.food_value(econ))
+    };
+    let spare = (held - keep * daily_need(world, people)).max(0.0);
+    let delivered = move_food(world, captain, store, spare);
+    let (who, name) = (faction_name(world, faction), settlement_name(world, s));
+    if delivered > 0.0 {
+        world.resource_mut::<ArmyStats>().of(faction).donated += delivered;
+        log(world, format!("{who} gave food to {name}"));
+    } else {
+        log(world, format!("{who} had no food to spare for {name}"));
+    }
+    delivered
 }
 
 fn good_named(econ: &Economy, name: &str) -> Option<GoodId> {
@@ -533,6 +602,9 @@ fn equip(world: &mut World, captain: Entity, s: Entity) {
                 let n = have.min((food * 0.5 / price) as u32);
                 let paid = move_food(world, captain, store, n as f32 * price);
                 world.resource_mut::<ArmyStats>().of(c.faction).bought += paid;
+                if paid > 0.0 {
+                    goodwill_deed(world, s, c.faction, Deed::Equip);
+                }
                 n
             }
             Posture::Neutral => have / 2,
@@ -787,6 +859,40 @@ fn step_order(world: &mut World, e: Entity, tick: u64) {
                 }
             }
         }
+        OrderSpec::Forage { radius } => {
+            // SIM-38: hold here and live off the land, a harvest every
+            // `forage.every_ticks`, until the baggage is full or the
+            // patches within the radius are empty.
+            c.goal = None;
+            if order.step == 0 {
+                order.step = 1;
+                order.since = tick;
+                order.origin = tile;
+            }
+            let every = world
+                .resource::<Progression>()
+                .data
+                .forage
+                .every_ticks
+                .max(1);
+            let held = tick - order.since;
+            if held > 0 && held.is_multiple_of(every) {
+                *world.get_mut::<Captain>(e).expect("captain") = c.clone();
+                let who = faction_name(world, c.faction);
+                match harvest(world, e, radius, tick) {
+                    Harvest::Gathered(_) => {}
+                    Harvest::Full => {
+                        log(world, format!("{who}: the baggage is full of wild food"));
+                        done = true;
+                    }
+                    Harvest::Exhausted => {
+                        log(world, format!("{who}: nothing left to forage here"));
+                        done = true;
+                    }
+                }
+                c = world.get::<Captain>(e).expect("captain").clone();
+            }
+        }
         OrderSpec::Garrison { settlement } => {
             // GP-05: stand at the centre for as long as the settlement is
             // ours; its spare food feeds the army (`forage`).
@@ -806,6 +912,7 @@ fn step_order(world: &mut World, e: Entity, tick: u64) {
         | OrderSpec::GatherFood { settlement }
         | OrderSpec::Equip { settlement }
         | OrderSpec::Trade { settlement }
+        | OrderSpec::Give { settlement }
         | OrderSpec::Attack { settlement } => {
             let Some(s) = settlement_of(world, settlement) else {
                 c.orders.pop_front();
@@ -833,6 +940,9 @@ fn step_order(world: &mut World, e: Entity, tick: u64) {
                         let keep = world.resource::<Army>().data.trade_keep_days;
                         let bought = barter(world, e, s, keep, room);
                         world.resource_mut::<ArmyStats>().of(c.faction).bought += bought;
+                    }
+                    OrderSpec::Give { .. } => {
+                        give(world, e, s);
                     }
                     _ => {}
                 }
@@ -1078,6 +1188,7 @@ mod tests {
     use crate::progression::tests::run_app;
     use crate::spawn::{ArmySpec, spawn_army};
     use crate::upkeep::{Deserters, apply_desertions};
+    use bevy_app::App;
     use sim_agents::{Loyalty, Owner};
     use sim_core::SimStepper;
 
@@ -1316,5 +1427,253 @@ mod tests {
         assert!(world.get::<Enlisted>(e).is_none());
         assert_eq!(world.get::<Allegiance>(e).unwrap().0, FactionId::RIVAL);
         assert_eq!(world.get::<Loyalty>(e).unwrap().0, 0.2);
+    }
+
+    /// Settlement `s`'s goodwill toward `f`.
+    fn goodwill(world: &World, s: Entity, f: FactionId) -> f32 {
+        world.get::<sim_agents::Goodwill>(s).unwrap().get(f)
+    }
+
+    /// GP-22: deeds post goodwill changes with progression.ron's deltas:
+    /// a fair trade +, a plunder and its provocation -. Applied in
+    /// `AgentSet::Standing`, a fraction reaches the settlements within
+    /// `goodwill.spread_radius`, and the ledger is emptied.
+    #[test]
+    fn deeds_move_goodwill_and_word_spreads() {
+        let (mut app, _) = run_app(42);
+        let list = settlements(app.world_mut());
+        let world = app.world_mut();
+        let deeds = world.resource::<Progression>().data.goodwill_deeds;
+        let g = world.resource::<Villagers>().data.goodwill.clone();
+        // The first village with a neighbour in range, and that neighbour.
+        let (a, b) = list
+            .iter()
+            .find_map(|&(_, a, ac)| {
+                list.iter()
+                    .find(|&&(_, b, bc)| b != a && (bc - ac).as_vec2().length() <= g.spread_radius)
+                    .map(|&(_, b, _)| (a, b))
+            })
+            .expect("two villages within the spread radius");
+        let ac = center(world, a).unwrap();
+        let pop = world.get::<SettlementEconomy>(a).unwrap().population;
+        let need = daily_need(world, pop);
+        stock_food(world, a, 5.0 * need);
+
+        // Passive: buys food with wood, a fair trade.
+        let econ = world.resource::<Economy>().clone();
+        let wood = good_named(&econ, "wood").unwrap();
+        let buyer = army(world, FactionId::PLAYER, ac, Posture::Passive, 0.0);
+        empty_baggage(world, buyer);
+        world.get_mut::<Stockpile>(buyer).unwrap().add(wood, 50);
+        gather_food(world, buyer, a, true);
+        // Aggressive raiders plunder (and so provoke).
+        let raider = army(world, FactionId::RAIDERS, ac, Posture::Aggressive, 0.0);
+        empty_baggage(world, raider);
+        gather_food(world, raider, a, true);
+        // Keep `forage` from gathering again during the step below.
+        for cap in [buyer, raider] {
+            world.get_mut::<Captain>(cap).unwrap().last_forage = 1;
+        }
+        let sa = world.get::<SpawnId>(a).unwrap().0;
+        let mut posted: Vec<(u64, FactionId, Deed)> = world
+            .resource::<GoodwillLedger>()
+            .0
+            .iter()
+            .map(|c| (c.settlement, c.faction, c.cause))
+            .collect();
+        posted.sort();
+        assert_eq!(
+            posted,
+            vec![
+                (sa, FactionId::PLAYER, Deed::Trade),
+                (sa, FactionId::RAIDERS, Deed::Plunder),
+                (sa, FactionId::RAIDERS, Deed::Provoke),
+            ]
+        );
+        let (b0, a0) = (
+            goodwill(world, b, FactionId::RAIDERS),
+            goodwill(world, a, FactionId::RAIDERS),
+        );
+        app.step(1);
+        let world = app.world_mut();
+        assert!(world.resource::<GoodwillLedger>().is_empty());
+        let near = |x: f32, y: f32| (x - y).abs() < 1e-4;
+        let hit = deeds.plunder + deeds.provoke;
+        // Killings in this tick could add more; there are none at tick 1.
+        assert!(near(goodwill(world, a, FactionId::RAIDERS) - a0, hit));
+        assert!(near(
+            goodwill(world, b, FactionId::RAIDERS) - b0,
+            hit * g.spread_fraction
+        ));
+        assert!(near(goodwill(world, a, FactionId::PLAYER), deeds.trade));
+        assert!(near(
+            goodwill(world, b, FactionId::PLAYER),
+            deeds.trade * g.spread_fraction
+        ));
+    }
+
+    /// GP-22: Give hands the baggage's food beyond `give_keep_days` of the
+    /// army's need to the storehouse, counts what was delivered in
+    /// `donated`, and ends the order.
+    #[test]
+    fn giving_hands_over_food_beyond_the_keep() {
+        let (mut app, _) = run_app(42);
+        let (aid, a, ac) = settlements(app.world_mut())[0];
+        let world = app.world_mut();
+        let cap = army(world, FactionId::PLAYER, ac, Posture::Neutral, 5.0);
+        let keep = world.resource::<Army>().data.give_keep_days;
+        let people = army_size(world, cap);
+        let need = daily_need(world, people);
+        let econ = world.resource::<Economy>().clone();
+        let bag = |w: &World| w.get::<Stockpile>(cap).unwrap().food_value(&econ);
+        let (bag0, store0) = (bag(world), store_food(world, a));
+        world
+            .get_mut::<Captain>(cap)
+            .unwrap()
+            .orders
+            .push_back(Order::new(OrderSpec::Give { settlement: aid }));
+        app.step(1);
+        let world = app.world_mut();
+        let donated = world.resource::<ArmyStats>().get(FactionId::PLAYER).donated;
+        println!(
+            "bag {bag0:.1} -> {:.1}, keep {:.1}, donated {donated:.1}",
+            bag(world),
+            keep * need
+        );
+        assert!(donated > 0.0, "{:?}", lines(world));
+        assert!(world.get::<Captain>(cap).unwrap().orders.is_empty(), "done");
+        // The army ate a little this tick, and move_food rounds down per
+        // good: the rest stays in the baggage.
+        assert!(bag(world) >= keep * need - 1.0, "gave away its own keep");
+        assert!(donated <= bag0 - keep * need + 1e-3);
+        assert!(store_food(world, a) > store0, "the storehouse got it");
+        assert!(lines(world).iter().any(|l| l.contains("gave food")));
+
+        // An army with nothing to spare gives nothing.
+        let poor = army(world, FactionId::PLAYER, ac, Posture::Neutral, 0.5);
+        assert_eq!(give(world, poor, a), 0.0);
+    }
+
+    /// SIM-38: a foraging band holds where it stands and fills its
+    /// baggage from the wild, emptying the patches around it; the order
+    /// ends when the baggage is full or the land is bare. A radius of 0 or
+    /// beyond `forage.max_radius` is refused.
+    #[test]
+    fn a_foraging_band_lives_off_the_land() {
+        use crate::progression::tests::command;
+        use crate::wild::WildFood;
+        let (mut app, start) = run_app(42);
+        let c = start.champion;
+        let world = app.world_mut();
+        let id = world.get::<SpawnId>(c).unwrap().0;
+        let f = world.resource::<Progression>().data.forage;
+        let at = world.get::<Position>(c).unwrap().0;
+        let r = f.default_radius;
+        empty_baggage(world, c);
+        let wild0 = world.resource::<WildFood>().available(at, r as f32);
+        assert!(wild0 > 0.0, "the start has wild food");
+        let rejected = |app: &App| {
+            app.world()
+                .resource::<ArmyStats>()
+                .get(FactionId::PLAYER)
+                .rejected_commands
+        };
+        for radius in [0, f.max_radius + 1] {
+            let before = rejected(&app);
+            command(
+                &mut app,
+                FactionId::PLAYER,
+                CommandKind::IssueOrder {
+                    captain: id,
+                    order: OrderSpec::Forage { radius },
+                    queue: false,
+                },
+            );
+            assert_eq!(rejected(&app), before + 1, "radius {radius}");
+        }
+        command(
+            &mut app,
+            FactionId::PLAYER,
+            CommandKind::IssueOrder {
+                captain: id,
+                order: OrderSpec::Forage { radius: r },
+                queue: false,
+            },
+        );
+        app.step(f.every_ticks * 6);
+        let world = app.world_mut();
+        let stats = world.resource::<ArmyStats>().get(FactionId::PLAYER);
+        let cap = world.get::<Captain>(c).unwrap().clone();
+        let left = world.resource::<WildFood>().available(at, r as f32);
+        println!("foraged {:.2}, wild {wild0:.1} -> {left:.1}", stats.foraged);
+        assert_eq!(cap.goal, None, "holds");
+        assert_eq!(
+            cap.orders.front().map(|o| o.spec),
+            Some(OrderSpec::Forage { radius: r })
+        );
+        assert!(
+            world
+                .get::<Position>(c)
+                .unwrap()
+                .0
+                .as_vec2()
+                .distance(at.as_vec2())
+                < 3.0
+        );
+        assert!(stats.foraged > 0.0, "{:?}", lines(world));
+        assert!(left < wild0, "the patches were not touched");
+        // Six harvests of per_member each, give or take one unit a harvest.
+        let people = army_size(world, c) as f32;
+        let econ = world.resource::<Economy>().clone();
+        let grain = econ.food_value(*econ.foods_by_value().last().unwrap());
+        let expect = 6.0 * f.per_member * people;
+        assert!(
+            (stats.foraged - expect).abs() <= 6.0 * grain,
+            "{} vs {expect}",
+            stats.foraged
+        );
+        assert!(
+            (wild0 - left - expect).abs() < 1e-2,
+            "depleted by the harvest"
+        );
+
+        // Bare land ends the order at the next harvest.
+        let patches = world.resource::<WildFood>().patches_within(at, r as f32);
+        for p in patches {
+            world.resource_mut::<WildFood>().level[p] = 0.0;
+        }
+        app.step(f.every_ticks);
+        let world = app.world_mut();
+        assert!(world.get::<Captain>(c).unwrap().orders.is_empty());
+        assert!(
+            lines(world)
+                .iter()
+                .any(|l| l.contains("nothing left to forage"))
+        );
+
+        // A full baggage ends it too.
+        let target = world.resource::<Army>().data.gather_target_days;
+        let people = army_size(world, c);
+        let need = daily_need(world, people);
+        let grain_id = *econ.foods_by_value().last().unwrap();
+        {
+            let mut bag = world.get_mut::<Stockpile>(c).unwrap();
+            let units = (target * need / grain).ceil() as u32 + 10;
+            bag.capacity += units;
+            bag.add(grain_id, units);
+        }
+        command(
+            &mut app,
+            FactionId::PLAYER,
+            CommandKind::IssueOrder {
+                captain: id,
+                order: OrderSpec::Forage { radius: r },
+                queue: false,
+            },
+        );
+        app.step(f.every_ticks);
+        let world = app.world_mut();
+        assert!(world.get::<Captain>(c).unwrap().orders.is_empty());
+        assert!(lines(world).iter().any(|l| l.contains("baggage is full")));
     }
 }

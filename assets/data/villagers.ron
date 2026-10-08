@@ -105,6 +105,16 @@
         revolt_threshold: 0.35,
     ),
 
+    // GP-22: word of a deed travels. Each goodwill change at a settlement
+    // (a fair trade, a seizure, a killing, a request answered) also reaches
+    // every other settlement whose centre lies within `spread_radius` tiles
+    // of its centre, scaled by `spread_fraction`. Deltas per deed are in
+    // progression.ron `goodwill_deeds`.
+    goodwill: (
+        spread_radius: 150.0,
+        spread_fraction: 0.25,
+    ),
+
     // Original names: given name + household family name.
     names: (
         given: [

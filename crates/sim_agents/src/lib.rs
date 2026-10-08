@@ -18,6 +18,8 @@
 //!   settlement's [`Owner`] and [`Goodwill`], [`set_owner`] to hand it over
 //!   ([`standing`]), and each villager's [`Loyalty`], drifted daily and
 //!   summed into [`SettlementLoyalty`] ([`loyalty`], [`AgentSet::Standing`]).
+//!   Deeds move goodwill through the [`GoodwillLedger`], applied with its
+//!   spread to nearby settlements first in [`AgentSet::Standing`] (GP-22).
 //!
 //! Tuning lives in `villagers.ron` ([`Villagers`]). Never depends on
 //! rendering, windowing, audio or asset crates.
@@ -47,7 +49,7 @@ pub use food::FoodSecurity;
 pub use loyalty::{Loyalty, SettlementLoyalty};
 pub use population::PopulationReport;
 pub use population::civilian_stats;
-pub use standing::{Goodwill, Owner, OwnerChange, set_owner};
+pub use standing::{Deed, Goodwill, GoodwillChange, GoodwillLedger, Owner, OwnerChange, set_owner};
 
 /// Villager systems, for ordering other crates' systems around them.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -56,8 +58,9 @@ pub enum AgentSet {
     Move,
     Perform,
     Needs,
-    /// Standing and loyalty (SimSet::Needs, after `Needs`): the daily
-    /// `drift_loyalty`, then `aggregate_loyalty` (GP-06, SIM-24).
+    /// Standing and loyalty (SimSet::Needs, after `Needs`):
+    /// `apply_goodwill` when deeds are waiting (GP-22), then the daily
+    /// `drift_loyalty` and `aggregate_loyalty` (GP-06, SIM-24).
     Standing,
 }
 
@@ -82,6 +85,7 @@ impl Plugin for AgentsPlugin {
         }
         app.insert_resource(villagers)
             .init_resource::<PopulationReport>()
+            .init_resource::<GoodwillLedger>()
             .add_systems(
                 FixedUpdate,
                 (
@@ -96,9 +100,9 @@ impl Plugin for AgentsPlugin {
                     (act::update_needs, food::update_food_security)
                         .in_set(SimSet::Needs)
                         .in_set(AgentSet::Needs),
-                    // M4 step 3 puts `standing::apply_goodwill` (run only
-                    // when its ledger has entries) first in this chain.
+                    // Goodwill first, so a day's drift sees today's deeds.
                     (
+                        standing::apply_goodwill.run_if(standing::ledger_nonempty),
                         loyalty::drift_loyalty.run_if(on_day),
                         loyalty::aggregate_loyalty.run_if(on_day),
                     )
@@ -128,6 +132,7 @@ impl Plugin for AgentsPlugin {
             .register_hashed::<Goodwill>()
             .register_hashed::<Loyalty>()
             .register_hashed::<SettlementLoyalty>()
+            .register_hashed_resource::<GoodwillLedger>()
             .exempt_from_hash::<DecisionTrace>(
                 "explains the last decision; derived, never read by the sim",
             )

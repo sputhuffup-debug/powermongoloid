@@ -22,7 +22,7 @@ pub mod start;
 use bevy_ecs::prelude::*;
 use bevy_math::IVec2;
 use serde::{Deserialize, Serialize};
-use sim_agents::{CombatStats, Villagers};
+use sim_agents::{CombatStats, Deed, Villagers};
 use sim_core::{
     Allegiance, FactionId, OfferKind, RunState, SimEvent, SimEventKind, SimSeed, SpawnId, Stat,
     StateHash, StateHasher, post_offer,
@@ -124,8 +124,8 @@ pub enum Effect {
     FoodDays(f32),
     /// A weapon for the champion and every follower.
     ArmBand,
-    /// Goodwill in the settlement nearest the champion (GP-22, applied once
-    /// goodwill exists, M4 step 3).
+    /// Goodwill in the populated settlement nearest the champion (GP-22),
+    /// posted to the goodwill ledger, so word of it spreads.
     Goodwill(f32),
     /// This fraction of the food in every storehouse is lost at the start.
     Stores(f32),
@@ -171,6 +171,63 @@ pub struct ModifierData {
     pub effects: Vec<Effect>,
 }
 
+/// Goodwill deltas per deed (GP-22): `goodwill_deeds` in progression.ron.
+/// Each is the change (-1..1) at the settlement where the deed happened;
+/// villagers.ron `goodwill` spreads a fraction of it to its neighbours.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct GoodwillDeeds {
+    /// Food bought fairly, with goods (Trade, passive gathering).
+    pub trade: f32,
+    /// Arms bought with food (passive Equip).
+    pub equip: f32,
+    /// Food taken from the reserve by a hungry neutral army.
+    pub seize: f32,
+    /// Food plundered by an aggressive army.
+    pub plunder: f32,
+    /// Provoking the settlement into arms.
+    pub provoke: f32,
+    /// Each of its militia killed (toward the faction they fought).
+    pub killing: f32,
+    /// A request answered (M4 step 3b).
+    pub request: f32,
+}
+
+impl GoodwillDeeds {
+    /// The delta for `deed`. [`Deed::Boon`] carries its own amount (the
+    /// boon's `Goodwill` effect), so it is 0 here.
+    pub fn delta(&self, deed: Deed) -> f32 {
+        match deed {
+            Deed::Trade => self.trade,
+            Deed::Equip => self.equip,
+            Deed::Seize => self.seize,
+            Deed::Plunder => self.plunder,
+            Deed::Provoke => self.provoke,
+            Deed::Killing => self.killing,
+            Deed::Request => self.request,
+            Deed::Boon => 0.0,
+        }
+    }
+}
+
+/// Wild foraging (SIM-38): `forage` in progression.ron. See
+/// [`crate::wild`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ForageData {
+    /// Food value a full patch holds per grass or forest tile.
+    pub per_tile: f32,
+    /// Fraction (0..1) of a patch's capacity that grows back each day.
+    pub regrow_per_day: f32,
+    /// A foraging band harvests once every this many ticks.
+    pub every_ticks: u64,
+    /// Food value each member (captain included) gathers per harvest,
+    /// before the faction's `ForageYield` modifier.
+    pub per_member: f32,
+    /// The largest radius (tiles) a `Forage` order may have.
+    pub max_radius: u16,
+    /// The radius the game's Forage button uses.
+    pub default_radius: u16,
+}
+
 /// The whole of progression.ron, as written. See docs/dev/DATA.md.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProgressionData {
@@ -188,6 +245,10 @@ pub struct ProgressionData {
     pub modifiers_per_run: (u32, u32),
     /// Every run modifier, by id.
     pub modifiers: Vec<ModifierData>,
+    /// Goodwill deltas per deed (GP-22).
+    pub goodwill_deeds: GoodwillDeeds,
+    /// Wild foraging (SIM-38).
+    pub forage: ForageData,
 }
 
 /// Progression data (GP-21, GP-27, SIM-34). Hashed as its RON text.
@@ -275,6 +336,28 @@ impl Progression {
         if lo > hi || hi as usize > d.modifiers.len() {
             return Err("progression: modifiers_per_run must be (min <= max <= cards)".into());
         }
+        let g = &d.goodwill_deeds;
+        if [
+            g.trade, g.equip, g.seize, g.plunder, g.provoke, g.killing, g.request,
+        ]
+        .iter()
+        .any(|v| !(-1.0..=1.0).contains(v))
+        {
+            return Err("progression: goodwill_deeds must be in -1..1".into());
+        }
+        let f = &d.forage;
+        if !non_negative(f.per_tile) || !non_negative(f.per_member) {
+            return Err("progression: forage per_tile and per_member must be >= 0".into());
+        }
+        if !(0.0..=1.0).contains(&f.regrow_per_day) {
+            return Err("progression: forage.regrow_per_day must be in 0..1".into());
+        }
+        if f.every_ticks == 0 || f.default_radius == 0 || f.default_radius > f.max_radius {
+            return Err(
+                "progression: forage needs every_ticks > 0 and 0 < default_radius <= max_radius"
+                    .into(),
+            );
+        }
         Ok(())
     }
 
@@ -348,9 +431,6 @@ pub struct RunProgress {
     pub modifiers: Vec<u16>,
     /// Boon cards picked, in pick order. Kept for the run (GP-24).
     pub boons: Vec<u16>,
-    /// Goodwill gains waiting for the goodwill ledger (settlement SpawnId,
-    /// amount), from the "Known" start boon. Applied in M4 step 3.
-    pub pending_goodwill: Vec<(u64, f32)>,
     /// Whether the one succession of the run has happened (SIM-35, step 6).
     pub succession_used: bool,
 }
@@ -377,11 +457,6 @@ impl StateHash for RunProgress {
         h.u32(self.boons.len() as u32);
         for &b in &self.boons {
             h.u16(b);
-        }
-        h.u32(self.pending_goodwill.len() as u32);
-        for &(s, g) in &self.pending_goodwill {
-            h.u64(s);
-            h.f32(g);
         }
         h.bool(self.succession_used);
     }
@@ -428,7 +503,6 @@ pub fn setup_run(world: &mut World) -> Option<RunStart> {
         band: draws.band,
         modifiers: draws.modifiers.clone(),
         boons: Vec::new(),
-        pending_goodwill: Vec::new(),
         succession_used: false,
     });
     // Seat the player first, so spawn_army doesn't seat it at a snapped tile.
@@ -451,6 +525,8 @@ pub fn setup_run(world: &mut World) -> Option<RunStart> {
         .entity_mut(champion)
         .insert((Champion, Traits(vec![draws.champion_trait])));
     apply_start_modifiers(world, &data, &draws.modifiers);
+    // SIM-38: the island's wild food, full at the start.
+    crate::wild::ensure_built(world);
     let offer = post_offer(
         world,
         FactionId::PLAYER,
@@ -549,7 +625,7 @@ fn spoil_stores(world: &mut World, fraction: f32) {
 /// 1. `veterans::end_battles` (step 6)
 /// 2. `monuments::hold` (step 4)
 /// 3. [`crate::conquest::revolts`] (daily)
-/// 4. `wild::regrow` (daily, run; step 3)
+/// 4. [`crate::wild::regrow`] (daily, run)
 /// 5. `drifters::draw` (daily, run; step 3)
 /// 6. `requests::step` (run; step 3)
 /// 7. invitations (run; step 3)
@@ -561,6 +637,7 @@ fn spoil_stores(world: &mut World, fraction: f32) {
 pub fn progress(world: &mut World) {
     let _span = tracing::info_span!("sim_military::progress").entered();
     crate::conquest::revolts(world);
+    crate::wild::regrow(world);
 }
 
 /// The faction's champion (lowest SpawnId if, oddly, several).
@@ -613,6 +690,10 @@ pub(crate) mod tests {
         assert!(check(&|d| d.modifiers_per_run = (2, 1)).is_err());
         assert!(check(&|d| d.bands[0].groups.clear()).is_err());
         assert!(check(&|d| d.start.min_monuments = 9).is_err());
+        assert!(check(&|d| d.goodwill_deeds.plunder = -1.5).is_err());
+        assert!(check(&|d| d.forage.every_ticks = 0).is_err());
+        assert!(check(&|d| d.forage.default_radius = d.forage.max_radius + 1).is_err());
+        assert!(check(&|d| d.forage.regrow_per_day = 2.0).is_err());
     }
 
     /// A run app on the run island, set up (the plugins `sim_headless`
