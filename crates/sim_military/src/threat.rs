@@ -1,12 +1,13 @@
 //! How frightening nearby armies are to each settlement (SIM-13). Villagers
 //! read their settlement's `Threat` through the safety need. A settlement's
 //! own owner's armies don't frighten it (GP-05), unless it has risen
-//! against them (GP-06).
+//! against them (GP-06). The radius is army.ron `threat.radius` plus the
+//! owner's `ThreatRadius` modifier (watchtowers, GP-23).
 
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
 use sim_agents::{Owner, Threat};
-use sim_core::SimTick;
+use sim_core::{FactionId, FactionModifiers, SimTick, Stat};
 use sim_world::Settlement;
 
 use crate::data::Army;
@@ -16,11 +17,15 @@ pub(crate) fn update_threats(
     tick: Res<SimTick>,
     army: Res<Army>,
     index: Res<ArmyIndex>,
+    mods: Res<FactionModifiers>,
     mut q: Query<(&Settlement, Option<&Owner>, &mut Threat)>,
 ) {
     let _span = tracing::info_span!("sim_military::update_threats").entered();
-    let radius = army.data.threat.radius;
     for (s, owner, mut threat) in &mut q {
+        // GP-23: watchtowers widen the warning radius of their holder's
+        // settlements (flat tiles; nothing without modifiers).
+        let owner_faction = owner.map_or(FactionId::INDEPENDENT, |o| o.faction);
+        let radius = army.data.threat.radius + mods.value(owner_faction, Stat::ThreatRadius);
         let mut t = *threat;
         if t.provoked_by.is_some() && tick.0 > t.provoked_until {
             t.provoked_by = None;

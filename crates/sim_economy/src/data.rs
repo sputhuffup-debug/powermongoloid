@@ -2,7 +2,7 @@
 
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
-use sim_core::{StateHash, StateHasher};
+use sim_core::{Stat, StateHash, StateHasher};
 
 /// `assets/data/economy.ron`, embedded at compile time.
 pub const DEFAULT_ECONOMY_RON: &str = include_str!("../../../assets/data/economy.ron");
@@ -146,6 +146,12 @@ pub struct RecipeDef {
     pub inputs: Vec<(String, u16)>,
     pub outputs: Vec<(String, u16)>,
     pub duration: u32,
+    /// The faction modifier that applies to this recipe (GP-23), read
+    /// where villagers work (sim_agents `act::perform`): `Some(FoodYield)`
+    /// scales its outputs, `Some(SmithSpeed)` shortens its duration. `None`
+    /// (the default) for none. Other stats are refused.
+    #[serde(default)]
+    pub modifier: Option<Stat>,
 }
 
 /// Workplace placement and staffing, from economy.ron.
@@ -182,6 +188,8 @@ pub struct Recipe {
     pub inputs: Vec<(GoodId, u16)>,
     pub outputs: Vec<(GoodId, u16)>,
     pub duration: u32,
+    /// See [`RecipeDef::modifier`].
+    pub modifier: Option<Stat>,
 }
 
 /// Resolved economy data, a hashed resource.
@@ -234,6 +242,12 @@ impl Economy {
                     r.workplace.name()
                 ));
             }
+            if !matches!(r.modifier, None | Some(Stat::FoodYield | Stat::SmithSpeed)) {
+                return Err(format!(
+                    "economy: recipe {}: modifier must be FoodYield or SmithSpeed",
+                    r.name
+                ));
+            }
             recipes.push(Recipe {
                 name: r.name.clone(),
                 workplace: r.workplace,
@@ -241,6 +255,7 @@ impl Economy {
                 inputs: resolve_list(&r.inputs)?,
                 outputs: resolve_list(&r.outputs)?,
                 duration: r.duration,
+                modifier: r.modifier,
             });
         }
         for kind in [
@@ -367,6 +382,21 @@ mod tests {
     fn unknown_goods_are_rejected() {
         let text = DEFAULT_ECONOMY_RON.replace("(\"bread\", 4)", "(\"cake\", 4)");
         assert!(Economy::from_ron(&text).unwrap_err().contains("cake"));
+    }
+
+    /// GP-23: farming and fishing scale with FoodYield, smithing with
+    /// SmithSpeed; a recipe without the field has none, and any other stat
+    /// is refused.
+    #[test]
+    fn recipe_modifiers_are_food_yield_or_smith_speed() {
+        let e = Economy::default_data();
+        let of = |name: &str| e.recipes.iter().find(|r| r.name == name).unwrap().modifier;
+        assert_eq!(of("farming"), Some(Stat::FoodYield));
+        assert_eq!(of("fishing"), Some(Stat::FoodYield));
+        assert_eq!(of("toolmaking"), Some(Stat::SmithSpeed));
+        assert_eq!(of("baking"), None);
+        let text = DEFAULT_ECONOMY_RON.replace("Some(SmithSpeed)", "Some(Morale)");
+        assert!(Economy::from_ron(&text).unwrap_err().contains("modifier"));
     }
 
     #[test]

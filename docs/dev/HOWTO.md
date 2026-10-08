@@ -105,10 +105,26 @@ Runs (GP-21, M4) add rules that the developed world, the benchmarks and the M2/M
 1. **Put the data** in `assets/data/progression.ron` and document every field in [DATA.md](DATA.md). Cards are append only: a card's `id` is its index, and offers and saves store it.
 2. **Gate it:** add the system with `.run_if(in_run)`, or check `RunState::in_run()` in a serial step, so nothing runs or draws outside a run. Hourly or daily steps go inside the progress driver (`progression::progress`) in its documented order, like `wild::regrow`, never as systems of their own. A rule that changes goodwill posts to the `GoodwillLedger` (see "Make a deed move goodwill").
 3. **Draw from a new stream key** (`rng_key("sim_military::your_step")`), never an existing one, and spawn only in a serial step with `NextSpawnId::allocate`.
-4. **Keep multipliers exact no-ops:** read `FactionModifiers::mult`, which is exactly 1.0 when nothing applies.
+4. **Keep multipliers exact no-ops:** read `FactionModifiers::mult`, which is exactly 1.0 when nothing applies (see "Add a modifier").
 5. **Player choices arrive as commands.** Post an offer with `sim_core::post_offer` and apply the pick in `progression::choose`; a run ends only through `RunState::finish(outcome, cause)` from a serial step (`settle_outcome` records `RunEnded`).
 6. **Test it on a run** with `common::run_app` and read what happened from `common::chronicle`, never from `SimEvent` messages. Extend `run_state_hash_covers_every_sim_component` in `tests/tests/determinism.rs` so the new state is covered.
 7. **Show the developed world didn't change:** re-run `village_day`, `famine`, `army_march`, `posture`, `starving_army` and `orders`, and compare `cargo run --release -p sim_headless -- --seed 42 --ticks 1200 --stats-every 600` with its output before the change (only the state hash may differ).
+
+## Add a monument type
+
+Monuments (GP-23, [ADR 0015](../adr/0015-monuments-and-faction-modifiers.md)) are placed by worldgen and held, guarded and turned into bonuses by `sim_military`. Example: the watchtower, which widens its holder's threat radius.
+1. **Name the kind:** append a variant to `MonumentKind` in `crates/sim_world/src/monuments.rs` (append only: the index is hashed and saved), with its `name()` and `title()`, and bump `COUNT` and `ALL`.
+2. **Place it:** add it to `monuments.kinds` in the run preset of `assets/data/worldgen.ron` with a weight and a `SiteRule` (`crates/sim_world/src/settings.rs`; a new kind of site needs a rule in `crates/sim_world/src/worldgen/monuments.rs`). Re-run `--test worldgen` and `--test run_start`: the start still needs 2-3 monuments nearby.
+3. **Give it a bonus:** add a `monuments.kinds` entry in `assets/data/progression.ron` (`stat`, `bonus`, `cap`, `set_bonus`). If its stat has no consumer yet, add one (see "Add a modifier"). `shipped_monument_data_fits_the_island` in `crates/sim_military/src/progression/mod.rs` checks every kind has an entry.
+4. **Document it** in [DATA.md](DATA.md) and the glossary's Monument row, and test the bonus with `monument_modifiers` like `caps_and_set_bonus`.
+
+## Add a modifier
+
+A modifier is a `Stat` in `crates/sim_core/src/modifiers.rs` that monuments, boons, traits and run modifiers can raise, summed per faction into `FactionModifiers` by `rebuild_modifiers` (`crates/sim_military/src/progression/mod.rs`). Example: `MarchSpeed`, read by both `move_captains` and `move_soldiers` in `crates/sim_military/src/soldiers.rs`.
+1. **Append the stat** to `Stat` (append only: data files and saves name it), with `COUNT`, `ALL` and `name()`. Fractions are added to 1.0 (`mult`); flat amounts are read with `value`.
+2. **Read it where the stat is used,** at the point of use: `mods.mult(faction, Stat::X)` with `Res<FactionModifiers>` in a system, or `world.resource::<FactionModifiers>()` in a serial step. Never fold a modifier into `Economy`, `Army` or other data at runtime: their hash covers only the data text (guide G9).
+3. **Keep it an exact no-op at 1.0:** multiply (`x * mult`) or divide by it, never add a rounded difference; integer results round only when there is a fraction, and stochastic rounding draws (from a new stream key) only then (see `yield_units` in `crates/sim_agents/src/act.rs`). The developed world must print the same `sim_headless --seed 42 --ticks 4801 --stats-every 600` before and after.
+4. **Give something the stat:** a `monuments.kinds` entry, or a `Stat(stat, value)` effect of a boon, trait or run modifier in `assets/data/progression.ron`; nothing else writes `FactionModifiers`. Document the stat's meaning in [DATA.md](DATA.md) (`monuments.kinds[].stat`) and test the consumer: run its system once with a modifier set by hand (as `the_loyalty_drift_modifier_speeds_drift` in `crates/sim_agents/src/loyalty.rs` does; in a full app the hourly rebuild would replace it), or give it through a boon or a held monument in a run.
 
 ## Tune behaviour
 

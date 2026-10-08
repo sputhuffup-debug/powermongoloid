@@ -13,6 +13,7 @@ use sim_world::Settlement;
 use crate::components::{Captain, Raider};
 use crate::data::Army;
 use crate::index::ArmyIndex;
+use crate::monuments::Guard;
 
 /// How often a raider reconsiders (ticks).
 const THINK_EVERY: u64 = 300;
@@ -21,7 +22,8 @@ const RAID_BELOW_DAYS: f32 = 2.0;
 
 /// Runs in `SimInputSet::Ai`, after scripted and player input, so its
 /// commands always arrive in the same order (guide G2). In a run, raiders
-/// hunt only the player's armies (guide D2).
+/// hunt only the player's armies (guide D2), and never a monument's guard
+/// camp (GP-23).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // Bevy system parameters.
 pub(crate) fn think(
     tick: Res<SimTick>,
@@ -30,7 +32,7 @@ pub(crate) fn think(
     index: Res<ArmyIndex>,
     villagers: Res<sim_agents::Villagers>,
     mut raiders: Query<(Entity, &SpawnId, &Captain, &Position, &mut Raider)>,
-    captains: Query<(&SpawnId, &Captain, &Position), Without<Raider>>,
+    captains: Query<(&SpawnId, &Captain, &Position), (Without<Raider>, Without<Guard>)>,
     settlements: Query<(&SpawnId, &Settlement, &SettlementEconomy)>,
     mut out: MessageWriter<SimCommand>,
 ) {

@@ -13,8 +13,8 @@ use sim_agents::{
 };
 use sim_core::rng::rng_key;
 use sim_core::{
-    Allegiance, Calendar, Cause, CommandKind, FactionId, OrderSpec, Position, Posture, SimCommand,
-    SimSeed, SimTick, SpawnId,
+    Allegiance, Calendar, Cause, CommandKind, FactionId, FactionModifiers, OrderSpec, Position,
+    Posture, SimCommand, SimSeed, SimTick, SpawnId, Stat,
 };
 use sim_economy::{Economy, GoodId, Occupation, SettlementEconomy, Stockpile, Workplace};
 use sim_world::{FlowCache, Settlement, WorldMap};
@@ -397,14 +397,27 @@ pub(crate) fn goodwill_deed(world: &mut World, s: Entity, faction: FactionId, de
     }
 }
 
+/// The food value one unit of `g` fetches when `faction` trades it: army.ron
+/// `trade_value` times the faction's `TradeValue` modifier (GP-23; exactly
+/// `trade_value` without modifiers). Both what a barter offers and what it
+/// pays use it.
+fn trade_price(army: &Army, mods: &FactionModifiers, faction: FactionId, g: GoodId) -> f32 {
+    army.trade_value(g) * mods.mult(faction, Stat::TradeValue)
+}
+
 /// Barters the baggage's non-food goods for food (Trade, and passive
-/// gathering). Returns the food value bought.
+/// gathering), at [`trade_price`]. Returns the food value bought.
 fn barter(world: &mut World, captain: Entity, s: Entity, keep_days: f32, room: f32) -> f32 {
     let Some(store) = storehouse(world, s) else {
         return 0.0;
     };
     let army = world.resource::<Army>().clone();
     let econ = world.resource::<Economy>().clone();
+    let mods = world.resource::<FactionModifiers>().clone();
+    let faction = world
+        .get::<Captain>(captain)
+        .map_or(FactionId::INDEPENDENT, |c| c.faction);
+    let price = |g: GoodId| trade_price(&army, &mods, faction, g);
     let goods: Vec<(GoodId, u32)> = world
         .get::<Stockpile>(captain)
         .map(|b| {
@@ -415,10 +428,7 @@ fn barter(world: &mut World, captain: Entity, s: Entity, keep_days: f32, room: f
                 .collect()
         })
         .unwrap_or_default();
-    let offer: f32 = goods
-        .iter()
-        .map(|(g, q)| army.trade_value(*g) * *q as f32)
-        .sum();
+    let offer: f32 = goods.iter().map(|(g, q)| price(*g) * *q as f32).sum();
     let want = offer.min(spare_food(world, s, keep_days)).min(room);
     let bought = move_food(world, store, captain, want);
     // Pay for it, good by good in GoodId order.
@@ -427,14 +437,12 @@ fn barter(world: &mut World, captain: Entity, s: Entity, keep_days: f32, room: f
         if owed <= 0.0 {
             break;
         }
-        let v = army.trade_value(g);
+        let v = price(g);
         let n = ((owed / v).ceil() as u32).min(q);
         let paid = move_good(world, captain, store, g, n);
         owed -= paid as f32 * v;
     }
-    if bought > 0.0
-        && let Some(faction) = world.get::<Captain>(captain).map(|c| c.faction)
-    {
+    if bought > 0.0 && world.get::<Captain>(captain).is_some() {
         goodwill_deed(world, s, faction, Deed::Trade);
     }
     bought
@@ -1097,8 +1105,13 @@ fn attack(
 /// faction owns supplies it instead (GP-05): whenever the baggage holds
 /// less than `gather_target_days`, at most once a day, never provoking.
 /// A settlement the army is holding after breaking its defenders (`Attack`
-/// step 2) is left alone.
+/// step 2) is left alone. Monument guards ([`crate::monuments::Guard`])
+/// never gather.
 fn forage(world: &mut World, e: Entity, tick: u64) {
+    // GP-23: a monument's guard camp never eats, so never gathers.
+    if world.get::<crate::monuments::Guard>(e).is_some() {
+        return;
+    }
     let tpd = world.resource::<Calendar>().ticks_per_day;
     let c = world.get::<Captain>(e).expect("captain").clone();
     if tick < c.last_forage + tpd / 4 && c.last_forage != 0 {

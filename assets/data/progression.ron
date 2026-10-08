@@ -155,6 +155,14 @@
         reward_max_food: 30.0,
         reward_goods: 4,
         volunteers: (0, 2),
+        // ClearCamp (GP-23): a monument whose guard camp still has a
+        // captain, within this many tiles of a settlement, may be named by
+        // its "clear the camp" request (one open request per camp, posted
+        // by the nearest settlement that may ask). It is done once the
+        // camp has no captain, with a player captain within
+        // `reward_radius` of the monument. Monuments stand at least 52
+        // tiles from every centre (worldgen.ron).
+        camp_radius: 80.0,
     ),
 
     // GP-22: a settlement that likes the player (goodwill), with a player
@@ -177,5 +185,46 @@
         goodwill: 0.25,
         per_settlement: (0, 2),
         max_per_day: 3,
+    ),
+
+    // GP-23: monuments. Once a game hour, soldiers (not militia, not
+    // routed) within `hold_radius` tiles of a monument are counted by
+    // faction; one faction alone there for `hold_hours` takes it from its
+    // holder. A holder whose soldiers haven't stood there for `drift_days`,
+    // and that owns no settlement within `drift_distance` tiles, loses it
+    // to nobody.
+    monuments: (
+        hold_radius: 10.0,
+        hold_hours: 2.0,
+        drift_days: 3.0,
+        drift_distance: 120.0,
+        // A set bonus needs at least this many monuments of a kind in the
+        // region.
+        set_min: 2,
+        // Per kind: the stat it raises, `bonus` per monument held, capped
+        // at `cap` in all, plus `set_bonus` (beyond the cap) for each
+        // region in which the faction holds every monument of the kind.
+        // Fractions (+0.01 is +1%), except ThreatRadius (flat tiles; keep
+        // threat radius + cap + sets below the 52 tiles between monuments
+        // and settlement centres, or a guard camp frightens a village).
+        kinds: [
+            (kind: StandingStones, stat: Morale, bonus: 0.01, cap: 0.1, set_bonus: 0.02),
+            (kind: RuinedFort, stat: Defence, bonus: 0.01, cap: 0.1, set_bonus: 0.02),
+            (kind: HolyWell, stat: FoodYield, bonus: 0.01, cap: 0.1, set_bonus: 0.02),
+            (kind: RoadMarker, stat: MarchSpeed, bonus: 0.01, cap: 0.1, set_bonus: 0.02),
+            (kind: AncientForge, stat: SmithSpeed, bonus: 0.01, cap: 0.1, set_bonus: 0.02),
+            (kind: MarketCross, stat: TradeValue, bonus: 0.01, cap: 0.1, set_bonus: 0.02),
+            (kind: Wayshrine, stat: LoyaltyDrift, bonus: 0.01, cap: 0.1, set_bonus: 0.02),
+            (kind: Watchtower, stat: ThreatRadius, bonus: 1.0, cap: 2.0, set_bonus: 1.0),
+        ],
+        // Guard camps, drawn per monument at the start (chances add up to
+        // at most 1; the rest stay unguarded): `base` followers plus
+        // `per_tile` for every tile between the start and the monument, at
+        // most `max`. Guards hold their ground, never eat and fight
+        // whoever comes near; the guard faction holds the monument.
+        guards: [
+            (kind: RaiderCamp, chance: 0.3, base: 4, per_tile: 0.02, max: 24, armed: true),
+            (kind: Beasts, chance: 0.2, base: 3, per_tile: 0.015, max: 18, armed: false),
+        ],
     ),
 )

@@ -24,11 +24,11 @@ use bevy_math::IVec2;
 use serde::{Deserialize, Serialize};
 use sim_agents::{CombatStats, Deed, Villagers};
 use sim_core::{
-    Allegiance, FactionId, OfferKind, RunState, SimEvent, SimEventKind, SimSeed, SpawnId, Stat,
-    StateHash, StateHasher, post_offer,
+    Allegiance, FactionId, FactionModifiers, ModifierSource, OfferKind, RunState, SimEvent,
+    SimEventKind, SimSeed, SpawnId, Stat, StateHash, StateHasher, post_offer,
 };
 use sim_economy::{Economy, SettlementEconomy, Stockpile};
-use sim_world::RegionId;
+use sim_world::{Monument, MonumentKind, RegionId};
 
 use crate::components::{Equipment, Factions, Follower};
 use crate::data::UnitStats;
@@ -263,6 +263,9 @@ pub struct RequestData {
     pub reward_goods: u32,
     /// Volunteers promised: a seeded count in (min, max).
     pub volunteers: (u32, u32),
+    /// ClearCamp (M4 step 4): a guarded monument within this many tiles of
+    /// a settlement's centre may be the subject of its request.
+    pub camp_radius: f32,
 }
 
 /// Invitations (GP-22): `invitations` in progression.ron. See
@@ -300,6 +303,92 @@ pub struct DriftersData {
     pub max_per_day: u32,
 }
 
+/// One monument kind's bonus (GP-23): an entry of `monuments.kinds` in
+/// progression.ron. See [`rebuild_modifiers`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MonumentBonus {
+    /// The kind.
+    pub kind: MonumentKind,
+    /// The stat it raises.
+    pub stat: Stat,
+    /// Added to `stat` per monument of this kind held ...
+    pub bonus: f32,
+    /// ... up to this much in all, per faction.
+    pub cap: f32,
+    /// Added (beyond the cap) for each region in which the faction holds
+    /// every monument of this kind (at least `monuments.set_min` of them).
+    pub set_bonus: f32,
+}
+
+/// Who guards a monument (GP-23).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GuardKind {
+    /// A raider camp: raiders (`FactionId::RAIDERS`, without the
+    /// `Raider` AI) who stay put.
+    RaiderCamp,
+    /// A beast lair (`FactionId::BEASTS`).
+    Beasts,
+}
+
+impl GuardKind {
+    /// The faction the guards fight for.
+    pub fn faction(self) -> FactionId {
+        match self {
+            GuardKind::RaiderCamp => FactionId::RAIDERS,
+            GuardKind::Beasts => FactionId::BEASTS,
+        }
+    }
+}
+
+/// A kind of monument guard: an entry of `monuments.guards`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct GuardData {
+    /// Raiders or beasts.
+    pub kind: GuardKind,
+    /// The chance (0..1) that a monument gets this guard. The chances of
+    /// all entries add up to at most 1; the rest stay unguarded.
+    pub chance: f32,
+    /// Followers (besides the captain) at the start spot ...
+    pub base: u32,
+    /// ... plus this many per tile between the start and the monument ...
+    pub per_tile: f32,
+    /// ... but never more than this.
+    pub max: u32,
+    /// The guards carry weapons.
+    pub armed: bool,
+}
+
+/// Monuments (GP-23): `monuments` in progression.ron. See
+/// [`crate::monuments`] and [`rebuild_modifiers`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MonumentData {
+    /// Soldiers within this many tiles of a monument stand at it.
+    pub hold_radius: f32,
+    /// One faction's soldiers alone at a monument for this many game hours
+    /// take it.
+    pub hold_hours: f32,
+    /// A held monument drifts back to nobody after this many days without
+    /// its holder's soldiers at it ...
+    pub drift_days: f32,
+    /// ... unless it is within this many tiles of a settlement its holder
+    /// owns.
+    pub drift_distance: f32,
+    /// A set bonus needs at least this many monuments of the kind in the
+    /// region.
+    pub set_min: u32,
+    /// The bonus of each kind.
+    pub kinds: Vec<MonumentBonus>,
+    /// Who may guard a monument.
+    pub guards: Vec<GuardData>,
+}
+
+impl MonumentData {
+    /// The bonus of `kind`, if listed.
+    pub fn bonus(&self, kind: MonumentKind) -> Option<&MonumentBonus> {
+        self.kinds.iter().find(|b| b.kind == kind)
+    }
+}
+
 /// The whole of progression.ron, as written. See docs/dev/DATA.md.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProgressionData {
@@ -327,6 +416,8 @@ pub struct ProgressionData {
     pub invitations: InvitationData,
     /// Drifters (GP-22).
     pub drifters: DriftersData,
+    /// Monuments: holding, guards and bonuses (GP-23).
+    pub monuments: MonumentData,
 }
 
 /// Progression data (GP-21, GP-27, SIM-34). Hashed as its RON text.
@@ -447,6 +538,7 @@ impl Progression {
             r.reward_radius,
             r.reward_food_days,
             r.reward_max_food,
+            r.camp_radius,
         ]
         .iter()
         .any(|v| !non_negative(*v))
@@ -480,6 +572,45 @@ impl Progression {
                 "progression: drifters need radius >= 0, goodwill in -1..1 and per_settlement (min <= max)"
                     .into(),
             );
+        }
+        let m = &d.monuments;
+        if !weight_ok(m.hold_radius)
+            || !non_negative(m.hold_hours)
+            || !non_negative(m.drift_days)
+            || !non_negative(m.drift_distance)
+            || m.set_min == 0
+        {
+            return Err(
+                "progression: monuments need hold_radius > 0, hold_hours, drift_days and drift_distance >= 0, set_min > 0"
+                    .into(),
+            );
+        }
+        for (i, b) in m.kinds.iter().enumerate() {
+            if m.kinds[..i].iter().any(|o| o.kind == b.kind) {
+                return Err(format!(
+                    "progression: monument kind {:?} listed twice",
+                    b.kind
+                ));
+            }
+            if !non_negative(b.bonus) || !non_negative(b.cap) || !non_negative(b.set_bonus) {
+                return Err(format!(
+                    "progression: monument kind {:?} needs bonus, cap and set_bonus >= 0",
+                    b.kind
+                ));
+            }
+        }
+        let mut chance = 0.0;
+        for g in &m.guards {
+            if !(0.0..=1.0).contains(&g.chance) || !non_negative(g.per_tile) || g.base > g.max {
+                return Err(format!(
+                    "progression: guard {:?} needs chance in 0..1, per_tile >= 0 and base <= max",
+                    g.kind
+                ));
+            }
+            chance += g.chance;
+        }
+        if chance > 1.0 + 1e-6 {
+            return Err("progression: monument guard chances add up to more than 1".into());
         }
         Ok(())
     }
@@ -681,6 +812,8 @@ pub fn setup_run(world: &mut World) -> Option<RunStart> {
         .entity_mut(champion)
         .insert((Champion, Traits(vec![draws.champion_trait])));
     apply_start_modifiers(world, &data, &draws.modifiers);
+    // GP-23: every monument gets a holder; some get a guard camp.
+    crate::monuments::setup(world, draws.start);
     // SIM-38: the island's wild food, full at the start.
     crate::wild::ensure_built(world);
     let offer = post_offer(
@@ -779,7 +912,7 @@ fn spoil_stores(world: &mut World, fraction: f32) {
 ///
 /// The order, with the M4 steps that fill it in:
 /// 1. `veterans::end_battles` (step 6)
-/// 2. `monuments::hold` (step 4)
+/// 2. [`crate::monuments::hold`]
 /// 3. [`crate::conquest::revolts`] (daily)
 /// 4. [`crate::wild::regrow`] (daily, run)
 /// 5. [`crate::drifters::draw`] (daily, run)
@@ -787,16 +920,151 @@ fn spoil_stores(world: &mut World, fraction: f32) {
 /// 7. [`crate::invitations::step`] (run)
 /// 8. `dominion::tally` (run; step 5)
 /// 9. `champion::rank_ups` (run; step 6)
-/// 10. `rebuild_modifiers` (step 4)
+/// 10. [`rebuild_modifiers`]
 /// 11. `rival::clock` (run; step 7)
 /// 12. `director::step` (run; step 7)
 pub fn progress(world: &mut World) {
     let _span = tracing::info_span!("sim_military::progress").entered();
+    crate::monuments::hold(world);
     crate::conquest::revolts(world);
     crate::wild::regrow(world);
     crate::drifters::draw(world);
     crate::requests::step(world);
     crate::invitations::step(world);
+    rebuild_modifiers(world);
+}
+
+/// GP-23, GP-24, SIM-34: rebuilds [`FactionModifiers`] from scratch, once a
+/// game hour (slot 10 of [`progress`]; tick 0 counts, so the start boon
+/// picked on the first tick is folded in at once). Span
+/// `sim_military::rebuild_modifiers`. Contributions, in this order:
+///
+/// 1. Held monuments, per faction (never faction 0, nobody) and kind:
+///    `min(count x bonus, cap)` from progression.ron `monuments.kinds`,
+///    then a set bonus for each region in which the faction holds every
+///    monument of the kind (at least `monuments.set_min` of them) - see
+///    [`monument_modifiers`].
+/// 2. The player's boons (`RunProgress::boons`, pick order): their `Stat`
+///    effects.
+/// 3. Every champion's traits (SpawnId order), for the champion's faction.
+/// 4. Run modifiers (`RunProgress::modifiers`, draw order): their `Stat`
+///    effects go to the world row, which applies to every faction.
+///
+/// Nothing else writes the resource; consumers read `mult` or `value` at
+/// the point of use. Outside a run every list is empty and the modifiers
+/// stay exactly zero (every multiplier 1.0).
+pub fn rebuild_modifiers(world: &mut World) {
+    let _span = tracing::info_span!("sim_military::rebuild_modifiers").entered();
+    let data = world.resource::<Progression>().clone();
+    let progress = world.resource::<RunProgress>().clone();
+    let mut q = world.query::<(&SpawnId, &Monument, &crate::monuments::Holder)>();
+    let mut held: Vec<(SpawnId, MonumentKind, RegionId, FactionId)> = q
+        .iter(world)
+        .map(|(id, m, h)| (*id, m.kind, m.region, h.faction))
+        .collect();
+    held.sort_unstable_by_key(|h| h.0);
+    let held: Vec<(MonumentKind, RegionId, FactionId)> =
+        held.into_iter().map(|(_, k, r, f)| (k, r, f)).collect();
+    let mut mods = FactionModifiers::default();
+    monument_modifiers(&mut mods, &held, &data.data.monuments);
+    for &card in &progress.boons {
+        let Some(b) = data.boon(card) else { continue };
+        for e in &b.effects {
+            if let Effect::Stat(stat, v) = *e {
+                mods.add(FactionId::PLAYER, stat, ModifierSource::Boon { card }, v);
+            }
+        }
+    }
+    let mut q = world.query_filtered::<(&SpawnId, &Allegiance, &Traits), With<Champion>>();
+    let mut champions: Vec<(SpawnId, FactionId, Vec<u16>)> = q
+        .iter(world)
+        .map(|(id, a, t)| (*id, a.0, t.0.clone()))
+        .collect();
+    champions.sort_unstable_by_key(|c| c.0);
+    for (_, faction, traits) in champions {
+        for id in traits {
+            let Some(t) = data.trait_data(id) else {
+                continue;
+            };
+            for &(stat, v) in &t.effects {
+                mods.add(faction, stat, ModifierSource::Trait { id }, v);
+            }
+        }
+    }
+    for &card in &progress.modifiers {
+        let Some(m) = data.modifier(card) else {
+            continue;
+        };
+        for e in &m.effects {
+            if let Effect::Stat(stat, v) = *e {
+                mods.add_world(stat, ModifierSource::RunModifier { card }, v);
+            }
+        }
+    }
+    if *world.resource::<FactionModifiers>() != mods {
+        *world.resource_mut::<FactionModifiers>() = mods;
+    }
+}
+
+/// GP-23: adds the bonuses of the monuments in `held` (kind, region,
+/// holder; in SpawnId order) to `mods`. For each holding faction (never
+/// faction 0) in id order, then each kind in id order: `min(count x bonus,
+/// cap)` as [`ModifierSource::Monuments`]. Then for each kind and region
+/// in id order with at least `set_min` monuments of the kind, all held by
+/// one faction: `set_bonus` for it as [`ModifierSource::SetBonus`]. Kinds
+/// without a `monuments.kinds` entry give nothing.
+pub fn monument_modifiers(
+    mods: &mut FactionModifiers,
+    held: &[(MonumentKind, RegionId, FactionId)],
+    data: &MonumentData,
+) {
+    let mut factions: Vec<FactionId> = held
+        .iter()
+        .map(|h| h.2)
+        .filter(|f| *f != FactionId::INDEPENDENT)
+        .collect();
+    factions.sort_unstable();
+    factions.dedup();
+    for &f in &factions {
+        for kind in MonumentKind::ALL {
+            let Some(b) = data.bonus(kind) else { continue };
+            let count = held.iter().filter(|h| h.0 == kind && h.2 == f).count();
+            if count == 0 {
+                continue;
+            }
+            let v = (count as f32 * b.bonus).min(b.cap);
+            mods.add(f, b.stat, ModifierSource::Monuments { kind: kind as u8 }, v);
+        }
+    }
+    let mut regions: Vec<RegionId> = held.iter().map(|h| h.1).collect();
+    regions.sort_unstable();
+    regions.dedup();
+    for kind in MonumentKind::ALL {
+        let Some(b) = data.bonus(kind) else { continue };
+        for &region in &regions {
+            let mut set = held.iter().filter(|h| h.0 == kind && h.1 == region);
+            let Some(first) = set.clone().next() else {
+                continue;
+            };
+            let holder = first.2;
+            if holder == FactionId::INDEPENDENT
+                || b.set_bonus == 0.0
+                || (set.clone().count() as u32) < data.set_min
+                || !set.all(|h| h.2 == holder)
+            {
+                continue;
+            }
+            mods.add(
+                holder,
+                b.stat,
+                ModifierSource::SetBonus {
+                    kind: kind as u8,
+                    region,
+                },
+                b.set_bonus,
+            );
+        }
+    }
 }
 
 /// The faction's champion (lowest SpawnId if, oddly, several).
@@ -859,6 +1127,204 @@ pub(crate) mod tests {
         assert!(check(&|d| d.invitations.goodwill = 1.5).is_err());
         assert!(check(&|d| d.invitations.expiry_hours = 0.0).is_err());
         assert!(check(&|d| d.drifters.per_settlement = (2, 1)).is_err());
+        assert!(check(&|d| d.requests.camp_radius = -1.0).is_err());
+        assert!(check(&|d| d.monuments.hold_radius = 0.0).is_err());
+        assert!(check(&|d| d.monuments.set_min = 0).is_err());
+        assert!(check(&|d| d.monuments.kinds[0].cap = -0.1).is_err());
+        assert!(
+            check(&|d| {
+                let k = d.monuments.kinds[0];
+                d.monuments.kinds.push(k);
+            })
+            .is_err()
+        );
+        assert!(check(&|d| d.monuments.guards[0].chance = 0.9).is_err());
+        assert!(check(&|d| d.monuments.guards[0].base = d.monuments.guards[0].max + 1).is_err());
+    }
+
+    /// GP-23: the shipped monument data lists every kind once, and a
+    /// guarded monument never frightens a village: the threat radius plus
+    /// the largest watchtower bonus (the cap, and a set in every region of
+    /// the run island) stays inside the distance worldgen keeps between
+    /// monuments and settlement centres.
+    #[test]
+    fn shipped_monument_data_fits_the_island() {
+        use sim_world::{WorldGenSettings, WorldPreset};
+        let p = Progression::default_data();
+        let m = &p.data.monuments;
+        for kind in MonumentKind::ALL {
+            assert!(m.bonus(kind).is_some(), "{} has a bonus", kind.name());
+        }
+        let island = WorldGenSettings::preset(WorldPreset::Run);
+        let army = crate::Army::default_data(
+            &sim_core::Calendar::default_data(),
+            &Economy::default_data(),
+        );
+        let widest: f32 = m
+            .kinds
+            .iter()
+            .filter(|b| b.stat == Stat::ThreatRadius)
+            .map(|b| b.cap + b.set_bonus * island.regions as f32)
+            .sum();
+        assert!(
+            army.data.threat.radius + widest < island.monuments.min_settlement_distance,
+            "threat radius {} + watchtowers {widest} must stay below {}",
+            army.data.threat.radius,
+            island.monuments.min_settlement_distance
+        );
+    }
+
+    /// GP-23, SIM-34: a modifier reaches its consumers. The champion's
+    /// trait, folded into `FactionModifiers` by the hourly rebuild, speeds
+    /// the whole band's march: the captain walks farther in the same time
+    /// and the followers keep up (both movement systems read it). Other
+    /// factions get nothing.
+    #[test]
+    fn a_march_speed_trait_speeds_the_whole_band() {
+        use sim_core::{CommandKind, OrderSpec, Position, SimStepper};
+        let march = |bonus: Option<f32>| {
+            let (mut app, start) = run_app(42);
+            let world = app.world_mut();
+            if let Some(v) = bonus {
+                let t = world.get::<Traits>(start.champion).unwrap().0[0];
+                world.resource_mut::<Progression>().data.traits[t as usize].effects =
+                    vec![(Stat::MarchSpeed, v)];
+            }
+            let to = world.resource::<RunProgress>().seat_center;
+            let id = world.get::<SpawnId>(start.champion).unwrap().0;
+            command(
+                &mut app,
+                FactionId::PLAYER,
+                CommandKind::IssueOrder {
+                    captain: id,
+                    order: OrderSpec::MoveTo { x: to.x, y: to.y },
+                    queue: false,
+                },
+            );
+            app.step(399);
+            let world = app.world_mut();
+            let mods = world.resource::<FactionModifiers>().clone();
+            let at = world.get::<Position>(start.champion).unwrap().0;
+            let mut q = world.query::<(&Follower, &Position)>();
+            let spread: Vec<f32> = q
+                .iter(world)
+                .filter(|(f, _)| f.captain == start.champion)
+                .map(|(_, p)| (p.0 - at).as_vec2().length())
+                .collect();
+            let mean = spread.iter().sum::<f32>() / spread.len().max(1) as f32;
+            ((at - start.start).as_vec2().length(), mean, mods)
+        };
+        let (base, base_spread, base_mods) = march(None);
+        let (fast, fast_spread, mods) = march(Some(0.5));
+        assert_eq!(base_mods.value(FactionId::PLAYER, Stat::MarchSpeed), 0.0);
+        assert_eq!(mods.value(FactionId::PLAYER, Stat::MarchSpeed), 0.5);
+        // Guard camps' monuments may give the raiders a road marker's
+        // bonus; the trait adds nothing to theirs.
+        assert_eq!(
+            mods.value(FactionId::RAIDERS, Stat::MarchSpeed),
+            base_mods.value(FactionId::RAIDERS, Stat::MarchSpeed)
+        );
+        assert!(
+            fast > base * 1.3,
+            "+50% march speed: {fast:.1} tiles against {base:.1}"
+        );
+        assert!(
+            fast_spread <= base_spread + 2.0,
+            "the followers keep up: {fast_spread:.1} tiles from the captain against {base_spread:.1}"
+        );
+    }
+
+    fn bonus(kind: MonumentKind, stat: Stat) -> MonumentBonus {
+        MonumentBonus {
+            kind,
+            stat,
+            bonus: 0.01,
+            cap: 0.03,
+            set_bonus: 0.02,
+        }
+    }
+
+    /// GP-23: each faction's monuments of a kind add `bonus` each up to
+    /// `cap`; holding every monument of a kind in a region (at least
+    /// `set_min`) adds `set_bonus` beyond the cap; nobody (faction 0) gets
+    /// nothing, a split region no set, and a lone monument no set.
+    #[test]
+    fn caps_and_set_bonus() {
+        use MonumentKind::*;
+        let data = MonumentData {
+            hold_radius: 10.0,
+            hold_hours: 2.0,
+            drift_days: 3.0,
+            drift_distance: 100.0,
+            set_min: 2,
+            kinds: vec![
+                bonus(StandingStones, Stat::Morale),
+                bonus(RuinedFort, Stat::Defence),
+                MonumentBonus {
+                    cap: 2.0,
+                    bonus: 1.0,
+                    set_bonus: 1.0,
+                    ..bonus(Watchtower, Stat::ThreatRadius)
+                },
+            ],
+            guards: Vec::new(),
+        };
+        let (p, r) = (FactionId::PLAYER, FactionId::RIVAL);
+        let nobody = FactionId::INDEPENDENT;
+        let held = [
+            // Stones: the player holds 5 (capped at 3%), every one in
+            // regions 0 and 1 (sets), and region 2's lone stones (no set).
+            (StandingStones, 0, p),
+            (StandingStones, 0, p),
+            (StandingStones, 1, p),
+            (StandingStones, 1, p),
+            (StandingStones, 2, p),
+            // Forts: 2 of region 0's 3 (no set), the rival 1.
+            (RuinedFort, 0, p),
+            (RuinedFort, 0, p),
+            (RuinedFort, 0, r),
+            // Forts of region 3: both nobody's (no bonus, no set).
+            (RuinedFort, 3, nobody),
+            (RuinedFort, 3, nobody),
+            // A kind with no bonus listed gives nothing.
+            (HolyWell, 0, p),
+            (HolyWell, 0, p),
+            // Watchtowers: flat tiles, 3 held, capped at 2, one set.
+            (Watchtower, 1, r),
+            (Watchtower, 1, r),
+            (Watchtower, 2, r),
+        ];
+        let mut mods = FactionModifiers::default();
+        monument_modifiers(&mut mods, &held, &data);
+        let eq = |a: f32, b: f32| (a - b).abs() < 1e-6;
+        assert!(eq(mods.value(p, Stat::Morale), 0.03 + 2.0 * 0.02));
+        assert!(eq(mods.value(p, Stat::Defence), 0.02));
+        assert!(eq(mods.value(r, Stat::Defence), 0.01));
+        assert!(eq(mods.value(r, Stat::ThreatRadius), 2.0 + 1.0));
+        assert_eq!(mods.value(p, Stat::FoodYield), 0.0);
+        assert_eq!(mods.value(nobody, Stat::Defence), 0.0);
+        assert_eq!(mods.value(r, Stat::Morale), 0.0);
+        let sets: Vec<_> = mods
+            .breakdown
+            .iter()
+            .filter(|e| matches!(e.source, ModifierSource::SetBonus { .. }))
+            .map(|e| (e.faction, e.source))
+            .collect();
+        assert_eq!(
+            sets,
+            vec![
+                (Some(p), ModifierSource::SetBonus { kind: 0, region: 0 }),
+                (Some(p), ModifierSource::SetBonus { kind: 0, region: 1 }),
+                (Some(r), ModifierSource::SetBonus { kind: 7, region: 1 }),
+            ]
+        );
+        // Order-independent input: the same holdings shuffled give the
+        // same totals.
+        let mut shuffled = held.to_vec();
+        shuffled.reverse();
+        let mut again = FactionModifiers::default();
+        monument_modifiers(&mut again, &shuffled, &data);
+        assert_eq!(again.by_faction, mods.by_faction);
     }
 
     /// A run app on the run island, set up (the plugins `sim_headless`

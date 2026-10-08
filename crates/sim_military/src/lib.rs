@@ -17,9 +17,10 @@
 //! 6. **Upkeep** (Needs): [`upkeep`] covers eating, morale, starvation and
 //!    desertion.
 //! 7. **Progress** (Needs, hourly): [`progression::progress`] drives
-//!    settlement-level steps in a fixed order, such as [`conquest::revolts`],
-//!    the daily [`wild::regrow`] and [`drifters::draw`], [`requests::step`]
-//!    and [`invitations::step`].
+//!    settlement-level steps in a fixed order, such as [`monuments::hold`],
+//!    [`conquest::revolts`], the daily [`wild::regrow`] and
+//!    [`drifters::draw`], [`requests::step`], [`invitations::step`] and
+//!    [`progression::rebuild_modifiers`].
 //!
 //! Settlements change hands through [`conquest::transfer`]: an `Attack`
 //! that breaks the militia and holds the centre, or a revolt (GP-05,
@@ -34,6 +35,13 @@
 //! `goodwill_deeds` (GP-22). In a run, settlements post [`requests`] the
 //! sim checks off, liked settlements send [`drifters`] and offer lordship
 //! ([`invitations`]).
+//!
+//! In a run, [`monuments`] are held by whoever stands at them alone long
+//! enough; some start guarded by raider camps or beasts (GP-23). Held
+//! monuments, boons, the champion's traits and run modifiers become each
+//! faction's `sim_core::FactionModifiers`, rebuilt hourly and read where
+//! each stat is used (morale, defence and attack, march speed, trade,
+//! threat radius here; yields, smithing and loyalty in sim_agents).
 //!
 //! Also here: army data ([`Army`], `army.ron`), [`spawn::spawn_army`] and
 //! the playtest setup, the scripted [`raiders`] (in `SimInputSet::Ai`), and
@@ -50,6 +58,7 @@ pub mod data;
 pub mod drifters;
 pub mod index;
 pub mod invitations;
+pub mod monuments;
 pub mod orders;
 pub mod progression;
 pub mod raiders;
@@ -74,11 +83,12 @@ pub use components::{
 pub use conquest::{militia_or_foes_near, owner_of, transfer, transfer_seeded};
 pub use data::Army;
 pub use index::{ArmyIndex, ArmyInfo, FighterGrid, Side};
+pub use monuments::{Guard, Holder, NoUpkeep};
 pub use orders::{CommandInbox, arm_followers, enlist, enlist_into, find_settlement, provoke};
 pub use progression::{
-    Champion, DriftersData, ForageData, GoodwillDeeds, InvitationData, Progression, RequestData,
-    RunProgress, RunStart, RunWorld, StartDraws, StartTerrain, Traits, champion_of, draw_start,
-    setup_run,
+    Champion, DriftersData, ForageData, GoodwillDeeds, GuardData, GuardKind, InvitationData,
+    MonumentBonus, MonumentData, Progression, RequestData, RunProgress, RunStart, RunWorld,
+    StartDraws, StartTerrain, Traits, champion_of, draw_start, rebuild_modifiers, setup_run,
 };
 pub use requests::{Request, RequestBoard, RequestKind, Reward};
 pub use soldiers::slot_offset;
@@ -214,6 +224,9 @@ impl Plugin for MilitaryPlugin {
             .register_hashed::<Traits>()
             .register_hashed_resource::<WildFood>()
             .register_hashed_resource::<RequestBoard>()
+            .register_hashed::<Holder>()
+            .register_hashed::<Guard>()
+            .register_hashed::<NoUpkeep>()
             .exempt_from_hash::<MilitaryLog>("UI history; its effects are in the hashed state")
             .exempt_from_hash::<CommandInbox>("always empty between ticks")
             .exempt_from_hash::<ArmyIndex>("rebuilt from hashed state every tick")

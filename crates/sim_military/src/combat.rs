@@ -1,13 +1,18 @@
 //! Combat (SIM-32): blows are resolved serially in SpawnId order, like the
 //! economy's transfers, then the fallen are removed. Damage is
-//! `(attack + weapon) x leadership x roll - (defense + tools)`, at least 1.
+//! `(attack + weapon) x leadership x roll x Attack - (defense + tools)`, at
+//! least 1, divided by the victim's `Defence`, where `Attack` and `Defence`
+//! are the factions' `FactionModifiers` multipliers (GP-23; 1.0 without
+//! modifiers).
 
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
 use rand::RngExt;
 use sim_agents::{CombatStats, Deed, Employment, Enlisted, Stance, Strike, Villager};
 use sim_core::rng::rng_key;
-use sim_core::{Allegiance, FactionId, Motion, Position, SimSeed, SimTick, SpawnId};
+use sim_core::{
+    Allegiance, FactionId, FactionModifiers, Motion, Position, SimSeed, SimTick, SpawnId, Stat,
+};
 use sim_economy::{Home, SettlementEconomy, Stockpile, Workplace};
 use sim_world::world_pos;
 
@@ -67,6 +72,7 @@ pub(crate) fn resolve_strikes(
     seed: Res<SimSeed>,
     army: Res<Army>,
     grid: Res<FighterGrid>,
+    mods: Res<FactionModifiers>,
     mut stats: ResMut<ArmyStats>,
     mut q: Query<(
         Entity,
@@ -105,7 +111,7 @@ pub(crate) fn resolve_strikes(
                 .map_or(0.0, |_| eq.weapon_attack);
         let bonus = strike.bonus.max(1.0);
         let faction = allegiance.0;
-        let Ok((_, _, _, mut victim, _, armour)) = q.get_mut(target) else {
+        let Ok((_, _, victim_side, mut victim, _, armour)) = q.get_mut(target) else {
             continue;
         };
         if !victim.alive() {
@@ -114,7 +120,10 @@ pub(crate) fn resolve_strikes(
         let mut rng = seed.stream(rng_key("sim_military::strike") ^ id.0, tick.0);
         let roll = rng.random_range(c.roll_min..=c.roll_max);
         let defense = victim.defense + armour.filter(|x| x.tools).map_or(0.0, |_| eq.tools_defense);
-        let damage = (attack * bonus * roll - defense).max(1.0);
+        // GP-23: the striker's Attack and the victim's Defence modifiers
+        // (exactly 1.0 without any).
+        let damage = (attack * bonus * roll * mods.mult(faction, Stat::Attack) - defense).max(1.0)
+            / mods.mult(victim_side.0, Stat::Defence);
         victim.health -= damage;
         victim.morale = (victim.morale - 0.01).max(0.0);
         if !victim.alive() {

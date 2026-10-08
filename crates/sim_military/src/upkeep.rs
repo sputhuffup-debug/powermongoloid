@@ -9,7 +9,9 @@ use sim_agents::{
     Stance, Travel, TravelState, Villager, Villagers, civilian_stats, eat_from,
 };
 use sim_core::rng::rng_key;
-use sim_core::{Allegiance, FactionId, Motion, Position, SimSeed, SimTick, SpawnId};
+use sim_core::{
+    Allegiance, FactionId, FactionModifiers, Motion, Position, SimSeed, SimTick, SpawnId, Stat,
+};
 use sim_economy::{Economy, Inventory, SettlementEconomy, TransferOp, Transfers};
 use sim_world::world_pos;
 
@@ -17,6 +19,7 @@ use crate::combat::Casualties;
 use crate::components::{ArmyStats, Captain, Equipment, Follower, MilitaryLog};
 use crate::data::Army;
 use crate::index::ArmyIndex;
+use crate::monuments::NoUpkeep;
 use crate::soldiers::led;
 
 /// EconomySet::Post: hungry soldiers eat carried food, else ask the
@@ -38,7 +41,7 @@ pub(crate) fn eat(
             Option<&Follower>,
             Has<Captain>,
         ),
-        With<Enlisted>,
+        (With<Enlisted>, Without<NoUpkeep>),
     >,
 ) {
     let _span = tracing::info_span!("sim_military::eat").entered();
@@ -75,7 +78,10 @@ pub(crate) fn eat(
 }
 
 /// Needs set: hunger, starvation, morale and the desertion roll for
-/// soldiers. Parallel; each writes only its own components.
+/// soldiers. Parallel; each writes only its own components. Monument
+/// guards ([`NoUpkeep`]) never get hungrier. The morale target is the
+/// unit's base morale times the faction's `Stat::Morale` multiplier
+/// (GP-23; exactly the base with no modifiers).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // Bevy system parameters.
 pub(crate) fn soldier_upkeep(
     tick: Res<SimTick>,
@@ -84,6 +90,7 @@ pub(crate) fn soldier_upkeep(
     army: Res<Army>,
     index: Res<ArmyIndex>,
     fallen: Res<Casualties>,
+    mods: Res<FactionModifiers>,
     mut q: Query<
         (
             &SpawnId,
@@ -95,6 +102,7 @@ pub(crate) fn soldier_upkeep(
             &mut Needs,
             Option<&mut Follower>,
             Has<Captain>,
+            Has<NoUpkeep>,
         ),
         With<Enlisted>,
     >,
@@ -111,13 +119,15 @@ pub(crate) fn soldier_upkeep(
     let desert = army.per_tick(u.desert_chance_per_day);
     let hunger = villagers.hunger_per_tick;
     q.par_iter_mut().for_each(
-        |(id, pos, motion, allegiance, act, mut cs, mut needs, follower, is_captain)| {
+        |(id, pos, motion, allegiance, act, mut cs, mut needs, follower, is_captain, no_upkeep)| {
             if !cs.alive() {
                 return;
             }
-            needs.hunger = (needs.hunger + hunger).min(1.0);
-            if needs.hunger >= u.starving {
-                cs.health -= starve;
+            if !no_upkeep {
+                needs.hunger = (needs.hunger + hunger).min(1.0);
+                if needs.hunger >= u.starving {
+                    cs.health -= starve;
+                }
             }
             let p = world_pos(pos, Some(motion));
             let unfed = needs.hunger >= u.hungry;
@@ -130,7 +140,7 @@ pub(crate) fn soldier_upkeep(
                     army.data.captain.morale
                 } else {
                     army.data.soldier.morale
-                };
+                } * mods.mult(allegiance.0, Stat::Morale);
                 let target = if is_led { (base + 0.1).min(1.0) } else { base };
                 let rate = fed_gain + if is_led { lead_gain } else { 0.0 };
                 morale = if morale < target {

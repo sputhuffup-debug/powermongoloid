@@ -40,9 +40,13 @@ pub enum SimEventKind {
     /// An offer was answered. `subject`: the offer id; `other`: the card
     /// picked (its index in the deck); `amount`: the choice.
     OfferChosen,
-    /// A monument changed to `faction` (GP-23). `subject`: the monument.
+    /// A monument changed to `faction` (GP-23). `subject`: the monument;
+    /// `other`: the previous holder's faction id (0 for nobody); `at`: the
+    /// monument; `amount`: its kind (`MonumentKind` index).
     MonumentTaken,
-    /// `faction` lost a monument. `subject`: the monument.
+    /// `faction` lost a monument. `subject`: the monument; `other`: the
+    /// faction that took it (0 when it drifted back to nobody); `at`: the
+    /// monument; `amount`: its kind.
     MonumentLost,
     /// A settlement asks the player for help (GP-22). `subject`: the
     /// request id; `other`: the settlement; `at`: its centre; `amount`: the

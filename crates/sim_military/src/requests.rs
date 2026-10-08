@@ -15,7 +15,13 @@
 //!     same measure loyalty reads) has been below `requests.food_days` at
 //!     `requests.low_samples` hourly samples in a row. The hysteresis keeps
 //!     the work day's dip from flapping requests on and off.
-//!   - **ClearCamp** (a guarded monument nearby) is posted in M4 step 4.
+//!   - **ClearCamp** (GP-23) runs beside those, on its own track: each
+//!     monument whose guard camp still has a captain
+//!     ([`crate::monuments::Guard`]), in SpawnId order, is named by at most
+//!     one open request, posted by the nearest settlement within
+//!     `requests.camp_radius` that may ask (the rules above) and has no
+//!     open ClearCamp and no ClearCamp cooldown of its own. A settlement
+//!     can thus ask for food and to clear a camp at the same time.
 //!
 //!   Its [`Reward`] is drawn then (stream `sim_military::requests ^
 //!   settlement` at the tick) from what the settlement really holds.
@@ -24,7 +30,10 @@
 //!   no hostile army has been within the threat radius for
 //!   `requests.clear_hours` while a player captain stands within
 //!   `requests.reward_radius` (if none does, the danger passed without the
-//!   player, and the request fails). The reward goes from the real
+//!   player, and the request fails); ClearCamp once the camp has no
+//!   captain left, with a player captain within `requests.reward_radius`
+//!   of the monument (otherwise someone else cleared it, and the request
+//!   fails). The reward goes from the real
 //!   storehouse (`move_food`, `move_good`) and residents
 //!   ([`crate::orders::enlist_into`]) to the nearest player captain within
 //!   `requests.reward_radius`, as far as stocks, baggage room and willing
@@ -74,8 +83,7 @@ pub enum RequestKind {
         /// Food value delivered so far.
         delivered: f32,
     },
-    /// Clear the guard camp at `monument` (a SpawnId); posted from M4 step
-    /// 4.
+    /// Clear the guard camp at `monument` (a SpawnId, GP-23).
     ClearCamp {
         /// The guarded monument.
         monument: u64,
@@ -143,6 +151,8 @@ pub struct Watch {
     pub low_food: u8,
     /// No new request before this tick (the cooldown after one ends).
     pub quiet_until: u64,
+    /// No new ClearCamp request before this tick (its own cooldown).
+    pub camp_quiet_until: u64,
 }
 
 /// The run's requests (GP-22). Always present; empty outside a run.
@@ -151,7 +161,8 @@ pub struct Watch {
 pub struct RequestBoard {
     /// The id the next request gets.
     pub next_id: u64,
-    /// Open requests, oldest first (at most one per settlement).
+    /// Open requests, oldest first: per settlement at most one DriveOff or
+    /// BringFood, and at most one ClearCamp.
     pub open: Vec<Request>,
     /// Per settlement sampled so far, sorted by SpawnId.
     pub watch: Vec<Watch>,
@@ -164,9 +175,16 @@ pub struct RequestBoard {
 }
 
 impl RequestBoard {
-    /// The open request of settlement `s` (a SpawnId).
+    /// The oldest open request of settlement `s` (a SpawnId).
     pub fn of(&self, s: u64) -> Option<&Request> {
         self.open.iter().find(|r| r.settlement == s)
+    }
+
+    /// The open ClearCamp request naming `monument` (a SpawnId), if any.
+    pub fn camp(&self, monument: u64) -> Option<&Request> {
+        self.open
+            .iter()
+            .find(|r| r.kind == RequestKind::ClearCamp { monument })
     }
 
     fn watch_mut(&mut self, s: u64) -> &mut Watch {
@@ -219,6 +237,7 @@ impl StateHash for RequestBoard {
             h.u64(w.settlement);
             h.u8(w.low_food);
             h.u64(w.quiet_until);
+            h.u64(w.camp_quiet_until);
         }
         h.u32(self.posted);
         h.u32(self.done);
@@ -301,7 +320,12 @@ pub fn step(world: &mut World) {
             };
             w.low_food
         };
-        if let Some(i) = board.open.iter().position(|r| r.settlement == p.id) {
+        // ClearCamp requests run on their own track (`camp_requests`).
+        if let Some(i) = board
+            .open
+            .iter()
+            .position(|r| r.settlement == p.id && !is_camp(r))
+        {
             let outcome =
                 progress_request(world, &mut board.open[i], p, threatened, tick, &cal, &data);
             if outcome != Outcome::Open {
@@ -320,12 +344,7 @@ pub fn step(world: &mut World) {
             }
             continue;
         }
-        // An emptied settlement (everyone enlisted or dead) has nobody to
-        // ask, and its zero need would be "met" at once.
-        let asks = matches!(p.owner, FactionId::INDEPENDENT | FactionId::PLAYER)
-            && p.population > 0
-            && Some(p.id) != seat
-            && tick >= board.watch_mut(p.id).quiet_until;
+        let asks = may_ask(p, seat) && tick >= board.watch_mut(p.id).quiet_until;
         if !asks {
             continue;
         }
@@ -354,7 +373,123 @@ pub fn step(world: &mut World) {
         post(world, &r, p);
         board.open.push(r);
     }
+    camp_requests(world, &mut board, &places, tick, &cal, &data);
     *world.resource_mut::<RequestBoard>() = board;
+}
+
+/// Whether `p` may ask the player for anything: independent or the
+/// player's, not the rival's seat, and not emptied (everyone enlisted or
+/// dead: nobody to ask, and a zero need would be "met" at once).
+fn may_ask(p: &Place, seat: Option<u64>) -> bool {
+    matches!(p.owner, FactionId::INDEPENDENT | FactionId::PLAYER)
+        && p.population > 0
+        && Some(p.id) != seat
+}
+
+fn is_camp(r: &Request) -> bool {
+    matches!(r.kind, RequestKind::ClearCamp { .. })
+}
+
+/// GP-23: the ClearCamp track of [`step`]. First the open ClearCamp
+/// requests, settlements in SpawnId order: done once the camp has no
+/// captain left and a player captain stands within `reward_radius` of the
+/// monument (it gets the reward), failed if the camp went without one or
+/// at the deadline. Then each guarded monument in SpawnId order that no
+/// open request names is offered to the nearest settlement within
+/// `camp_radius` (ties: lowest SpawnId) that may ask and has no open
+/// ClearCamp and no ClearCamp cooldown.
+fn camp_requests(
+    world: &mut World,
+    board: &mut RequestBoard,
+    places: &[Place],
+    tick: u64,
+    cal: &Calendar,
+    data: &RequestData,
+) {
+    let camps = crate::monuments::guarded(world);
+    for p in places {
+        let Some(i) = board
+            .open
+            .iter()
+            .position(|r| r.settlement == p.id && is_camp(r))
+        else {
+            continue;
+        };
+        let RequestKind::ClearCamp { monument } = board.open[i].kind else {
+            continue;
+        };
+        let outcome = if camps.iter().any(|c| c.0 == monument) {
+            if tick >= board.open[i].deadline {
+                Outcome::Failed
+            } else {
+                Outcome::Open
+            }
+        } else {
+            let at = crate::monuments::centre_of(world, monument).unwrap_or(p.center);
+            match nearest_player_captain(world, at, data.reward_radius) {
+                Some(c) => Outcome::Done(Some(c)),
+                // Someone else cleared it.
+                None => Outcome::Failed,
+            }
+        };
+        if outcome == Outcome::Open {
+            continue;
+        }
+        let r = board.open.remove(i);
+        board.watch_mut(p.id).camp_quiet_until = tick + cal.hours(data.cooldown_hours);
+        match outcome {
+            Outcome::Done(captain) => {
+                board.done += 1;
+                complete(world, &r, p, captain);
+            }
+            _ => {
+                board.failed += 1;
+                fail(world, &r, p);
+            }
+        }
+    }
+    let seat = world.resource::<RunProgress>().rival_seat;
+    let r2 = data.camp_radius * data.camp_radius;
+    for (monument, at) in camps {
+        if board.camp(monument).is_some() {
+            continue;
+        }
+        let mut best: Option<(i64, u64, usize)> = None;
+        for (i, p) in places.iter().enumerate() {
+            let d2 = (p.center - at).as_i64vec2().length_squared();
+            if d2 as f32 > r2
+                || !may_ask(p, seat)
+                || board
+                    .open
+                    .iter()
+                    .any(|r| r.settlement == p.id && is_camp(r))
+                || tick < board.watch_mut(p.id).camp_quiet_until
+            {
+                continue;
+            }
+            if best.is_none_or(|b| (d2, p.id) < (b.0, b.1)) {
+                best = Some((d2, p.id, i));
+            }
+        }
+        let Some((.., i)) = best else {
+            continue;
+        };
+        let p = &places[i];
+        let kind = RequestKind::ClearCamp { monument };
+        let reward = draw_reward(world, p, kind, tick, data);
+        let r = Request {
+            id: board.next_id,
+            settlement: p.id,
+            kind,
+            posted: tick,
+            deadline: tick + cal.hours(data.deadline_hours),
+            reward,
+        };
+        board.next_id += 1;
+        board.posted += 1;
+        post(world, &r, p);
+        board.open.push(r);
+    }
 }
 
 /// Where an open request stands after this hour's sample.
@@ -392,7 +527,7 @@ fn progress_request(
                 return Outcome::Done(nearest_player_captain(world, p.center, data.reward_radius));
             }
         }
-        // Detected from M4 step 4 (guard camps); until then it can only lapse.
+        // Detected on their own track (`camp_requests`), never here.
         RequestKind::ClearCamp { .. } => {}
     }
     if tick >= r.deadline {
@@ -427,8 +562,8 @@ pub(crate) fn nearest_player_captain(world: &mut World, at: IVec2, radius: f32) 
 }
 
 /// Draws a request's reward from the settlement's real stocks (stream
-/// `sim_military::requests ^ settlement` at the tick): DriveOff promises
-/// food, `reward_food_days` of its need times U(0.5, 1), at most
+/// `sim_military::requests ^ settlement` at the tick): DriveOff and
+/// ClearCamp promise food, `reward_food_days` of its need times U(0.5, 1), at most
 /// `reward_max_food` and what the storehouse holds; every kind may promise up to `reward_goods` units of
 /// one non-food good the armies value, and a seeded number of volunteers.
 fn draw_reward(
@@ -452,7 +587,7 @@ fn draw_reward(
         ..Reward::default()
     };
     let share = rng.random_range(0.5f32..=1.0);
-    if let RequestKind::DriveOff { .. } = kind {
+    if let RequestKind::DriveOff { .. } | RequestKind::ClearCamp { .. } = kind {
         let want = (data.reward_food_days * daily_need(world, p.population) * share)
             .min(data.reward_max_food);
         reward.food = want.min(stock.food_value(econ));
