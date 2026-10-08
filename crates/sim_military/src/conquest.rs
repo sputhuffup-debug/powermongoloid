@@ -160,7 +160,7 @@ pub fn militia_or_foes_near(world: &World, at: IVec2, faction: FactionId, r: f32
 /// Who stands within `garrison.radius` of `at`, not routed: soldiers of
 /// `owner` (its garrison) and militia rising against `owner` (rebels).
 /// Reads this tick's [`FighterGrid`].
-fn garrison_and_rebels(world: &World, at: IVec2, owner: FactionId) -> (u32, u32) {
+pub(crate) fn garrison_and_rebels(world: &World, at: IVec2, owner: FactionId) -> (u32, u32) {
     let radius = world.resource::<Army>().data.garrison.radius;
     let grid = world.resource::<FighterGrid>();
     let (mut guards, mut rebels) = (0, 0);

@@ -129,4 +129,53 @@
         max_radius: 64,
         default_radius: 32,
     ),
+
+    // GP-22: village requests, addressed to the player. Once a game hour
+    // (100 ticks), settlements in SpawnId order (independent or the
+    // player's, never the rival's seat) may post one: "drive off" when an
+    // army at war with the player (raiders, rival, beasts) is within
+    // army.ron `threat.radius` of the centre, else "bring food" after
+    // `low_samples` hourly samples in a row below `food_days` of food
+    // security (storehouse and homes, `FoodSecurity`). At most one open
+    // request per settlement. The sim detects completion: food delivered
+    // by `Give` reaching the need, or no hostile army near for
+    // `clear_hours` with a player captain there. The reward comes from the
+    // real storehouse and villagers to the nearest player captain within
+    // `reward_radius`, plus `goodwill_deeds.request`.
+    requests: (
+        food_days: 0.5,
+        low_samples: 2,
+        need_days: 0.25,
+        max_need: 30.0,
+        deadline_hours: 36.0,
+        cooldown_hours: 12.0,
+        clear_hours: 1.0,
+        reward_radius: 40.0,
+        reward_food_days: 0.5,
+        reward_max_food: 30.0,
+        reward_goods: 4,
+        volunteers: (0, 2),
+    ),
+
+    // GP-22: a settlement that likes the player (goodwill), with a player
+    // captain near and no strong owner, offers lordship (an Invitation
+    // offer, accept or decline). Accepting hands it over with loyalty
+    // seeded from goodwill.
+    invitations: (
+        goodwill: 0.5,
+        radius: 40.0,
+        weak_loyalty: 0.4,
+        expiry_hours: 24.0,
+        cooldown_days: 3.0,
+    ),
+
+    // GP-22: once a day, villagers of settlements that like the player
+    // join a player band passing near (real villagers, enlisted like
+    // recruits).
+    drifters: (
+        radius: 60.0,
+        goodwill: 0.25,
+        per_settlement: (0, 2),
+        max_per_day: 3,
+    ),
 )

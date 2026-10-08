@@ -44,12 +44,17 @@ pub enum SimEventKind {
     MonumentTaken,
     /// `faction` lost a monument. `subject`: the monument.
     MonumentLost,
-    /// A settlement asks for help (GP-22). `subject`: the request id;
-    /// `other`: the settlement.
+    /// A settlement asks the player for help (GP-22). `subject`: the
+    /// request id; `other`: the settlement; `at`: its centre; `amount`: the
+    /// request kind's tag (0 drive off, 1 bring food, 2 clear the camp).
     RequestPosted,
-    /// A request was completed. `subject`: the request id; `other`: the settlement.
+    /// A request was completed (cause `Cause::Request`). `subject`: the
+    /// request id; `other`: the settlement; `at`: its centre; `amount`: the
+    /// kind's tag.
     RequestDone,
-    /// A request expired. `subject`: the request id; `other`: the settlement.
+    /// A request expired, or its danger passed without the player.
+    /// `subject`: the request id; `other`: the settlement; `at`: its
+    /// centre; `amount`: the kind's tag.
     RequestFailed,
     /// `faction` took a settlement by force (GP-05). `subject`: the
     /// settlement; `other`: its previous owner's faction id; `at`: its
@@ -82,7 +87,9 @@ pub enum SimEventKind {
     RaidersArrived,
     /// A battle ended. `subject`: the captain; `amount`: losses.
     Battle,
-    /// Volunteers joined a band. `subject`: the captain; `amount`: how many.
+    /// Volunteers joined a band (GP-22). `subject`: the captain; `other`:
+    /// the settlement they came from; `at`: the captain's tile; `amount`:
+    /// how many.
     DriftersJoined,
     /// The run ended. `subject`: the [`RunOutcome`](crate::RunOutcome) as a number.
     RunEnded,

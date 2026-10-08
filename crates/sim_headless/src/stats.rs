@@ -409,5 +409,39 @@ pub fn armies(app: &mut App) -> Vec<String> {
             s
         ));
     }
+    if let Some(line) = run_line(world) {
+        out.push(line);
+    }
     out
+}
+
+/// In a run, one line on band life (GP-22): requests, invitations,
+/// drifters and the best goodwill toward the player. `None` outside a run.
+pub fn run_line(world: &mut World) -> Option<String> {
+    use sim_core::{FactionId, OfferKind, Offers, RunState};
+    use sim_military::{RequestBoard, RunProgress};
+    if !world.resource::<RunState>().in_run() {
+        return None;
+    }
+    let board = world.resource::<RequestBoard>();
+    let invitations = world
+        .resource::<Offers>()
+        .pending
+        .iter()
+        .filter(|o| matches!(o.kind, OfferKind::Invitation { .. }))
+        .count();
+    let line = format!(
+        "run: requests open {} posted {} done {} failed {} | invitations pending {invitations} | drifters {}",
+        board.open.len(),
+        board.posted,
+        board.done,
+        board.failed,
+        world.resource::<RunProgress>().drifters,
+    );
+    let mut q = world.query::<&sim_agents::Goodwill>();
+    let best = q
+        .iter(world)
+        .map(|g| g.get(FactionId::PLAYER))
+        .fold(f32::NEG_INFINITY, f32::max);
+    Some(format!("{line} | best goodwill {best:.2}"))
 }

@@ -21,7 +21,8 @@ use crate::orders::log;
 ///
 /// Refusals: "no run" outside a run, "no such offer" (unknown or already
 /// answered), "not your offer", "no such choice", and "not available yet"
-/// for invitations and hires (M4 steps 3 and 7).
+/// for hires (M4 step 7). An invitation (GP-22) is answered by
+/// [`crate::invitations::answer`]: choice 0 accepts, 1 declines.
 pub fn choose(
     world: &mut World,
     issuer: FactionId,
@@ -40,17 +41,17 @@ pub fn choose(
         return Err("not your offer");
     }
     let card = *o.choices.get(choice as usize).ok_or("no such choice")?;
-    if matches!(
-        o.kind,
-        OfferKind::Invitation { .. } | OfferKind::Hire { .. }
-    ) {
+    if matches!(o.kind, OfferKind::Hire { .. }) {
         return Err("not available yet");
     }
     world.resource_mut::<Offers>().take(offer);
     let what = match o.kind {
         OfferKind::StartBoon | OfferKind::DominionBoon { .. } => apply_boon(world, issuer, card),
         OfferKind::Trait { person } => gain_trait(world, issuer, person, card),
-        OfferKind::Invitation { .. } | OfferKind::Hire { .. } => unreachable!("refused above"),
+        OfferKind::Invitation { settlement } => {
+            crate::invitations::answer(world, issuer, settlement, card)
+        }
+        OfferKind::Hire { .. } => unreachable!("refused above"),
     };
     world.write_message(
         SimEvent::new(SimEventKind::OfferChosen, issuer)

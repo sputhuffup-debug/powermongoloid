@@ -228,6 +228,78 @@ pub struct ForageData {
     pub default_radius: u16,
 }
 
+/// Village requests (GP-22): `requests` in progression.ron. See
+/// [`crate::requests`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RequestData {
+    /// A settlement asks for food when its `FoodSecurity.days` (storehouse
+    /// and homes) is below this ...
+    pub food_days: f32,
+    /// ... at this many hourly samples in a row.
+    pub low_samples: u8,
+    /// A BringFood request asks for this many days of the settlement's
+    /// daily need (food value) ...
+    pub need_days: f32,
+    /// ... but never more than this much food value.
+    pub max_need: f32,
+    /// Game hours (100 ticks each) a request stays open.
+    pub deadline_hours: f32,
+    /// Game hours after a request ends (done or failed) before the same
+    /// settlement asks again.
+    pub cooldown_hours: f32,
+    /// DriveOff: game hours with no hostile army within the threat radius
+    /// before the danger counts as gone.
+    pub clear_hours: f32,
+    /// The reward goes to the nearest player captain within this many
+    /// tiles of the settlement's centre.
+    pub reward_radius: f32,
+    /// DriveOff: the settlement promises this many days of its own daily
+    /// need in food (times a seeded 0.5..1) ...
+    pub reward_food_days: f32,
+    /// ... but at most this much food value.
+    pub reward_max_food: f32,
+    /// At most this many units of one non-food good the armies value
+    /// (army.ron `trade_value`), drawn from what the storehouse holds.
+    pub reward_goods: u32,
+    /// Volunteers promised: a seeded count in (min, max).
+    pub volunteers: (u32, u32),
+}
+
+/// Invitations (GP-22): `invitations` in progression.ron. See
+/// [`crate::invitations`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct InvitationData {
+    /// A settlement whose goodwill toward the player is at least this ...
+    pub goodwill: f32,
+    /// ... with a player captain within this many tiles of its centre ...
+    pub radius: f32,
+    /// ... and whose owner is weak: its residents' mean loyalty below this
+    /// (and its garrison smaller than the player's soldiers nearby), or it
+    /// has none, offers lordship.
+    pub weak_loyalty: f32,
+    /// Game hours the offer stands.
+    pub expiry_hours: f32,
+    /// Days after an invitation is answered or lapses before the same
+    /// settlement offers again.
+    pub cooldown_days: f32,
+}
+
+/// Drifters (GP-22): `drifters` in progression.ron. See
+/// [`crate::drifters`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DriftersData {
+    /// Settlements whose centre is within this many tiles of a player
+    /// captain ...
+    pub radius: f32,
+    /// ... and whose goodwill toward the player is at least this send
+    /// volunteers, once a day.
+    pub goodwill: f32,
+    /// A seeded count in (min, max) per settlement ...
+    pub per_settlement: (u32, u32),
+    /// ... and at most this many per captain per day.
+    pub max_per_day: u32,
+}
+
 /// The whole of progression.ron, as written. See docs/dev/DATA.md.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProgressionData {
@@ -249,6 +321,12 @@ pub struct ProgressionData {
     pub goodwill_deeds: GoodwillDeeds,
     /// Wild foraging (SIM-38).
     pub forage: ForageData,
+    /// Village requests (GP-22).
+    pub requests: RequestData,
+    /// Invitations (GP-22).
+    pub invitations: InvitationData,
+    /// Drifters (GP-22).
+    pub drifters: DriftersData,
 }
 
 /// Progression data (GP-21, GP-27, SIM-34). Hashed as its RON text.
@@ -358,6 +436,51 @@ impl Progression {
                     .into(),
             );
         }
+        let r = &d.requests;
+        if [
+            r.food_days,
+            r.need_days,
+            r.max_need,
+            r.deadline_hours,
+            r.cooldown_hours,
+            r.clear_hours,
+            r.reward_radius,
+            r.reward_food_days,
+            r.reward_max_food,
+        ]
+        .iter()
+        .any(|v| !non_negative(*v))
+        {
+            return Err("progression: requests values must be >= 0".into());
+        }
+        if r.low_samples == 0 || r.deadline_hours <= 0.0 || r.volunteers.0 > r.volunteers.1 {
+            return Err(
+                "progression: requests need low_samples > 0, deadline_hours > 0 and volunteers (min <= max)"
+                    .into(),
+            );
+        }
+        let i = &d.invitations;
+        if !(-1.0..=1.0).contains(&i.goodwill)
+            || !non_negative(i.radius)
+            || !(0.0..=1.0).contains(&i.weak_loyalty)
+            || !weight_ok(i.expiry_hours)
+            || !non_negative(i.cooldown_days)
+        {
+            return Err(
+                "progression: invitations need goodwill and weak_loyalty in range, radius and cooldown_days >= 0, expiry_hours > 0"
+                    .into(),
+            );
+        }
+        let dr = &d.drifters;
+        if !non_negative(dr.radius)
+            || !(-1.0..=1.0).contains(&dr.goodwill)
+            || dr.per_settlement.0 > dr.per_settlement.1
+        {
+            return Err(
+                "progression: drifters need radius >= 0, goodwill in -1..1 and per_settlement (min <= max)"
+                    .into(),
+            );
+        }
         Ok(())
     }
 
@@ -433,6 +556,31 @@ pub struct RunProgress {
     pub boons: Vec<u16>,
     /// Whether the one succession of the run has happened (SIM-35, step 6).
     pub succession_used: bool,
+    /// GP-22: `(settlement SpawnId, tick)` pairs, sorted by settlement: no
+    /// new invitation from that settlement before the tick (set when an
+    /// invitation is accepted, declined or lapses).
+    pub invite_cooldowns: Vec<(u64, u64)>,
+    /// Drifters who have joined the player's bands this run (GP-22).
+    pub drifters: u32,
+}
+
+impl RunProgress {
+    /// The tick before which settlement `s` (a SpawnId) offers no new
+    /// invitation; 0 if none was ever set.
+    pub fn invite_cooldown(&self, s: u64) -> u64 {
+        self.invite_cooldowns
+            .binary_search_by_key(&s, |c| c.0)
+            .map_or(0, |i| self.invite_cooldowns[i].1)
+    }
+
+    /// Sets settlement `s`'s invitation cooldown to `until`, keeping the
+    /// list sorted.
+    pub fn set_invite_cooldown(&mut self, s: u64, until: u64) {
+        match self.invite_cooldowns.binary_search_by_key(&s, |c| c.0) {
+            Ok(i) => self.invite_cooldowns[i].1 = until,
+            Err(i) => self.invite_cooldowns.insert(i, (s, until)),
+        }
+    }
 }
 
 impl StateHash for RunProgress {
@@ -459,6 +607,12 @@ impl StateHash for RunProgress {
             h.u16(b);
         }
         h.bool(self.succession_used);
+        h.u32(self.invite_cooldowns.len() as u32);
+        for &(s, until) in &self.invite_cooldowns {
+            h.u64(s);
+            h.u64(until);
+        }
+        h.u32(self.drifters);
     }
 }
 
@@ -504,6 +658,8 @@ pub fn setup_run(world: &mut World) -> Option<RunStart> {
         modifiers: draws.modifiers.clone(),
         boons: Vec::new(),
         succession_used: false,
+        invite_cooldowns: Vec::new(),
+        drifters: 0,
     });
     // Seat the player first, so spawn_army doesn't seat it at a snapped tile.
     world
@@ -626,9 +782,9 @@ fn spoil_stores(world: &mut World, fraction: f32) {
 /// 2. `monuments::hold` (step 4)
 /// 3. [`crate::conquest::revolts`] (daily)
 /// 4. [`crate::wild::regrow`] (daily, run)
-/// 5. `drifters::draw` (daily, run; step 3)
-/// 6. `requests::step` (run; step 3)
-/// 7. invitations (run; step 3)
+/// 5. [`crate::drifters::draw`] (daily, run)
+/// 6. [`crate::requests::step`] (run)
+/// 7. [`crate::invitations::step`] (run)
 /// 8. `dominion::tally` (run; step 5)
 /// 9. `champion::rank_ups` (run; step 6)
 /// 10. `rebuild_modifiers` (step 4)
@@ -638,6 +794,9 @@ pub fn progress(world: &mut World) {
     let _span = tracing::info_span!("sim_military::progress").entered();
     crate::conquest::revolts(world);
     crate::wild::regrow(world);
+    crate::drifters::draw(world);
+    crate::requests::step(world);
+    crate::invitations::step(world);
 }
 
 /// The faction's champion (lowest SpawnId if, oddly, several).
@@ -694,6 +853,12 @@ pub(crate) mod tests {
         assert!(check(&|d| d.forage.every_ticks = 0).is_err());
         assert!(check(&|d| d.forage.default_radius = d.forage.max_radius + 1).is_err());
         assert!(check(&|d| d.forage.regrow_per_day = 2.0).is_err());
+        assert!(check(&|d| d.requests.low_samples = 0).is_err());
+        assert!(check(&|d| d.requests.volunteers = (3, 1)).is_err());
+        assert!(check(&|d| d.requests.max_need = -1.0).is_err());
+        assert!(check(&|d| d.invitations.goodwill = 1.5).is_err());
+        assert!(check(&|d| d.invitations.expiry_hours = 0.0).is_err());
+        assert!(check(&|d| d.drifters.per_settlement = (2, 1)).is_err());
     }
 
     /// A run app on the run island, set up (the plugins `sim_headless`

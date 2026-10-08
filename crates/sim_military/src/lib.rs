@@ -17,8 +17,9 @@
 //! 6. **Upkeep** (Needs): [`upkeep`] covers eating, morale, starvation and
 //!    desertion.
 //! 7. **Progress** (Needs, hourly): [`progression::progress`] drives
-//!    settlement-level steps in a fixed order, such as [`conquest::revolts`]
-//!    and the daily [`wild::regrow`].
+//!    settlement-level steps in a fixed order, such as [`conquest::revolts`],
+//!    the daily [`wild::regrow`] and [`drifters::draw`], [`requests::step`]
+//!    and [`invitations::step`].
 //!
 //! Settlements change hands through [`conquest::transfer`]: an `Attack`
 //! that breaks the militia and holds the centre, or a revolt (GP-05,
@@ -27,9 +28,12 @@
 //!
 //! A landless band lives off the land with a `Forage` order ([`wild`],
 //! SIM-38) and hands food to a village with `Give`. Deeds at a settlement
-//! (fair trade, seizure, plunder, provocation, killing its militia) post
-//! goodwill changes to `sim_agents::GoodwillLedger`, with deltas from
-//! progression.ron `goodwill_deeds` (GP-22).
+//! (fair trade, seizure, plunder, provocation, killing its militia,
+//! answering its request) post goodwill changes to
+//! `sim_agents::GoodwillLedger`, with deltas from progression.ron
+//! `goodwill_deeds` (GP-22). In a run, settlements post [`requests`] the
+//! sim checks off, liked settlements send [`drifters`] and offer lordship
+//! ([`invitations`]).
 //!
 //! Also here: army data ([`Army`], `army.ron`), [`spawn::spawn_army`] and
 //! the playtest setup, the scripted [`raiders`] (in `SimInputSet::Ai`), and
@@ -43,10 +47,13 @@ pub mod combat;
 pub mod components;
 pub mod conquest;
 pub mod data;
+pub mod drifters;
 pub mod index;
+pub mod invitations;
 pub mod orders;
 pub mod progression;
 pub mod raiders;
+pub mod requests;
 pub mod soldiers;
 pub mod spawn;
 pub mod threat;
@@ -67,11 +74,13 @@ pub use components::{
 pub use conquest::{militia_or_foes_near, owner_of, transfer, transfer_seeded};
 pub use data::Army;
 pub use index::{ArmyIndex, ArmyInfo, FighterGrid, Side};
-pub use orders::{CommandInbox, arm_followers, enlist, find_settlement, provoke};
+pub use orders::{CommandInbox, arm_followers, enlist, enlist_into, find_settlement, provoke};
 pub use progression::{
-    Champion, ForageData, GoodwillDeeds, Progression, RunProgress, RunStart, RunWorld, StartDraws,
-    StartTerrain, Traits, champion_of, draw_start, setup_run,
+    Champion, DriftersData, ForageData, GoodwillDeeds, InvitationData, Progression, RequestData,
+    RunProgress, RunStart, RunWorld, StartDraws, StartTerrain, Traits, champion_of, draw_start,
+    setup_run,
 };
+pub use requests::{Request, RequestBoard, RequestKind, Reward};
 pub use soldiers::slot_offset;
 pub use spawn::{ArmySpec, Skirmish, nearest_passable, setup_battle, setup_skirmish, spawn_army};
 pub use wild::WildFood;
@@ -116,6 +125,7 @@ impl Plugin for MilitaryPlugin {
             .insert_resource(Progression::default_data())
             .init_resource::<RunProgress>()
             .init_resource::<WildFood>()
+            .init_resource::<RequestBoard>()
             .init_resource::<Factions>()
             .init_resource::<ArmyStats>()
             .init_resource::<MilitaryLog>()
@@ -203,6 +213,7 @@ impl Plugin for MilitaryPlugin {
             .register_hashed::<Champion>()
             .register_hashed::<Traits>()
             .register_hashed_resource::<WildFood>()
+            .register_hashed_resource::<RequestBoard>()
             .exempt_from_hash::<MilitaryLog>("UI history; its effects are in the hashed state")
             .exempt_from_hash::<CommandInbox>("always empty between ticks")
             .exempt_from_hash::<ArmyIndex>("rebuilt from hashed state every tick")

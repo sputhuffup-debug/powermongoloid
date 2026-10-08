@@ -56,7 +56,7 @@ pub fn find_settlement(world: &mut World, id: u64) -> Option<Entity> {
     q.iter(world).find(|(_, s)| s.0 == id).map(|(e, _)| e)
 }
 
-fn settlement_name(world: &World, s: Entity) -> String {
+pub(crate) fn settlement_name(world: &World, s: Entity) -> String {
     let names = world.resource::<sim_core::NameTable>();
     world
         .get::<Settlement>(s)
@@ -69,7 +69,7 @@ pub(crate) fn log(world: &mut World, text: String) {
     world.resource_mut::<MilitaryLog>().push(tick, text);
 }
 
-fn faction_name(world: &World, f: FactionId) -> String {
+pub(crate) fn faction_name(world: &World, f: FactionId) -> String {
     world.resource::<Army>().faction_name(f).to_string()
 }
 
@@ -262,13 +262,13 @@ fn appoint(world: &mut World, issuer: FactionId, follower: u64) -> Result<(), &'
 }
 
 /// Daily food value an army eats.
-fn daily_need(world: &World, people: u32) -> f32 {
+pub(crate) fn daily_need(world: &World, people: u32) -> f32 {
     world.resource::<Villagers>().data.needs.hunger_per_day * people as f32
 }
 
 /// Moves up to `max_value` of food (most nourishing first) from one
 /// stockpile to another. Returns the food value moved.
-fn move_food(world: &mut World, from: Entity, to: Entity, max_value: f32) -> f32 {
+pub(crate) fn move_food(world: &mut World, from: Entity, to: Entity, max_value: f32) -> f32 {
     if from == to || max_value <= 0.0 {
         return 0.0;
     }
@@ -307,7 +307,7 @@ fn with_two<R>(
     Some(f(&mut sa, &mut sb))
 }
 
-fn move_good(world: &mut World, from: Entity, to: Entity, g: GoodId, qty: u32) -> u32 {
+pub(crate) fn move_good(world: &mut World, from: Entity, to: Entity, g: GoodId, qty: u32) -> u32 {
     if from == to {
         return 0;
     }
@@ -320,12 +320,12 @@ fn move_good(world: &mut World, from: Entity, to: Entity, g: GoodId, qty: u32) -
     .unwrap_or(0)
 }
 
-fn storehouse(world: &World, s: Entity) -> Option<Entity> {
+pub(crate) fn storehouse(world: &World, s: Entity) -> Option<Entity> {
     world.get::<SettlementEconomy>(s).map(|se| se.storehouse)
 }
 
 /// Food the settlement's storehouse holds beyond `keep_days` for its people.
-fn spare_food(world: &World, s: Entity, keep_days: f32) -> f32 {
+pub(crate) fn spare_food(world: &World, s: Entity, keep_days: f32) -> f32 {
     let Some(se) = world.get::<SettlementEconomy>(s) else {
         return 0.0;
     };
@@ -540,8 +540,8 @@ fn supply(world: &mut World, captain: Entity, s: Entity) -> f32 {
 /// `give_keep_days` of its daily need to the settlement's storehouse (most
 /// nourishing first, as far as the storehouse has room). Returns the food
 /// value delivered, which is what `move_food` actually moved, and counts it
-/// in `FactionStats::donated`. M4 step 3b's BringFood request is answered
-/// by this value.
+/// in `FactionStats::donated`. The orders step credits this value to the
+/// settlement's open BringFood request ([`crate::requests::delivered`]).
 pub(crate) fn give(world: &mut World, captain: Entity, s: Entity) -> f32 {
     let faction = world.get::<Captain>(captain).expect("captain").faction;
     let Some(store) = storehouse(world, s) else {
@@ -671,9 +671,6 @@ fn recruit(world: &mut World, captain: Entity, s: Entity, count: u16) {
     }
     let cid = world.get::<SpawnId>(captain).expect("id").0;
     let army = world.resource::<Army>().clone();
-    let villagers = world.resource::<Villagers>().clone();
-    let days_per_year = world.resource::<Calendar>().days_per_year();
-    let working = villagers.data.households.working_age;
     let food_days = world
         .get::<sim_agents::FoodSecurity>(s)
         .map_or(10.0, |f| f.days);
@@ -688,6 +685,34 @@ fn recruit(world: &mut World, captain: Entity, s: Entity, count: u16) {
         let loyalty = world.get::<SettlementLoyalty>(s).map_or(0.0, |l| l.mean);
         p += army.data.recruit.loyalty_bonus * loyalty;
     }
+    let candidates = recruit_candidates(world, s);
+    let mut rng = world
+        .resource::<SimSeed>()
+        .stream(rng_key("sim_military::recruit") ^ cid, tick);
+    let mut joined = Vec::new();
+    for e in candidates {
+        if joined.len() >= count as usize {
+            break;
+        }
+        if rng.random::<f32>() < p {
+            joined.push(e);
+        }
+    }
+    for &e in &joined {
+        enlist_into(world, e, captain);
+    }
+    let n = joined.len() as u32;
+    let (who, name) = (faction_name(world, c.faction), settlement_name(world, s));
+    log(world, format!("{n} of {name} joined {who}"));
+}
+
+/// Who of settlement `s` could join an army (GP-02): working-age, alive,
+/// civilian residents who aren't enlisted, idle ones first, then by
+/// SpawnId. Recruiting, drifters and request volunteers all draw from
+/// this list.
+pub(crate) fn recruit_candidates(world: &mut World, s: Entity) -> Vec<Entity> {
+    let days_per_year = world.resource::<Calendar>().days_per_year();
+    let working = world.resource::<Villagers>().data.households.working_age;
     let mut q = world.query_filtered::<(Entity, &SpawnId, &Villager, &Occupation, &CombatStats), Without<Enlisted>>();
     let mut candidates: Vec<(bool, SpawnId, Entity)> = q
         .iter(world)
@@ -702,31 +727,38 @@ fn recruit(world: &mut World, captain: Entity, s: Entity, count: u16) {
         .map(|(e, id, _, occ, _)| (*occ != Occupation::Idle, *id, e))
         .collect();
     candidates.sort_unstable_by_key(|(busy, id, _)| (*busy, *id));
-    let mut rng = world
-        .resource::<SimSeed>()
-        .stream(rng_key("sim_military::recruit") ^ cid, tick);
-    let mut joined = Vec::new();
-    for (_, _, e) in candidates {
-        if joined.len() >= count as usize {
-            break;
-        }
-        if rng.random::<f32>() < p {
-            joined.push(e);
-        }
+    candidates.into_iter().map(|(_, _, e)| e).collect()
+}
+
+/// GP-02, GP-22: villager `villager` joins `captain`'s army, with the
+/// bookkeeping every way of joining shares: [`enlist`] (allegiance, gear,
+/// follower), the baggage grows by army.ron `baggage_per_head`, the home
+/// settlement's population drops by one, and the faction's
+/// `FactionStats::recruited` counts it. Used by `Recruit`, drifters and
+/// request volunteers. Returns false, changing nothing, if `villager` isn't
+/// a villager, is already enlisted, or `captain` isn't a captain.
+pub fn enlist_into(world: &mut World, villager: Entity, captain: Entity) -> bool {
+    let Some(faction) = world.get::<Captain>(captain).map(|c| c.faction) else {
+        return false;
+    };
+    let Some(s) = world.get::<Villager>(villager).map(|v| v.settlement) else {
+        return false;
+    };
+    if world.get::<Enlisted>(villager).is_some() {
+        return false;
     }
-    for &e in &joined {
-        enlist(world, e, captain, c.faction, &army);
-    }
+    let per_head = world.resource_scope(|world, army: Mut<Army>| {
+        enlist(world, villager, captain, faction, &army);
+        army.data.baggage_per_head
+    });
     if let Some(mut bag) = world.get_mut::<Stockpile>(captain) {
-        bag.capacity += army.data.baggage_per_head * joined.len() as u32;
+        bag.capacity += per_head;
     }
     if let Some(mut se) = world.get_mut::<SettlementEconomy>(s) {
-        se.population = se.population.saturating_sub(joined.len() as u32);
+        se.population = se.population.saturating_sub(1);
     }
-    let n = joined.len() as u32;
-    world.resource_mut::<ArmyStats>().of(c.faction).recruited += n;
-    let (who, name) = (faction_name(world, c.faction), settlement_name(world, s));
-    log(world, format!("{n} of {name} joined {who}"));
+    world.resource_mut::<ArmyStats>().of(faction).recruited += 1;
+    true
 }
 
 /// Turns a villager into a follower. It keeps its identity and home, so its
@@ -775,7 +807,7 @@ pub fn enlist(world: &mut World, e: Entity, captain: Entity, faction: FactionId,
     ));
 }
 
-fn center(world: &World, s: Entity) -> Option<IVec2> {
+pub(crate) fn center(world: &World, s: Entity) -> Option<IVec2> {
     world.get::<Settlement>(s).map(|st| st.center)
 }
 
@@ -942,7 +974,10 @@ fn step_order(world: &mut World, e: Entity, tick: u64) {
                         world.resource_mut::<ArmyStats>().of(c.faction).bought += bought;
                     }
                     OrderSpec::Give { .. } => {
-                        give(world, e, s);
+                        // GP-22: what arrived counts toward the
+                        // settlement's open BringFood request.
+                        let delivered = give(world, e, s);
+                        crate::requests::delivered(world, s, c.faction, delivered);
                     }
                     _ => {}
                 }
