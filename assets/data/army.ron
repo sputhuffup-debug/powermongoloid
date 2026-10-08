@@ -101,7 +101,11 @@
     // Garrisons and revolts (GP-05, GP-06, M4).
     garrison: (
         radius: 30.0,          // the owner's soldiers this close to the centre are its garrison
-        keep_days: 2.0,        // an owned village keeps this many days of food when it feeds its owner's armies
+        // An owned village feeds its owner's armies from the food its
+        // storehouse holds beyond this many days for its people. At
+        // villagers.ron's loyalty.food_days it never costs the village
+        // its food security (and so its loyalty).
+        keep_days: 1.0,
         revolt_hours: 24.0,    // a rising lasts this long; the next daily check settles it
         crushed_loyalty: 0.1,  // loyalty each resident loses when a rising is put down
     ),

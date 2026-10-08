@@ -355,6 +355,17 @@ pub fn provoke(world: &mut World, s: Entity, faction: FactionId) {
     }
 }
 
+/// Ends `faction`'s provocation of `s` (GP-05): its militia stands down at
+/// their next step (`act::perform`). A provocation by anyone else stays.
+pub(crate) fn call_off(world: &mut World, s: Entity, faction: FactionId) {
+    if let Some(mut threat) = world.get_mut::<Threat>(s)
+        && threat.provoked_by == Some(faction)
+    {
+        threat.provoked_by = None;
+        threat.provoked_until = 0;
+    }
+}
+
 /// Barters the baggage's non-food goods for food (Trade, and passive
 /// gathering). Returns the food value bought.
 fn barter(world: &mut World, captain: Entity, s: Entity, keep_days: f32, room: f32) -> f32 {
@@ -849,11 +860,12 @@ fn step_order(world: &mut World, e: Entity, tick: u64) {
 ///    militia stands within `conquest.militia_radius` of the centre, the
 ///    defenders are broken; after `conquest.give_up_days` the assault
 ///    fails.
-/// 2. Hold, provoking no more: the captain within `conquest.hold_radius`
-///    of the centre with nobody contesting it ([`militia_or_foes_near`])
-///    for `conquest.hold_hours` takes the settlement
-///    ([`transfer`], [`Cause::Conquest`]). Any contest restarts the hold;
-///    after `conquest.timeout_hours` the attack fails.
+/// 2. Hold: the break calls off the provocation, so the militia stands
+///    down. The captain within `conquest.hold_radius` of the centre with
+///    nobody contesting it ([`militia_or_foes_near`]) for
+///    `conquest.hold_hours` takes the settlement ([`transfer`],
+///    [`Cause::Conquest`]). Any contest restarts the hold; after
+///    `conquest.timeout_hours` the attack fails.
 ///
 /// A settlement that became the attacker's meanwhile ends the order.
 #[allow(clippy::too_many_arguments)]
@@ -886,6 +898,9 @@ fn attack(
         {
             let (who, name) = names(world);
             log(world, format!("{who} broke the defenders of {name}"));
+            // The village submits: call off the provocation, or its
+            // half-day timer would keep raising militia through the hold.
+            call_off(world, s, faction);
             order.step = 2;
             order.since = tick;
             order.held_since = None;
@@ -947,24 +962,24 @@ fn forage(world: &mut World, e: Entity, tick: u64) {
     let Some((_, _, s)) = nearest else {
         return;
     };
-    let owned = owner_of(world, s) == c.faction;
-    let wants = if owned {
-        days < army.data.gather_target_days && (c.last_forage == 0 || tick >= c.last_forage + tpd)
-    } else {
-        match c.posture {
-            Posture::Passive | Posture::Neutral => days < 1.0,
-            Posture::Aggressive => days < 3.0,
+    if owner_of(world, s) == c.faction {
+        // Supply: a draw that found nothing spare doesn't use up the day,
+        // so the army tries again (every 30 ticks) once the farms deliver.
+        let due = c.last_forage == 0 || tick >= c.last_forage + tpd;
+        if due && days < army.data.gather_target_days && supply(world, e, s) > 0.0 {
+            world.get_mut::<Captain>(e).expect("captain").last_forage = tick.max(1);
         }
+        return;
+    }
+    let wants = match c.posture {
+        Posture::Passive | Posture::Neutral => days < 1.0,
+        Posture::Aggressive => days < 3.0,
     };
     if !wants {
         return;
     }
     world.get_mut::<Captain>(e).expect("captain").last_forage = tick.max(1);
-    if owned {
-        supply(world, e, s);
-    } else {
-        gather_food(world, e, s, days < 1.0);
-    }
+    gather_food(world, e, s, days < 1.0);
 }
 
 /// Builds (or reuses) the rally field followers use to rejoin the

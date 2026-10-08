@@ -18,7 +18,9 @@ use crate::index::FighterGrid;
 /// Who fell this tick and where, for morale (cleared every tick).
 #[derive(Resource, Debug, Default, Clone)]
 pub struct Casualties {
-    /// (position, allegiance, militia)
+    /// (position, allegiance, militia). A rebel (militia risen against its
+    /// own allegiance, GP-06) is recorded as independent, so its fall
+    /// shakes none of the soldiers it fought.
     pub fallen: Vec<(Vec2, FactionId, bool)>,
     /// The dead awaiting removal, in SpawnId order.
     pub pending: Vec<Entity>,
@@ -128,10 +130,16 @@ pub(crate) fn casualties(world: &mut World) {
         let faction = world.get::<Allegiance>(e).map_or(FactionId(0), |a| a.0);
         let stance = world.get::<CombatStats>(e).map(|c| c.stance);
         let militia = matches!(stance, Some(Stance::Militia { .. }));
+        // A rebel fights its own settlement's owner (GP-06): its fall is no
+        // loss to the owner's soldiers, so it shakes no one's morale.
+        let side = match stance {
+            Some(Stance::Militia { against }) if against == faction => FactionId::INDEPENDENT,
+            _ => faction,
+        };
         world
             .resource_mut::<Casualties>()
             .fallen
-            .push((p, faction, militia));
+            .push((p, side, militia));
         if let Some(Stance::Militia { against }) = stance {
             world
                 .resource_mut::<ArmyStats>()

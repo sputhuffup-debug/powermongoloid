@@ -573,7 +573,7 @@ pub fn champion_of(world: &mut World, faction: FactionId) -> Option<Entity> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -617,7 +617,7 @@ mod tests {
 
     /// A run app on the run island, set up (the plugins `sim_headless`
     /// adds, minus the empty M5 ones).
-    fn run_app(seed: u64) -> (bevy_app::App, RunStart) {
+    pub(crate) fn run_app(seed: u64) -> (bevy_app::App, RunStart) {
         use sim_core::{RunConfig, SimCorePlugin, SimStepper};
         use sim_world::{WorldGenSettings, WorldPreset};
         let mut app = bevy_app::App::new();
@@ -637,7 +637,8 @@ mod tests {
         (app, start)
     }
 
-    fn command(app: &mut bevy_app::App, issuer: FactionId, kind: sim_core::CommandKind) {
+    /// Sends `kind` as a player-origin command from `issuer` and steps a tick.
+    pub(crate) fn command(app: &mut bevy_app::App, issuer: FactionId, kind: sim_core::CommandKind) {
         use sim_core::SimStepper;
         app.world_mut()
             .write_message(sim_core::SimCommand::player(issuer, kind));
