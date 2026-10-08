@@ -19,8 +19,8 @@ use crate::orders::log;
 /// GP-27: `issuer` picks `choice` of pending offer `offer`. The offer is
 /// removed, so a second pick (a double click) is refused.
 ///
-/// Refusals: "no run" outside a run, "no such offer" (unknown or already
-/// answered), "not your offer", "no such choice", and "not available yet"
+/// Refusals: "no run" outside a run, "no such offer" (unknown, already
+/// answered, or past its `expires` tick), "not your offer", "no such choice", and "not available yet"
 /// for hires (M4 step 7). An invitation (GP-22) is answered by
 /// [`crate::invitations::answer`]: choice 0 accepts, 1 declines.
 pub fn choose(
@@ -37,6 +37,12 @@ pub fn choose(
         .get(offer)
         .cloned()
         .ok_or("no such offer")?;
+    // An offer lapses at its `expires` tick, even before the hourly step
+    // that clears it (GP-22 invitations) has run this tick.
+    let tick = world.resource::<sim_core::SimTick>().0;
+    if o.expires.is_some_and(|t| t <= tick) {
+        return Err("no such offer");
+    }
     if o.faction != issuer {
         return Err("not your offer");
     }

@@ -542,6 +542,9 @@ fn supply(world: &mut World, captain: Entity, s: Entity) -> f32 {
 /// value delivered, which is what `move_food` actually moved, and counts it
 /// in `FactionStats::donated`. The orders step credits this value to the
 /// settlement's open BringFood request ([`crate::requests::delivered`]).
+/// A gift also pauses the army's automatic gathering from villages
+/// (`forage`) for a quarter day, as any dealing does, so a neutral army
+/// doesn't seize the food straight back.
 pub(crate) fn give(world: &mut World, captain: Entity, s: Entity) -> f32 {
     let faction = world.get::<Captain>(captain).expect("captain").faction;
     let Some(store) = storehouse(world, s) else {
@@ -559,6 +562,15 @@ pub(crate) fn give(world: &mut World, captain: Entity, s: Entity) -> f32 {
     let delivered = move_food(world, captain, store, spare);
     let (who, name) = (faction_name(world, faction), settlement_name(world, s));
     if delivered > 0.0 {
+        // The baggage now holds `give_keep_days`, at the edge of what makes
+        // a neutral army help itself to a nearby village (`forage`): without
+        // a pause it would take the gift straight back. A gift counts as
+        // the army's dealing with villages for the next quarter day.
+        let tick = world.resource::<SimTick>().0;
+        world
+            .get_mut::<Captain>(captain)
+            .expect("captain")
+            .last_forage = tick.max(1);
         world.resource_mut::<ArmyStats>().of(faction).donated += delivered;
         log(world, format!("{who} gave food to {name}"));
     } else {
@@ -1583,6 +1595,23 @@ mod tests {
         assert!(donated <= bag0 - keep * need + 1e-3);
         assert!(store_food(world, a) > store0, "the storehouse got it");
         assert!(lines(world).iter().any(|l| l.contains("gave food")));
+        // Left with its keep beside the village, the neutral army doesn't
+        // take food straight back (`forage` pauses for a quarter day after
+        // a gift), though its baggage soon dips below a day.
+        let taken = |w: &World| {
+            let s = w.resource::<ArmyStats>().get(FactionId::PLAYER);
+            s.given + s.seized
+        };
+        // (A well-stocked storehouse, so there would be food to take.)
+        let pop = world.get::<SettlementEconomy>(a).unwrap().population;
+        let village_need = daily_need(world, pop);
+        stock_food(world, a, 10.0 * village_need);
+        let before = taken(world);
+        app.step(550);
+        let world = app.world_mut();
+        let days = baggage_days(world, cap);
+        assert!(days < 1.0, "still {days} days in the baggage");
+        assert_eq!(taken(world), before, "took food back: {:?}", lines(world));
 
         // An army with nothing to spare gives nothing.
         let poor = army(world, FactionId::PLAYER, ac, Posture::Neutral, 0.5);

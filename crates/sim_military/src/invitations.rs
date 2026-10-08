@@ -139,9 +139,9 @@ fn player_soldiers_near(world: &World, at: IVec2, radius: f32) -> u32 {
 /// GP-22: `faction` answers settlement `settlement`'s invitation with
 /// `card` (0 accepts, anything else declines). Accepting hands the
 /// settlement over ([`transfer`], `Cause::Invitation`; residents' loyalty
-/// starts from their goodwill toward `faction`). Either way the settlement
-/// offers nothing more for `invitations.cooldown_days`. Returns what was
-/// done, for the log.
+/// starts from their goodwill toward `faction`), unless `faction` already
+/// holds it. Either way the settlement offers nothing more for
+/// `invitations.cooldown_days`. Returns what was done, for the log.
 pub fn answer(world: &mut World, faction: FactionId, settlement: u64, card: u16) -> String {
     let tick = world.resource::<SimTick>().0;
     let days = world
@@ -157,7 +157,11 @@ pub fn answer(world: &mut World, faction: FactionId, settlement: u64, card: u16)
         return format!("the invitation of settlement {settlement}");
     };
     let name = settlement_name(world, s);
-    if card == 0 {
+    if card == 0 && crate::conquest::owner_of(world, s) == faction {
+        // Taken some other way while the offer stood: nothing to hand over
+        // (and residents' loyalty isn't reseeded).
+        format!("to rule {name}, already theirs")
+    } else if card == 0 {
         transfer(world, s, faction, Cause::Invitation);
         format!("to rule {name}")
     } else {

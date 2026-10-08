@@ -5,8 +5,8 @@
 //! at every populated settlement in SpawnId order:
 //!
 //! - **Posting.** A settlement that is independent or the player's (never
-//!   another warlord's, never the rival's seat) with no open request and no
-//!   cooldown posts at most one:
+//!   another warlord's, never the rival's seat), still has residents, and
+//!   has no open request and no cooldown posts at most one:
 //!   - **DriveOff** when an army at war with the player (raiders, the
 //!     rival, beasts) and not its owner's stands within army.ron
 //!     `threat.radius` of its centre;
@@ -320,7 +320,10 @@ pub fn step(world: &mut World) {
             }
             continue;
         }
+        // An emptied settlement (everyone enlisted or dead) has nobody to
+        // ask, and its zero need would be "met" at once.
         let asks = matches!(p.owner, FactionId::INDEPENDENT | FactionId::PLAYER)
+            && p.population > 0
             && Some(p.id) != seat
             && tick >= board.watch_mut(p.id).quiet_until;
         if !asks {

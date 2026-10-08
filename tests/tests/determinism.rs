@@ -166,6 +166,10 @@ fn state_hash_covers_every_sim_component() {
 /// parallel with an owned settlement at day ticks (loyalty drift, the
 /// unrest clock, a revolt) is `conquest.rs`'s
 /// `a_conquest_and_its_revolt_are_thread_independent`.
+/// Step 3 (GP-22, SIM-38): another settlement's stores spoil before the
+/// first tick, so it posts a request; the attack's provocation and
+/// killings move goodwill; and once the random orders are over the
+/// champion forages, so wild food is taken.
 #[test]
 fn run_state_hash_covers_every_sim_component() {
     let mut app = headless_app(HeadlessConfig::run(42, RunConfig::default()));
@@ -174,6 +178,9 @@ fn run_state_hash_covers_every_sim_component() {
     app.insert_resource(CommandScript::from_log(&commands));
     let (hamlet, hamlet_id, warband) = spawn_beside_nearest_hamlet(&mut app);
     let warband_id = app.world().get::<SpawnId>(warband).unwrap().0;
+    let hungry = spoil_food_near_start(&mut app, hamlet);
+    let champion = sim_military::champion_of(app.world_mut(), FactionId::PLAYER).unwrap();
+    let champion_id = app.world().get::<SpawnId>(champion).unwrap().0;
     let issue = |app: &mut sim_headless::App, order: OrderSpec| {
         let kind = CommandKind::IssueOrder {
             captain: warband_id,
@@ -191,6 +198,24 @@ fn run_state_hash_covers_every_sim_component() {
     );
     let mut garrisoned = false;
     for _ in 0..15 {
+        if app.world().resource::<SimTick>().0 == 700 {
+            // The random orders are over: the champion lives off the land.
+            let forage = OrderSpec::Forage {
+                radius: app
+                    .world()
+                    .resource::<sim_military::Progression>()
+                    .data
+                    .forage
+                    .default_radius,
+            };
+            let kind = CommandKind::IssueOrder {
+                captain: champion_id,
+                order: forage,
+                queue: false,
+            };
+            app.world_mut()
+                .write_message(SimCommand::player(FactionId::PLAYER, kind));
+        }
         app.step(100);
         if !garrisoned && sim_military::owner_of(app.world(), hamlet) == FactionId::PLAYER {
             let garrison = OrderSpec::Garrison {
@@ -224,6 +249,24 @@ fn run_state_hash_covers_every_sim_component() {
         stats.conquests
     );
     assert!(stats.conquests >= 1, "no conquest: {stats:?}");
+    let board = app.world().resource::<sim_military::RequestBoard>().clone();
+    let liked = {
+        let world = app.world_mut();
+        let mut q = world.query::<&sim_agents::Goodwill>();
+        q.iter(world).filter(|g| !g.entries().is_empty()).count()
+    };
+    println!(
+        "requests posted {} (#{hungry} asks: {:?}); foraged {:.2}; {liked} settlements with goodwill",
+        board.posted,
+        board.of(hungry).map(|r| r.kind),
+        stats.foraged
+    );
+    assert!(
+        board.posted >= 1 && board.of(hungry).is_some(),
+        "no request posted"
+    );
+    assert!(stats.foraged > 0.0, "the champion foraged nothing");
+    assert!(liked > 0, "no deed moved goodwill");
     assert!(garrisoned, "hamlet #{hamlet_id} not taken");
     let front = app
         .world()
@@ -266,6 +309,30 @@ fn spawn_beside_nearest_hamlet(app: &mut sim_headless::App) -> (Entity, u64, Ent
         ..ArmySpec::new(FactionId::PLAYER, at, 30)
     };
     (hamlet, id, spawn_army(world, &spec))
+}
+
+/// Spoils the food in the storehouse and homes of the populated settlement
+/// nearest the run's start other than `except` (a setup edit before the
+/// first tick), so it asks for food within the hour (GP-22). Returns its
+/// SpawnId.
+fn spoil_food_near_start(app: &mut sim_headless::App, except: Entity) -> u64 {
+    use sim_economy::{Economy, SettlementEconomy, Stockpile};
+    let world = app.world_mut();
+    let start = world.resource::<RunProgress>().start;
+    let econ = world.resource::<Economy>().clone();
+    let mut q = world.query::<(Entity, &SpawnId, &Settlement, &SettlementEconomy)>();
+    let (_, id, se) = q
+        .iter(world)
+        .filter(|(e, ..)| *e != except)
+        .map(|(_, id, s, se)| ((s.center - start).as_vec2().length(), id.0, se.clone()))
+        .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
+        .expect("a second settlement");
+    for store in std::iter::once(se.storehouse).chain(se.homes.iter().copied()) {
+        if let Some(mut stock) = world.get_mut::<Stockpile>(store) {
+            stock.goods.retain(|g, _| !econ.is_food(*g));
+        }
+    }
+    id
 }
 
 /// NFR-08 for runs (GP-21): a run's replay carries its `RunConfig` in the
