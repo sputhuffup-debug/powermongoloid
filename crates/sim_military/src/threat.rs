@@ -1,9 +1,11 @@
 //! How frightening nearby armies are to each settlement (SIM-13). Villagers
-//! read their settlement's `Threat` through the safety need.
+//! read their settlement's `Threat` through the safety need. A settlement's
+//! own owner's armies don't frighten it (GP-05), unless it has risen
+//! against them (GP-06).
 
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
-use sim_agents::Threat;
+use sim_agents::{Owner, Threat};
 use sim_core::SimTick;
 use sim_world::Settlement;
 
@@ -14,11 +16,11 @@ pub(crate) fn update_threats(
     tick: Res<SimTick>,
     army: Res<Army>,
     index: Res<ArmyIndex>,
-    mut q: Query<(&Settlement, &mut Threat)>,
+    mut q: Query<(&Settlement, Option<&Owner>, &mut Threat)>,
 ) {
     let _span = tracing::info_span!("sim_military::update_threats").entered();
     let radius = army.data.threat.radius;
-    for (s, mut threat) in &mut q {
+    for (s, owner, mut threat) in &mut q {
         let mut t = *threat;
         if t.provoked_by.is_some() && tick.0 > t.provoked_until {
             t.provoked_by = None;
@@ -26,6 +28,11 @@ pub(crate) fn update_threats(
         let center = s.center.as_vec2() + Vec2::splat(0.5);
         let mut level = 0.0f32;
         for a in &index.armies {
+            // A garrison guards its own settlement; it frightens it only
+            // when the settlement rises against it.
+            if owner.is_some_and(|o| o.faction == a.faction) && t.provoked_by != Some(a.faction) {
+                continue;
+            }
             let d = a.pos.distance(center);
             if d >= radius {
                 continue;

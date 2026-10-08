@@ -16,6 +16,9 @@ pub struct Order {
     pub since: u64,
     /// Where the army was when the order started (scouting returns here).
     pub origin: IVec2,
+    /// `Attack`, once the defenders broke: the tick the army's current
+    /// uncontested hold of the centre began (`None` while contested).
+    pub held_since: Option<u64>,
 }
 
 impl Order {
@@ -26,6 +29,7 @@ impl Order {
             step: 0,
             since: 0,
             origin: IVec2::ZERO,
+            held_since: None,
         }
     }
 }
@@ -64,6 +68,10 @@ fn hash_spec(spec: &OrderSpec, h: &mut StateHasher) {
             h.i32(x);
             h.i32(y);
         }
+        OrderSpec::Garrison { settlement } => {
+            h.u8(8);
+            h.u64(settlement);
+        }
     }
 }
 
@@ -78,6 +86,7 @@ pub fn describe(spec: &OrderSpec) -> String {
         OrderSpec::Attack { .. } => "attack".into(),
         OrderSpec::Trade { .. } => "trade".into(),
         OrderSpec::Scout { x, y } => format!("scout ({x}, {y})"),
+        OrderSpec::Garrison { .. } => "garrison".into(),
     }
 }
 
@@ -126,6 +135,13 @@ impl StateHash for Captain {
             h.u8(o.step);
             h.u64(o.since);
             h.ivec2(o.origin);
+            match o.held_since {
+                Some(t) => {
+                    h.u8(1);
+                    h.u64(t);
+                }
+                None => h.u8(0),
+            }
         }
         match self.goal {
             Some(g) => {
@@ -268,6 +284,12 @@ pub struct FactionStats {
     pub first_desertion: Option<u64>,
     pub first_starvation: Option<u64>,
     pub rejected_commands: u32,
+    /// Settlements taken by force (GP-05, M4).
+    pub conquests: u32,
+    /// Food value drawn, unpaid and unprovoked, from settlements the
+    /// faction owns (garrison supply, M4). Not counted in `seized`,
+    /// `bought` or `given`.
+    pub supplied: f32,
 }
 
 /// Totals for every faction, by faction id. Hashed.
@@ -309,6 +331,8 @@ impl StateHash for ArmyStats {
             h.u64(s.first_desertion.unwrap_or(u64::MAX));
             h.u64(s.first_starvation.unwrap_or(u64::MAX));
             h.u32(s.rejected_commands);
+            h.u32(s.conquests);
+            h.f32(s.supplied);
         }
     }
 }

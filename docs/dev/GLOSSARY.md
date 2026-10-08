@@ -3,7 +3,7 @@
 | Term | Meaning |
 | --- | --- |
 | **Activity** | A person's current action (`ActionKind`), its target, its stage (travel, perform, deliver, done) and timers. The SEED.md data model calls it `CurrentAction` |
-| **Allegiance** | The faction a person belongs to. Villagers are 0 (independent); soldiers have their warlord's faction |
+| **Allegiance** | The faction a person belongs to. Villagers follow their settlement's `Owner` (0, independent, until it changes hands); soldiers have their warlord's faction |
 | **Army index** (`ArmyIndex`) | A read-only summary of every army, rebuilt each tick in Knowledge: position, flow fields, head count, food. Lets soldiers read their army in parallel |
 | **Band** (detail band) | How a person or building is drawn at a camera distance: textured detail, flat low-poly, billboard or dot (`render.ron`) |
 | **Band template** | Who follows the champion at the start of a run: groups of followers with their stats, weapons and tools, plus days of food (`bands` in `progression.ron`). One is drawn per run (GP-27) |
@@ -23,12 +23,15 @@
 | **Follower** | A soldier attached to a captain, with a formation slot |
 | **Food security** | Days of food a settlement holds at its population's eating rate |
 | **Game hour** | A 24th of a day: 100 ticks (`Calendar::ticks_per_hour`). Data fields ending in `_hours` use it; the UI's clock face does not |
+| **Goodwill** (`Goodwill`) | A settlement's standing with each faction, -1..1, sorted by faction (GP-22). Helping raises it and plundering lowers it (M4 step 3); goodwill toward the owner is the treatment term of loyalty, and seeds loyalty when the settlement changes hands |
 | **Logistics step** | `orders::run_orders`: the serial step where captains deal with settlements (recruit, food, arms, trade) |
+| **Loyalty** (`Loyalty`, `SettlementLoyalty`) | A villager's loyalty to its settlement's owner, 0..1 (GP-06, SIM-24). Once a day it drifts toward a target set by food security, goodwill toward the owner and time under the owner (`loyalty` in villagers.ron); independent settlements aim at a fixed level. `SettlementLoyalty` holds each settlement's mean and minimum, and `below_since`, when its mean fell below the revolt threshold (unrest) |
 | **Militia** | Villagers whose AI chose `Fight` to defend a provoked settlement (stance `Militia { against }`) |
 | **Monument** (`Monument`) | A landmark the run preset's worldgen places in every region (GP-23): standing stones, a ruined fort, a holy well, a road marker, an ancient forge, a market cross, a wayshrine or a watchtower, on a site that suits its kind and away from settlements. A sim entity with a `SpawnId`; holding one gives a small, capped bonus (M4 step 4) |
 | **Morale** | 0..1. Low morale routs, and unfed or routed men may desert |
 | **Occupation** | A villager's trade (farmer, fisher, ...), tied to a workplace kind |
 | **Offer** (`Offers`) | A choice waiting for the player: the starting boon, a dominion boon, a trait, an invitation. Answered with a recorded `ChooseOffer` command, so picks replay (GP-27) |
+| **Owner** (`Owner`) | The faction holding a settlement and since when (GP-05): `FactionId::INDEPENDENT` until conquest or invitation. Changed only by `sim_agents::set_owner`, which also sets the residents' allegiance and loyalty and calls off their militia |
 | **Posture** | Passive, neutral or aggressive. How an army treats villages: buy, ask, or take and frighten |
 | **Preset** (`WorldPreset`) | One of the two complete settings blocks in `worldgen.ron`: `developed` (the 2048-tile M1-M3 world; `WorldGenSettings::default_data()`) or `run` (the 1024-tile run island) |
 | **Rally field** | A flow field toward the captain, over the army's extent. Followers far from their place walk it |

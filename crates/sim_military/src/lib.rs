@@ -16,6 +16,13 @@
 //!    removes the fallen.
 //! 6. **Upkeep** (Needs): [`upkeep`] covers eating, morale, starvation and
 //!    desertion.
+//! 7. **Progress** (Needs, hourly): [`progression::progress`] drives
+//!    settlement-level steps in a fixed order, such as [`conquest::revolts`].
+//!
+//! Settlements change hands through [`conquest::transfer`]: an `Attack`
+//! that breaks the militia and holds the centre, or a revolt (GP-05,
+//! GP-06). A `Garrison` order holds an owned settlement, which feeds its
+//! owner's armies from its spare food.
 //!
 //! Also here: army data ([`Army`], `army.ron`), [`spawn::spawn_army`] and
 //! the playtest setup, the scripted [`raiders`] (in `SimInputSet::Ai`), and
@@ -27,6 +34,7 @@
 
 pub mod combat;
 pub mod components;
+pub mod conquest;
 pub mod data;
 pub mod index;
 pub mod orders;
@@ -40,7 +48,7 @@ pub mod upkeep;
 use bevy_app::{App, FixedUpdate, Plugin};
 use bevy_ecs::prelude::*;
 use sim_agents::AgentSet;
-use sim_core::{AppHashExt, Calendar, SimInputSet, SimSet};
+use sim_core::{AppHashExt, Calendar, SimInputSet, SimSet, on_hour};
 use sim_economy::{Economy, EconomySet};
 
 pub use combat::Casualties;
@@ -48,6 +56,7 @@ pub use components::{
     ArmyStats, Captain, Equipment, FactionStats, Factions, Follower, MilitaryLog, Order, Raider,
     Soldier, describe,
 };
+pub use conquest::{militia_or_foes_near, owner_of, transfer, transfer_seeded};
 pub use data::Army;
 pub use index::{ArmyIndex, ArmyInfo, FighterGrid, Side};
 pub use orders::{CommandInbox, arm_followers, enlist, find_settlement, provoke};
@@ -73,6 +82,10 @@ pub enum MilitarySet {
     Combat,
     /// Hunger, morale, desertion (Needs).
     Upkeep,
+    /// The hourly progress driver: revolts and, later in M4, the run's
+    /// settlement-level steps (Needs, after `Upkeep` and
+    /// `AgentSet::Standing`).
+    Progress,
 }
 
 /// Captains, followers, orders, combat and morale.
@@ -113,9 +126,17 @@ impl Plugin for MilitaryPlugin {
                     MilitarySet::Combat
                         .in_set(SimSet::Act)
                         .after(EconomySet::Resolve),
+                    // After loyalty too: desertions remove `Enlisted`, which
+                    // decides who drifts and who counts (GP-06).
                     MilitarySet::Upkeep
                         .in_set(SimSet::Needs)
-                        .after(AgentSet::Needs),
+                        .after(AgentSet::Needs)
+                        .after(AgentSet::Standing),
+                    // Revolts read the day's loyalty summary (GP-06).
+                    MilitarySet::Progress
+                        .in_set(SimSet::Needs)
+                        .after(MilitarySet::Upkeep)
+                        .after(AgentSet::Standing),
                 ),
             )
             .add_systems(
@@ -154,6 +175,9 @@ impl Plugin for MilitaryPlugin {
                     )
                         .chain()
                         .in_set(MilitarySet::Upkeep),
+                    progression::progress
+                        .run_if(on_hour)
+                        .in_set(MilitarySet::Progress),
                 ),
             )
             .register_hashed_resource::<Army>()

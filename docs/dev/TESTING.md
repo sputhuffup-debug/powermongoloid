@@ -78,7 +78,11 @@ These run in seconds and sit next to the code they test.
   - placed monuments suit their kind's site rule on the run islands of seeds 42 and 7 (`placed_monuments_suit_their_kind`); a kind that fits nowhere falls back to the next that does, which is the kind recorded (`a_kind_that_fits_nowhere_falls_back_to_one_that_does`)
   - installing a world spawns settlements, then monuments
 - **sim_economy:** inventory and stockpile rules, transfer operations, the resolver serving lower SpawnIds first, data validation, layout rings.
-- **sim_agents:** utility choice (best score, inertia, ties), eating, response curves, data validation, apportioning.
+- **sim_agents:**
+  - utility choice (best score, inertia, ties), eating, response curves, data validation (including `rejects_bad_loyalty`), apportioning
+  - goodwill stays sorted by faction and clamped to -1..1 (`goodwill_stays_sorted_and_clamped`)
+  - `set_owner` (GP-05, GP-06): only the settlement's own villagers who aren't enlisted change allegiance and loyalty, seeded from goodwill toward the new owner (or `independent_target`), whatever order they were spawned in; the provocation and the unrest clock are cleared (`set_owner_hands_over_residents_in_spawn_id_order`); anything that isn't a populated settlement is left alone
+  - loyalty (SIM-24): the target weighs food security, goodwill and time, and the shipped tuning puts a starved conquest below the revolt threshold and a fed one above its seed (`the_target_weighs_food_goodwill_and_time`); a day's drift closes part of the gap (`drift_closes_part_of_the_gap`); run as systems, a starved conquest falls a little each day until its mean is below the threshold and `below_since` is set, a fed one rises, an independent one settles at its target, enlisted villagers are untouched, and feeding the starved one clears the clock (`loyalty_drifts_toward_its_target_each_day`); the owner's `LoyaltyDrift` modifier scales the rate (`the_loyalty_drift_modifier_speeds_drift`)
 - **sim_military:**
   - data loading, hostility rules, the fighter grid's masked search matching a full search, formation slots
   - `progression.ron` loads and its validation rejects bad cards (`shipped_data_is_valid`, `rejects_bad_data`)

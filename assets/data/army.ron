@@ -64,12 +64,15 @@
     max_captains: 9,
     // Recruiting (GP-02): each adult asked joins with this chance by
     // posture, plus bonuses when their village is short of food or the
-    // army is well fed. Loyalty joins these in M4.
+    // army is well fed.
     recruit: (
         radius: 14.0,
         willing: (passive: 0.45, neutral: 0.35, aggressive: 0.25),
         hungry_village_bonus: 0.3,
         fed_army_bonus: 0.15,
+        // M4 (GP-06): in a village the recruiter owns, plus this times the
+        // village's mean loyalty. A village another warlord owns sends nobody.
+        loyalty_bonus: 0.3,
     ),
 
     // How frightening an army is to a settlement within `radius` tiles,
@@ -83,4 +86,23 @@
     // this food value per unit of each non-food good.
     trade_keep_days: 1.0,
     trade_value: [("wood", 0.2), ("ore", 0.3), ("tools", 1.5), ("weapons", 2.5)],
+
+    // Conquest (GP-05, M4): an Attack fights until the militia breaks, then
+    // holds the centre until the settlement changes hands. An hour is a
+    // 24th of a day (100 ticks).
+    conquest: (
+        break_ticks: 300,      // fight at least this long before the defenders count as broken
+        give_up_days: 1.0,     // the assault fails if the militia still stands after this
+        militia_radius: 35.0,  // militia or enemy soldiers this close to the centre contest it
+        hold_radius: 12.0,     // the captain holds within this of the centre,
+        hold_hours: 2.0,       // uncontested for this long, to take the settlement
+        timeout_hours: 12.0,   // a hold not won by then fails
+    ),
+    // Garrisons and revolts (GP-05, GP-06, M4).
+    garrison: (
+        radius: 30.0,          // the owner's soldiers this close to the centre are its garrison
+        keep_days: 2.0,        // an owned village keeps this many days of food when it feeds its owner's armies
+        revolt_hours: 24.0,    // a rising lasts this long; the next daily check settles it
+        crushed_loyalty: 0.1,  // loyalty each resident loses when a rising is put down
+    ),
 )

@@ -414,7 +414,8 @@ pub fn sample_commands(seed: u64, ticks: u64, count: usize) -> Vec<LoggedCommand
 /// `count` deterministic military commands for the armies in `app` (after
 /// scenario setup), spread over `ticks`, from `seed`: orders of every kind,
 /// posture changes, appointments, offer picks, and some invalid commands
-/// (another faction's captain, an unknown settlement, offers that don't
+/// (another faction's captain, an unknown settlement, a garrison of a
+/// settlement the player doesn't hold, offers that don't
 /// exist) that must be refused. Issued by the player's faction, except
 /// `AbandonRun`, which the raiders issue so that it is always refused and
 /// never cuts a run short. Used by tests and `sim_headless --commands`.
@@ -444,7 +445,7 @@ pub fn sample_orders(app: &mut App, seed: u64, ticks: u64, count: usize) -> Vec<
         .map(|_| {
             let (cid, _, at) = captains[rng.random_range(0..captains.len())];
             let s = settlements[rng.random_range(0..settlements.len())];
-            let kind = match rng.random_range(0..12) {
+            let kind = match rng.random_range(0..13) {
                 0..=2 => {
                     let (x, y) = near(&mut rng, at);
                     OrderSpec::MoveTo { x, y }
@@ -465,6 +466,8 @@ pub fn sample_orders(app: &mut App, seed: u64, ticks: u64, count: usize) -> Vec<
                 10 => OrderSpec::GatherFood {
                     settlement: u64::MAX,
                 },
+                // GP-05: refused unless the player holds `s` by then.
+                11 => OrderSpec::Garrison { settlement: s },
                 _ => OrderSpec::MoveTo { x: -5, y: 3 },
             };
             let command = match rng.random_range(0..12) {

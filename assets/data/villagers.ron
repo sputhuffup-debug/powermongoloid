@@ -83,6 +83,25 @@
     // A civilian's fighting strength when defending their home (SIM-13).
     combat: (health: 60.0, attack: 5.0, defense: 0.0, morale: 0.6),
 
+    // Loyalty to a settlement's owner (GP-06, SIM-24), 0..1. Each day it
+    // closes `drift_per_day` of the gap to a target: under an owner, the
+    // weighted mean of food security (days of food over `food_days`, capped
+    // at 1), goodwill toward the owner ((g + 1) / 2) and time under the owner
+    // (days over `settle_days`, capped at 1). Independent settlements aim at
+    // `independent_target`, which is also every villager's starting loyalty.
+    // A settlement whose mean is below `revolt_threshold` for a day may rise.
+    loyalty: (
+        // Morning food security of a fed village is about 0.4 to 2 days.
+        food_days: 1.0,
+        w_food: 0.55,
+        w_goodwill: 0.3,
+        w_time: 0.15,
+        settle_days: 10.0,
+        drift_per_day: 0.4,
+        independent_target: 0.6,
+        revolt_threshold: 0.35,
+    ),
+
     // Original names: given name + household family name.
     names: (
         given: [

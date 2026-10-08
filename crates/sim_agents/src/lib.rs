@@ -14,6 +14,10 @@
 //! - [`population::populate`]: creates households when the world is built:
 //!   one region in the developed world, every settlement at its drawn size
 //!   on the run island (GP-21).
+//! - Standing and loyalty (GP-05, GP-06, SIM-24; ADR 0014): each populated
+//!   settlement's [`Owner`] and [`Goodwill`], [`set_owner`] to hand it over
+//!   ([`standing`]), and each villager's [`Loyalty`], drifted daily and
+//!   summed into [`SettlementLoyalty`] ([`loyalty`], [`AgentSet::Standing`]).
 //!
 //! Tuning lives in `villagers.ron` ([`Villagers`]). Never depends on
 //! rendering, windowing, audio or asset crates.
@@ -23,12 +27,14 @@ pub mod ai;
 pub mod components;
 pub mod data;
 pub mod food;
+pub mod loyalty;
 pub mod movement;
 pub mod population;
+pub mod standing;
 
 use bevy_app::{App, FixedUpdate, Plugin};
 use bevy_ecs::prelude::*;
-use sim_core::{AppHashExt, Calendar, SimSet};
+use sim_core::{AppHashExt, Calendar, SimSet, on_day};
 use sim_economy::EconomySet;
 
 pub use act::eat_from;
@@ -38,8 +44,10 @@ pub use components::{
 };
 pub use data::Villagers;
 pub use food::FoodSecurity;
+pub use loyalty::{Loyalty, SettlementLoyalty};
 pub use population::PopulationReport;
 pub use population::civilian_stats;
+pub use standing::{Goodwill, Owner, OwnerChange, set_owner};
 
 /// Villager systems, for ordering other crates' systems around them.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -48,6 +56,9 @@ pub enum AgentSet {
     Move,
     Perform,
     Needs,
+    /// Standing and loyalty (SimSet::Needs, after `Needs`): the daily
+    /// `drift_loyalty`, then `aggregate_loyalty` (GP-06, SIM-24).
+    Standing,
 }
 
 /// Villagers. `population` overrides the total in `villagers.ron`.
@@ -85,7 +96,21 @@ impl Plugin for AgentsPlugin {
                     (act::update_needs, food::update_food_security)
                         .in_set(SimSet::Needs)
                         .in_set(AgentSet::Needs),
+                    // M4 step 3 puts `standing::apply_goodwill` (run only
+                    // when its ledger has entries) first in this chain.
+                    (
+                        loyalty::drift_loyalty.run_if(on_day),
+                        loyalty::aggregate_loyalty.run_if(on_day),
+                    )
+                        .chain()
+                        .in_set(AgentSet::Standing),
                 ),
+            )
+            .configure_sets(
+                FixedUpdate,
+                AgentSet::Standing
+                    .in_set(SimSet::Needs)
+                    .after(AgentSet::Needs),
             )
             .register_hashed_resource::<Villagers>()
             .register_hashed::<Villager>()
@@ -99,6 +124,10 @@ impl Plugin for AgentsPlugin {
             .register_hashed::<CombatStats>()
             .register_hashed::<Threat>()
             .register_hashed::<Strike>()
+            .register_hashed::<Owner>()
+            .register_hashed::<Goodwill>()
+            .register_hashed::<Loyalty>()
+            .register_hashed::<SettlementLoyalty>()
             .exempt_from_hash::<DecisionTrace>(
                 "explains the last decision; derived, never read by the sim",
             )

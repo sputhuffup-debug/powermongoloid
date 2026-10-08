@@ -93,16 +93,18 @@ enum MenuAction {
     GatherFood,
     Trade,
     Equip,
+    Garrison,
     Move,
 }
 
 impl MenuAction {
-    const ALL: [MenuAction; 6] = [
+    const ALL: [MenuAction; 7] = [
         MenuAction::GatherFood,
         MenuAction::Recruit,
         MenuAction::Trade,
         MenuAction::Equip,
         MenuAction::Attack,
+        MenuAction::Garrison,
         MenuAction::Move,
     ];
 
@@ -113,6 +115,8 @@ impl MenuAction {
             MenuAction::GatherFood => "Gather food",
             MenuAction::Trade => "Trade",
             MenuAction::Equip => "Equip",
+            // GP-05: refused unless you hold the settlement.
+            MenuAction::Garrison => "Garrison",
             MenuAction::Move => "Move here",
         }
     }
@@ -354,6 +358,7 @@ fn menu_buttons(
             MenuAction::GatherFood => OrderSpec::GatherFood { settlement: s },
             MenuAction::Trade => OrderSpec::Trade { settlement: s },
             MenuAction::Equip => OrderSpec::Equip { settlement: s },
+            MenuAction::Garrison => OrderSpec::Garrison { settlement: s },
             MenuAction::Move => OrderSpec::MoveTo {
                 x: t.tile.x,
                 y: t.tile.y,
@@ -543,7 +548,8 @@ fn army_panel(
         | OrderSpec::GatherFood { settlement }
         | OrderSpec::Equip { settlement }
         | OrderSpec::Attack { settlement }
-        | OrderSpec::Trade { settlement } => {
+        | OrderSpec::Trade { settlement }
+        | OrderSpec::Garrison { settlement } => {
             format!("{} at {}", describe(spec), settlement_name(settlement))
         }
         _ => describe(spec),

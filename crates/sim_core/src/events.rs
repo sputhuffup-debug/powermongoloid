@@ -51,11 +51,17 @@ pub enum SimEventKind {
     RequestDone,
     /// A request expired. `subject`: the request id; `other`: the settlement.
     RequestFailed,
-    /// `faction` took a settlement by force (GP-05). `subject`: the settlement.
+    /// `faction` took a settlement by force (GP-05). `subject`: the
+    /// settlement; `other`: its previous owner's faction id; `at`: its
+    /// centre; `amount`: residents handed over.
     Conquest,
-    /// A settlement invited `faction` in (GP-22). `subject`: the settlement.
+    /// A settlement invited `faction` in (GP-22). `subject`: the
+    /// settlement; `other`: its previous owner's faction id; `at`: its
+    /// centre; `amount`: residents handed over.
     Invited,
-    /// A settlement rose against `faction` (GP-06). `subject`: the settlement.
+    /// A settlement rose against `faction`, its owner, and is independent
+    /// again (GP-06). `subject`: the settlement; `other`: the new owner's
+    /// faction id (0); `at`: its centre; `amount`: residents.
     Revolt,
     /// The champion ranked up (SIM-35). `subject`: the champion; `amount`: the rank.
     RankUp,

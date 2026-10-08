@@ -10,6 +10,8 @@
 //! - [`offers`]: answering offers ([`choose`]) and abandoning the run
 //!   ([`abandon`]), both reached only through `SimCommand`s.
 //! - [`RunProgress`]: what the run has drawn and picked so far.
+//! - [`progress`]: the hourly serial driver of settlement-level steps, in
+//!   every preset (`MilitarySet::Progress`).
 //!
 //! Developed worlds and the M2/M3 scenarios never call [`setup_run`]: their
 //! `RunState.config` is `None`, and nothing here runs or draws for them.
@@ -534,6 +536,31 @@ fn spoil_stores(world: &mut World, fraction: f32) {
             stock.take(g, (q as f32 * fraction).floor() as u32);
         }
     }
+}
+
+/// `MilitarySet::Progress` (SimSet::Needs, after `MilitarySet::Upkeep` and
+/// `AgentSet::Standing`), once a game hour: the one exclusive driver of
+/// settlement- and run-level steps (guide D7). It calls its sub-steps in a
+/// fixed order, each in its own tracing span; daily sub-steps check the day
+/// themselves and run-only ones check `RunState::in_run`. It runs in every
+/// preset: conquest and revolts are general rules.
+///
+/// The order, with the M4 steps that fill it in:
+/// 1. `veterans::end_battles` (step 6)
+/// 2. `monuments::hold` (step 4)
+/// 3. [`crate::conquest::revolts`] (daily)
+/// 4. `wild::regrow` (daily, run; step 3)
+/// 5. `drifters::draw` (daily, run; step 3)
+/// 6. `requests::step` (run; step 3)
+/// 7. invitations (run; step 3)
+/// 8. `dominion::tally` (run; step 5)
+/// 9. `champion::rank_ups` (run; step 6)
+/// 10. `rebuild_modifiers` (step 4)
+/// 11. `rival::clock` (run; step 7)
+/// 12. `director::step` (run; step 7)
+pub fn progress(world: &mut World) {
+    let _span = tracing::info_span!("sim_military::progress").entered();
+    crate::conquest::revolts(world);
 }
 
 /// The faction's champion (lowest SpawnId if, oddly, several).

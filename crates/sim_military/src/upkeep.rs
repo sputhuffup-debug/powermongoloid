@@ -5,7 +5,7 @@
 use bevy_ecs::prelude::*;
 use rand::RngExt;
 use sim_agents::{
-    ActionKind, Activity, CombatStats, Enlisted, Needs, Stage, Stance, Travel, TravelState,
+    ActionKind, Activity, CombatStats, Enlisted, Needs, Owner, Stage, Stance, Travel, TravelState,
     Villager, Villagers, civilian_stats, eat_from,
 };
 use sim_core::rng::rng_key;
@@ -254,7 +254,8 @@ pub(crate) fn tally(
 }
 
 /// Needs set, last: deserters leave, in SpawnId order. A villager goes
-/// home and is a villager again; anyone else simply leaves.
+/// home and is a villager again, sworn to whoever owns its settlement
+/// (GP-05); anyone else simply leaves.
 pub(crate) fn apply_desertions(world: &mut World) {
     let _span = tracing::info_span!("sim_military::apply_desertions").entered();
     let tick = world.resource::<SimTick>().0;
@@ -276,7 +277,10 @@ pub(crate) fn apply_desertions(world: &mut World) {
             world.despawn(e);
             continue;
         };
-        // Back to village life.
+        // Back to village life, under the settlement's owner.
+        let owner = world
+            .get::<Owner>(v.settlement)
+            .map_or(FactionId::INDEPENDENT, |o| o.faction);
         let mut civ = civilian_stats(&villagers);
         if let Some(cs) = world.get::<CombatStats>(e) {
             civ.health = (cs.health / cs.max_health.max(1.0)) * civ.max_health;
@@ -287,7 +291,7 @@ pub(crate) fn apply_desertions(world: &mut World) {
             .remove::<(Enlisted, Follower, Equipment)>()
             .insert((
                 civ,
-                Allegiance(FactionId(0)),
+                Allegiance(owner),
                 Activity {
                     kind: ActionKind::GoHome,
                     stage: Stage::Done,

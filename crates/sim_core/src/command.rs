@@ -104,6 +104,13 @@ pub enum OrderSpec {
         x: i32,
         y: i32,
     },
+    /// Hold a settlement the issuer owns (GP-05, M4): the army stands at
+    /// its centre until ordered elsewhere or the settlement is lost, and
+    /// draws its food from the settlement's spare stores. Append only:
+    /// saves and the state hash store the variant's position.
+    Garrison {
+        settlement: u64,
+    },
 }
 
 /// Command payloads.

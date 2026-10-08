@@ -92,7 +92,7 @@ SIM-20 and SIM-21 ([ADR 0007](../adr/0007-economy-and-transfer-resolver.md)). Gu
 | `initial_home_food_per_resident` | Starting food in each house, per resident |
 
 ## villagers.ron (`sim_agents::Villagers`)
-SIM-10..13 ([ADR 0006](../adr/0006-utility-ai-and-decision-traces.md)). Guarded by `village_day`, `famine` and `posture`. Every utility score is `weight x` the product of its considerations; a `Logistic(mid, steepness)` curve maps an input in 0..1 to an S-curve centred on `mid`.
+SIM-10..13 ([ADR 0006](../adr/0006-utility-ai-and-decision-traces.md)), and loyalty (GP-06, SIM-24). Guarded by `village_day`, `famine` and `posture`; `loyalty` by the sim_agents unit tests in `crates/sim_agents/src/loyalty.rs`. Every utility score is `weight x` the product of its considerations; a `Logistic(mid, steepness)` curve maps an input in 0..1 to an S-curve centred on `mid`.
 
 | Field | Meaning |
 | --- | --- |
@@ -125,6 +125,13 @@ SIM-10..13 ([ADR 0006](../adr/0006-utility-ai-and-decision-traces.md)). Guarded 
 | `movement.slope_cost` | Path cost per unit of height difference |
 | `idle.min_ticks`, `idle.max_ticks`, `idle.wander_radius` | How long an idle stroll lasts and how far it goes |
 | `combat.health`, `combat.attack`, `combat.defense`, `combat.morale` | A civilian's fighting stats (for militia) |
+| `loyalty` | Loyalty to a settlement's owner (GP-06, SIM-24), 0..1 per villager. Once a day each villager who isn't enlisted closes `drift_per_day` of the gap to a target. Under an owner the target is the weighted mean `(w_food x food + w_goodwill x treatment + w_time x time) / (w_food + w_goodwill + w_time)`; an independent settlement's target is `independent_target`. The sim_agents unit test `the_target_weighs_food_goodwill_and_time` checks that a starved conquest aims below `revolt_threshold` and a fed one above its neutral seed of 0.5 |
+| `loyalty.food_days` | Days of food (storehouse and homes, `FoodSecurity.days`) that count as fully secure: food = days / `food_days`, capped at 1. A fed village holds about 0.4-2 days at the start of a day, when the drift runs |
+| `loyalty.w_food`, `loyalty.w_goodwill`, `loyalty.w_time` | Relative weights (>= 0, not all 0) of food security, treatment (goodwill toward the owner as `(g + 1) / 2`, so 0.5 at neutral goodwill) and time under the owner in the target |
+| `loyalty.settle_days` | Days under one owner until the time term is full: time = days owned / `settle_days`, capped at 1 |
+| `loyalty.drift_per_day` | Fraction (0..1) of the gap to the target closed each day, times the owner's `LoyaltyDrift` modifier (`FactionModifiers`) |
+| `loyalty.independent_target` | Target loyalty in independent settlements, every villager's starting loyalty, and the loyalty a settlement handed back to independence starts from |
+| `loyalty.revolt_threshold` | An owned settlement whose mean loyalty is below this is in unrest (`SettlementLoyalty.below_since`); a day of it risks revolt (sim_military) |
 | `names.given`, `names.family` | Original names for villagers |
 
 ## army.ron (`sim_military::Army`)

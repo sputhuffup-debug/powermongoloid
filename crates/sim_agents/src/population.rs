@@ -30,6 +30,8 @@ use crate::components::{
 };
 use crate::data::{RegionChoice, Villagers, YearRange};
 use crate::food::FoodSecurity;
+use crate::loyalty::{Loyalty, SettlementLoyalty};
+use crate::standing::{Goodwill, Owner};
 
 /// What population did, for diagnostics and tests.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
@@ -214,6 +216,9 @@ pub fn populate(world: &mut World) {
         .map(|o| villagers.share(*o))
         .collect();
     let mut occupied = Occupied::default();
+    // Every settlement starts independent (GP-05), its villagers at the
+    // independent loyalty target (GP-06).
+    let start_loyalty = villagers.data.loyalty.independent_target;
 
     for ((settlement_id, settlement, site), target) in chosen.iter().zip(&sizes) {
         let mut rng = seed.stream(rng_key("sim_agents::populate"), settlement_id.0);
@@ -373,11 +378,12 @@ pub fn populate(world: &mut World) {
                             Transfers::default(),
                             Position(home_tile),
                             Motion::default(),
-                            Allegiance(FactionId(0)),
+                            Allegiance(FactionId::INDEPENDENT),
                             DetailLevel { full: true },
                             Mobile,
                             civilian_stats(&villagers),
                             Strike::default(),
+                            Loyalty(start_loyalty),
                         ),
                     ),
                 );
@@ -459,6 +465,14 @@ pub fn populate(world: &mut World) {
             },
             FoodSecurity::default(),
             Threat::default(),
+            Owner::default(),
+            Goodwill::default(),
+            SettlementLoyalty {
+                mean: start_loyalty,
+                min: start_loyalty,
+                residents: residents_total,
+                ..SettlementLoyalty::default()
+            },
         ));
         report.settlements.push((*settlement, residents_total));
     }
