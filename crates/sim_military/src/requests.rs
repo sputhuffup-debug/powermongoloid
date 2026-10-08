@@ -17,21 +17,25 @@
 //!     the work day's dip from flapping requests on and off.
 //!   - **ClearCamp** (GP-23) runs beside those, on its own track: each
 //!     monument whose guard camp still has a captain
-//!     ([`crate::monuments::Guard`]), in SpawnId order, is named by at most
+//!     ([`crate::monuments::Guard`]) and still holds it, in SpawnId order,
+//!     is named by at most
 //!     one open request, posted by the nearest settlement within
 //!     `requests.camp_radius` that may ask (the rules above) and has no
 //!     open ClearCamp and no ClearCamp cooldown of its own. A settlement
 //!     can thus ask for food and to clear a camp at the same time.
 //!
 //!   Its [`Reward`] is drawn then (stream `sim_military::requests ^
-//!   settlement` at the tick) from what the settlement really holds.
+//!   settlement` at the tick; `sim_military::requests::camp ^ settlement`
+//!   for ClearCamp, which may be posted in the same hour) from what the
+//!   settlement really holds.
 //! - **Completion**, detected here: BringFood once food delivered by the
 //!   player's `Give` orders ([`delivered`]) reaches the need; DriveOff once
 //!   no hostile army has been within the threat radius for
 //!   `requests.clear_hours` while a player captain stands within
 //!   `requests.reward_radius` (if none does, the danger passed without the
 //!   player, and the request fails); ClearCamp once the camp has no
-//!   captain left, with a player captain within `requests.reward_radius`
+//!   captain left or has lost the monument (its men routed and someone
+//!   took it), with a player captain within `requests.reward_radius`
 //!   of the monument (otherwise someone else cleared it, and the request
 //!   fails). The reward goes from the real
 //!   storehouse (`move_food`, `move_good`) and residents
@@ -562,10 +566,14 @@ pub(crate) fn nearest_player_captain(world: &mut World, at: IVec2, radius: f32) 
 }
 
 /// Draws a request's reward from the settlement's real stocks (stream
-/// `sim_military::requests ^ settlement` at the tick): DriveOff and
-/// ClearCamp promise food, `reward_food_days` of its need times U(0.5, 1), at most
-/// `reward_max_food` and what the storehouse holds; every kind may promise up to `reward_goods` units of
-/// one non-food good the armies value, and a seeded number of volunteers.
+/// `sim_military::requests ^ settlement` at the tick, or
+/// `sim_military::requests::camp ^ settlement` for ClearCamp: a settlement
+/// may post one of each in the same hour, and the two draws must not
+/// repeat each other): DriveOff and ClearCamp promise food,
+/// `reward_food_days` of its need times U(0.5, 1), at most
+/// `reward_max_food` and what the storehouse holds; every kind may promise
+/// up to `reward_goods` units of one non-food good the armies value, and a
+/// seeded number of volunteers.
 fn draw_reward(
     world: &World,
     p: &Place,
@@ -573,9 +581,11 @@ fn draw_reward(
     tick: u64,
     data: &RequestData,
 ) -> Reward {
-    let mut rng = world
-        .resource::<SimSeed>()
-        .stream(rng_key("sim_military::requests") ^ p.id, tick);
+    let key = match kind {
+        RequestKind::ClearCamp { .. } => rng_key("sim_military::requests::camp"),
+        _ => rng_key("sim_military::requests"),
+    };
+    let mut rng = world.resource::<SimSeed>().stream(key ^ p.id, tick);
     let econ = world.resource::<Economy>();
     let army = world.resource::<Army>();
     let stock = storehouse(world, p.entity)

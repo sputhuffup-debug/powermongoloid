@@ -312,20 +312,26 @@ fn changed_hands(
     log(world, text);
 }
 
-/// Monuments (SpawnId, centre) whose guard camp still has a captain, in
-/// SpawnId order: the camps a ClearCamp request can name.
+/// Monuments (SpawnId, centre) whose guard camp still has a captain and
+/// still holds the monument, in SpawnId order: the camps a ClearCamp
+/// request can name. A camp whose men routed while someone else held the
+/// monument for `hold_hours` has lost it, wherever its captain rallied (a
+/// guard captain has no orders and never walks back).
 pub(crate) fn guarded(world: &mut World) -> Vec<(u64, IVec2)> {
-    let mut q = world.query_filtered::<&Guard, With<Captain>>();
-    let mut camps: Vec<u64> = q.iter(world).map(|g| g.monument).collect();
+    let mut q = world.query::<(&Guard, &Captain)>();
+    let mut camps: Vec<(u64, FactionId)> = q
+        .iter(world)
+        .map(|(g, c)| (g.monument, c.faction))
+        .collect();
     camps.sort_unstable();
     camps.dedup();
     if camps.is_empty() {
         return Vec::new();
     }
-    let mut q = world.query::<(&SpawnId, &Position, &Monument)>();
+    let mut q = world.query::<(&SpawnId, &Position, &Holder)>();
     let mut out: Vec<(u64, IVec2)> = q
         .iter(world)
-        .filter(|(id, ..)| camps.binary_search(&id.0).is_ok())
+        .filter(|(id, _, h)| camps.binary_search(&(id.0, h.faction)).is_ok())
         .map(|(id, p, _)| (id.0, p.0))
         .collect();
     out.sort_unstable_by_key(|m| m.0);
@@ -540,6 +546,27 @@ mod tests {
             .collect();
         assert_eq!(lost, vec![(lost_at, FactionId::PLAYER, id, 0)]);
         assert_eq!(kind_bonus(&app), None, "the bonus went");
+    }
+
+    /// GP-22, GP-23: a camp that has lost its monument (its men routed
+    /// while someone held it for `hold_hours`) is no longer a camp to
+    /// clear, though its captain lives: no request may name it, and an
+    /// open one is answered by whoever stands at the monument.
+    #[test]
+    fn a_camp_that_lost_its_monument_is_no_camp_to_clear() {
+        let (mut app, _) = run_app(42);
+        let world = app.world_mut();
+        let before = guarded(world);
+        let (id, e, ..) = monuments(world)
+            .into_iter()
+            .find(|m| m.4.faction != FactionId::INDEPENDENT)
+            .expect("a guarded monument");
+        assert!(before.iter().any(|g| g.0 == id), "{before:?}");
+        world.get_mut::<Holder>(e).unwrap().faction = FactionId::PLAYER;
+        let after = guarded(world);
+        assert!(!after.iter().any(|g| g.0 == id), "{after:?}");
+        assert_eq!(after.len() + 1, before.len());
+        assert!(!guards(world, id).is_empty(), "its men still stand");
     }
 
     /// GP-22, GP-23: a settlement near a guard camp asks for it to be

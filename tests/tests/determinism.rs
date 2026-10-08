@@ -170,6 +170,10 @@ fn state_hash_covers_every_sim_component() {
 /// first tick, so it posts a request; the attack's provocation and
 /// killings move goodwill; and once the random orders are over the
 /// champion forages, so wild food is taken.
+/// Step 4 (GP-23): guard camps stand at some monuments from the setup, and
+/// a 4-man band spawned before the first tick at a quiet unguarded
+/// monument takes it by holding it, so a `Holder` changes hands and
+/// `FactionModifiers` carries a monument bonus.
 #[test]
 fn run_state_hash_covers_every_sim_component() {
     let mut app = headless_app(HeadlessConfig::run(42, RunConfig::default()));
@@ -179,6 +183,7 @@ fn run_state_hash_covers_every_sim_component() {
     let (hamlet, hamlet_id, warband) = spawn_beside_nearest_hamlet(&mut app);
     let warband_id = app.world().get::<SpawnId>(warband).unwrap().0;
     let hungry = spoil_food_near_start(&mut app, hamlet);
+    let monument = band_at_a_quiet_monument(&mut app);
     let champion = sim_military::champion_of(app.world_mut(), FactionId::PLAYER).unwrap();
     let champion_id = app.world().get::<SpawnId>(champion).unwrap().0;
     let issue = |app: &mut sim_headless::App, order: OrderSpec| {
@@ -268,6 +273,29 @@ fn run_state_hash_covers_every_sim_component() {
     assert!(stats.foraged > 0.0, "the champion foraged nothing");
     assert!(liked > 0, "no deed moved goodwill");
     assert!(garrisoned, "hamlet #{hamlet_id} not taken");
+    let held = app
+        .world()
+        .resource::<sim_core::Chronicle>()
+        .entries()
+        .iter()
+        .find(|e| {
+            e.event.kind == sim_core::SimEventKind::MonumentTaken && e.event.subject == monument
+        })
+        .map(|e| (e.tick, e.event.faction));
+    let bonuses = app
+        .world()
+        .resource::<sim_core::FactionModifiers>()
+        .breakdown
+        .iter()
+        .filter(|e| e.faction == Some(FactionId::PLAYER))
+        .count();
+    println!("monument #{monument} taken: {held:?}; {bonuses} player modifier entries");
+    assert_eq!(
+        held.map(|h| h.1),
+        Some(FactionId::PLAYER),
+        "monument #{monument} not taken"
+    );
+    assert!(bonuses >= 1, "the monument's bonus is in the modifiers");
     let front = app
         .world()
         .get::<Captain>(warband)
@@ -309,6 +337,36 @@ fn spawn_beside_nearest_hamlet(app: &mut sim_headless::App) -> (Entity, u64, Ent
         ..ArmySpec::new(FactionId::PLAYER, at, 30)
     };
     (hamlet, id, spawn_army(world, &spec))
+}
+
+/// Step 4 (GP-23): a 4-man player band spawned before the first tick at
+/// the first unguarded monument (SpawnId order) more than 40 tiles from
+/// the start and from every guard camp, so it takes the monument by
+/// holding it and `FactionModifiers` carries its bonus. Returns the
+/// monument's SpawnId.
+fn band_at_a_quiet_monument(app: &mut sim_headless::App) -> u64 {
+    let world = app.world_mut();
+    let start = world.resource::<RunProgress>().start;
+    let mut q = world.query::<(&SpawnId, &sim_core::Position, &sim_military::Holder)>();
+    let mut sites: Vec<(u64, bevy_math::IVec2, FactionId)> = q
+        .iter(world)
+        .map(|(id, p, h)| (id.0, p.0, h.faction))
+        .collect();
+    sites.sort_unstable_by_key(|s| s.0);
+    let far = |a: bevy_math::IVec2, b: bevy_math::IVec2| (a - b).as_vec2().length() > 40.0;
+    let &(id, at, _) = sites
+        .iter()
+        .find(|(_, at, f)| {
+            *f == FactionId::INDEPENDENT
+                && far(*at, start)
+                && sites
+                    .iter()
+                    .filter(|s| s.2 != FactionId::INDEPENDENT)
+                    .all(|s| far(s.1, *at))
+        })
+        .expect("a quiet unguarded monument");
+    spawn_army(world, &ArmySpec::new(FactionId::PLAYER, at, 4));
+    id
 }
 
 /// Spoils the food in the storehouse and homes of the populated settlement
