@@ -861,7 +861,8 @@ fn step_order(world: &mut World, e: Entity, tick: u64) {
 ///    defenders are broken; after `conquest.give_up_days` the assault
 ///    fails.
 /// 2. Hold: the break calls off the provocation, so the militia stands
-///    down. The captain within `conquest.hold_radius` of the centre with
+///    down, and `forage` leaves the held settlement alone (an aggressive
+///    army would otherwise plunder and provoke it again). The captain within `conquest.hold_radius` of the centre with
 ///    nobody contesting it ([`militia_or_foes_near`]) for
 ///    `conquest.hold_hours` takes the settlement ([`transfer`],
 ///    [`Cause::Conquest`]). Any contest restarts the hold; after
@@ -938,6 +939,8 @@ fn attack(
 /// aggressive takes whenever the baggage is short. A settlement the army's
 /// faction owns supplies it instead (GP-05): whenever the baggage holds
 /// less than `gather_target_days`, at most once a day, never provoking.
+/// A settlement the army is holding after breaking its defenders (`Attack`
+/// step 2) is left alone.
 fn forage(world: &mut World, e: Entity, tick: u64) {
     let tpd = world.resource::<Calendar>().ticks_per_day;
     let c = world.get::<Captain>(e).expect("captain").clone();
@@ -959,9 +962,16 @@ fn forage(world: &mut World, e: Entity, tick: u64) {
         .map(|(s, id, st)| ((st.center - tile).as_vec2().length(), *id, s))
         .filter(|(d, ..)| *d <= radius)
         .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-    let Some((_, _, s)) = nearest else {
+    let Some((_, sid, s)) = nearest else {
         return;
     };
+    // GP-05: a village that submitted to this army's Attack (step 2, the
+    // hold) is neither plundered nor provoked while it is held, or its
+    // militia would rise again and contest the hold. The army lives on its
+    // baggage until the hold ends; the slot isn't used up.
+    if holding(&c, sid) {
+        return;
+    }
     if owner_of(world, s) == c.faction {
         // Supply: a draw that found nothing spare doesn't use up the day,
         // so the army tries again (every 30 ticks) once the farms deliver.
@@ -980,6 +990,13 @@ fn forage(world: &mut World, e: Entity, tick: u64) {
     }
     world.get_mut::<Captain>(e).expect("captain").last_forage = tick.max(1);
     gather_food(world, e, s, days < 1.0);
+}
+
+/// Whether the captain's current order is an `Attack` on settlement `sid`
+/// that has broken its defenders and is holding the centre (step 2).
+fn holding(c: &Captain, sid: SpawnId) -> bool {
+    matches!(c.orders.front(), Some(o) if o.step >= 2
+        && o.spec == OrderSpec::Attack { settlement: sid.0 })
 }
 
 /// Builds (or reuses) the rally field followers use to rejoin the
@@ -1052,4 +1069,252 @@ fn ensure_field(world: &mut World, e: Entity) {
         let map = world.resource::<WorldMap>();
         flows.get_or_build(map, &costs, (goal, c.window.0, c.window.1));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::conquest::tests::settlements;
+    use crate::progression::tests::run_app;
+    use crate::spawn::{ArmySpec, spawn_army};
+    use crate::upkeep::{Deserters, apply_desertions};
+    use sim_agents::{Loyalty, Owner};
+    use sim_core::SimStepper;
+
+    /// Puts `value` worth of the best food into `s`'s storehouse, making
+    /// room for it.
+    fn stock_food(world: &mut World, s: Entity, value: f32) {
+        let econ = world.resource::<Economy>().clone();
+        let g = econ.foods_by_value()[0];
+        let qty = (value / econ.food_value(g)).ceil() as u32;
+        let store = storehouse(world, s).expect("storehouse");
+        let mut st = world.get_mut::<Stockpile>(store).unwrap();
+        st.capacity += qty;
+        st.add(g, qty);
+    }
+
+    fn store_food(world: &World, s: Entity) -> f32 {
+        let store = storehouse(world, s).expect("storehouse");
+        let econ = world.resource::<Economy>();
+        world.get::<Stockpile>(store).unwrap().food_value(econ)
+    }
+
+    fn empty_store(world: &mut World, s: Entity) {
+        let store = storehouse(world, s).expect("storehouse");
+        world.get_mut::<Stockpile>(store).unwrap().goods.clear();
+    }
+
+    fn empty_baggage(world: &mut World, captain: Entity) {
+        let econ = world.resource::<Economy>().clone();
+        let mut bag = world.get_mut::<Stockpile>(captain).unwrap();
+        bag.goods.retain(|g, _| !econ.is_food(*g));
+    }
+
+    fn army(
+        world: &mut World,
+        faction: FactionId,
+        at: IVec2,
+        posture: Posture,
+        days: f32,
+    ) -> Entity {
+        let spec = ArmySpec {
+            posture,
+            food_days: days,
+            armed: true,
+            ..ArmySpec::new(faction, at, 5)
+        };
+        spawn_army(world, &spec)
+    }
+
+    fn lines(world: &World) -> Vec<String> {
+        let log = &world.resource::<MilitaryLog>().entries;
+        log.iter().map(|(_, l)| l.clone()).collect()
+    }
+
+    /// GP-05: an aggressive army holding a village it has broken (Attack
+    /// step 2) neither plunders nor provokes it, even when its baggage is
+    /// short, so the militia stays down and the hold takes the village.
+    #[test]
+    fn a_held_village_is_neither_plundered_nor_provoked() {
+        let (mut app, _) = run_app(42);
+        let (aid, a, ac) = settlements(app.world_mut())[0];
+        let world = app.world_mut();
+        let pop = world.get::<SettlementEconomy>(a).unwrap().population;
+        let need = daily_need(world, pop);
+        stock_food(world, a, 3.0 * need);
+        // Under the aggressive foraging threshold (3 days), so `forage`
+        // would plunder any other village.
+        let cap = army(world, FactionId::PLAYER, ac, Posture::Aggressive, 2.0);
+        let tick = world.resource::<SimTick>().0;
+        let mut order = Order::new(OrderSpec::Attack { settlement: aid });
+        order.step = 2;
+        order.since = tick;
+        world
+            .get_mut::<Captain>(cap)
+            .unwrap()
+            .orders
+            .push_back(order);
+        let before = world.resource::<ArmyStats>().get(FactionId::PLAYER);
+
+        let rules = world.resource::<Army>().data.conquest.clone();
+        let cal = world.resource::<Calendar>().clone();
+        let span = cal.hours(rules.hold_hours) + 100;
+        for _ in 0..span {
+            app.step(1);
+            let world = app.world();
+            assert_ne!(
+                world.get::<Threat>(a).unwrap().provoked_by,
+                Some(FactionId::PLAYER),
+                "provoked during the hold at tick {}",
+                world.resource::<SimTick>().0
+            );
+            if owner_of(world, a) == FactionId::PLAYER {
+                break;
+            }
+        }
+        let world = app.world_mut();
+        let after = world.resource::<ArmyStats>().get(FactionId::PLAYER);
+        assert_eq!(after.provocations, before.provocations);
+        assert_eq!(after.seized, before.seized, "plundered the held village");
+        assert_eq!(owner_of(world, a), FactionId::PLAYER, "{:?}", lines(world));
+        assert_eq!(after.conquests, before.conquests + 1);
+    }
+
+    /// GP-05: an owned village feeds its owner's army from what it holds
+    /// beyond `garrison.keep_days`, unpaid and unprovoked, whatever the
+    /// army's posture: through GatherFood and through foraging (at most
+    /// daily, and a draw that finds nothing spare doesn't use up the day).
+    #[test]
+    fn an_owned_village_supplies_its_owners_army_and_is_never_plundered() {
+        let (mut app, _) = run_app(42);
+        let (_, a, ac) = settlements(app.world_mut())[0];
+        let world = app.world_mut();
+        transfer(world, a, FactionId::PLAYER, Cause::Conquest { captain: 0 }).unwrap();
+        let keep = world.resource::<Army>().data.garrison.keep_days;
+        let pop = world.get::<SettlementEconomy>(a).unwrap().population;
+        let need = daily_need(world, pop);
+        empty_store(world, a);
+        stock_food(world, a, (keep + 5.0) * need);
+        let cap = army(world, FactionId::PLAYER, ac, Posture::Aggressive, 0.0);
+        empty_baggage(world, cap);
+        let before = world.resource::<ArmyStats>().get(FactionId::PLAYER);
+
+        gather_food(world, cap, a, true);
+        let after = world.resource::<ArmyStats>().get(FactionId::PLAYER);
+        assert!(after.supplied > before.supplied, "nothing supplied");
+        assert_eq!(after.seized, before.seized, "plundered its own village");
+        assert_eq!(after.provocations, before.provocations);
+        assert_eq!(world.get::<Threat>(a).unwrap().provoked_by, None);
+        // move_food rounds down per good, so the store keeps at least
+        // keep_days of food.
+        assert!(store_food(world, a) >= keep * need - 1e-3);
+
+        // Foraging: the owned branch draws when the baggage is short.
+        empty_baggage(world, cap);
+        let id = world.get::<SpawnId>(cap).unwrap().0;
+        let t = (world.resource::<SimTick>().0 / 30 + 10) * 30 + (30 - id % 30) % 30;
+        assert!((t + id).is_multiple_of(30));
+        world.get_mut::<Captain>(cap).unwrap().last_forage = 0;
+        let supplied = after.supplied;
+        forage(world, cap, t);
+        let now = world.resource::<ArmyStats>().get(FactionId::PLAYER);
+        assert!(now.supplied > supplied, "forage drew nothing");
+        assert_eq!(world.get::<Captain>(cap).unwrap().last_forage, t);
+        assert_eq!(now.seized, before.seized);
+
+        // A store with nothing spare: no draw, and the slot stays open.
+        empty_baggage(world, cap);
+        empty_store(world, a);
+        stock_food(world, a, keep * need * 0.5);
+        world.get_mut::<Captain>(cap).unwrap().last_forage = 0;
+        forage(world, cap, t);
+        let last = world.resource::<ArmyStats>().get(FactionId::PLAYER);
+        assert_eq!(last.supplied, now.supplied);
+        assert_eq!(world.get::<Captain>(cap).unwrap().last_forage, 0);
+    }
+
+    /// GP-06: another warlord's village sends no recruits, and your own
+    /// sends more the more loyal it is (`recruit.loyalty_bonus`).
+    #[test]
+    fn recruiting_answers_to_the_owner_and_its_loyalty() {
+        let recruits = |owner: FactionId, mean: f32| {
+            let (mut app, _) = run_app(42);
+            let (_, a, ac) = settlements(app.world_mut())[0];
+            let world = app.world_mut();
+            transfer(world, a, owner, Cause::None).unwrap();
+            world.get_mut::<SettlementLoyalty>(a).unwrap().mean = mean;
+            let cap = army(world, FactionId::PLAYER, ac, Posture::Neutral, 3.0);
+            recruit(world, cap, a, 1000);
+            let n = world
+                .resource::<ArmyStats>()
+                .get(FactionId::PLAYER)
+                .recruited;
+            (n, lines(world))
+        };
+        let (rival, log) = recruits(FactionId::RIVAL, 1.0);
+        assert_eq!(rival, 0, "a rival's village sent recruits");
+        assert!(log.iter().any(|l| l.contains("answers to")), "{log:?}");
+        let (cold, _) = recruits(FactionId::PLAYER, 0.0);
+        let (loyal, _) = recruits(FactionId::PLAYER, 1.0);
+        assert!(cold > 0, "nobody joined at all");
+        assert!(loyal > cold, "loyal {loyal}, disloyal {cold}");
+    }
+
+    /// GP-05: an aggressive army taking arms from its own village doesn't
+    /// provoke it; from an independent one it does.
+    #[test]
+    fn equipping_from_your_own_village_provokes_nobody() {
+        let (mut app, _) = run_app(42);
+        let list = settlements(app.world_mut());
+        let world = app.world_mut();
+        let econ = world.resource::<Economy>().clone();
+        let weapons = good_named(&econ, "weapons").unwrap();
+        for (i, &(_, s, at)) in list[..2].iter().enumerate() {
+            if i == 0 {
+                transfer(world, s, FactionId::PLAYER, Cause::None).unwrap();
+            }
+            let store = storehouse(world, s).unwrap();
+            let mut st = world.get_mut::<Stockpile>(store).unwrap();
+            st.capacity += 20;
+            st.add(weapons, 20);
+            let cap = army(world, FactionId::PLAYER, at, Posture::Aggressive, 3.0);
+            equip(world, cap, s);
+        }
+        let threat = |w: &World, s: Entity| w.get::<Threat>(s).unwrap().provoked_by;
+        assert_eq!(threat(world, list[0].1), None, "provoked its own village");
+        assert_eq!(threat(world, list[1].1), Some(FactionId::PLAYER));
+    }
+
+    /// GP-05, GP-06: a deserter goes home sworn to whoever owns its
+    /// settlement now, with the residents' current loyalty, not the
+    /// loyalty it had (toward another owner) when it enlisted.
+    #[test]
+    fn a_deserter_comes_home_to_the_current_owner() {
+        let (mut app, _) = run_app(42);
+        let (_, a, ac) = settlements(app.world_mut())[0];
+        let world = app.world_mut();
+        crate::conquest::transfer_seeded(world, a, FactionId::PLAYER, Cause::None, Some(0.9));
+        let cap = army(world, FactionId::PLAYER, ac, Posture::Neutral, 3.0);
+        let mut q = world.query_filtered::<(Entity, &SpawnId, &Villager), Without<Enlisted>>();
+        let (e, id) = q
+            .iter(world)
+            .filter(|(_, _, v)| v.settlement == a)
+            .map(|(e, id, _)| (e, *id))
+            .min_by_key(|(_, id)| *id)
+            .unwrap();
+        let army_data = world.resource::<Army>().clone();
+        enlist(world, e, cap, FactionId::PLAYER, &army_data);
+        world.get_mut::<Loyalty>(e).unwrap().0 = 0.9;
+        crate::conquest::transfer_seeded(world, a, FactionId::RIVAL, Cause::None, Some(0.2));
+        assert_eq!(world.get::<Owner>(a).unwrap().faction, FactionId::RIVAL);
+        assert_eq!(world.get::<Allegiance>(e).unwrap().0, FactionId::PLAYER);
+        world
+            .resource_mut::<Deserters>()
+            .0
+            .push((id, e, FactionId::PLAYER));
+        apply_desertions(world);
+        assert!(world.get::<Enlisted>(e).is_none());
+        assert_eq!(world.get::<Allegiance>(e).unwrap().0, FactionId::RIVAL);
+        assert_eq!(world.get::<Loyalty>(e).unwrap().0, 0.2);
+    }
 }

@@ -5,8 +5,8 @@
 use bevy_ecs::prelude::*;
 use rand::RngExt;
 use sim_agents::{
-    ActionKind, Activity, CombatStats, Enlisted, Needs, Owner, Stage, Stance, Travel, TravelState,
-    Villager, Villagers, civilian_stats, eat_from,
+    ActionKind, Activity, CombatStats, Enlisted, Loyalty, Needs, Owner, SettlementLoyalty, Stage,
+    Stance, Travel, TravelState, Villager, Villagers, civilian_stats, eat_from,
 };
 use sim_core::rng::rng_key;
 use sim_core::{Allegiance, FactionId, Motion, Position, SimSeed, SimTick, SpawnId};
@@ -255,7 +255,8 @@ pub(crate) fn tally(
 
 /// Needs set, last: deserters leave, in SpawnId order. A villager goes
 /// home and is a villager again, sworn to whoever owns its settlement
-/// (GP-05); anyone else simply leaves.
+/// (GP-05), with the settlement's current mean loyalty (GP-06); anyone
+/// else simply leaves.
 pub(crate) fn apply_desertions(world: &mut World) {
     let _span = tracing::info_span!("sim_military::apply_desertions").entered();
     let tick = world.resource::<SimTick>().0;
@@ -277,10 +278,17 @@ pub(crate) fn apply_desertions(world: &mut World) {
             world.despawn(e);
             continue;
         };
-        // Back to village life, under the settlement's owner.
+        // Back to village life, under the settlement's owner, as loyal as
+        // its residents are now: the loyalty frozen at enlistment may have
+        // been toward an owner who has since lost the settlement (GP-06).
         let owner = world
             .get::<Owner>(v.settlement)
             .map_or(FactionId::INDEPENDENT, |o| o.faction);
+        let loyalty = match world.get::<SettlementLoyalty>(v.settlement) {
+            Some(sl) if sl.residents > 0 => sl.mean,
+            _ => sim_agents::standing::default_seed(world, v.settlement, owner),
+        }
+        .clamp(0.0, 1.0);
         let mut civ = civilian_stats(&villagers);
         if let Some(cs) = world.get::<CombatStats>(e) {
             civ.health = (cs.health / cs.max_health.max(1.0)) * civ.max_health;
@@ -292,6 +300,7 @@ pub(crate) fn apply_desertions(world: &mut World) {
             .insert((
                 civ,
                 Allegiance(owner),
+                Loyalty(loyalty),
                 Activity {
                     kind: ActionKind::GoHome,
                     stage: Stage::Done,

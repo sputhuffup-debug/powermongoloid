@@ -227,6 +227,17 @@ impl Army {
             return Err("army: need at least the independent faction and one warlord".into());
         }
         data.validate()?;
+        // GP-06: a rising's provocation must outlast the day until the
+        // next daily revolt check, which counts its rebels; a shorter one
+        // has stood down by then and every rising would be put down.
+        let rising = calendar.hours(data.garrison.revolt_hours);
+        if rising < calendar.ticks_per_day {
+            return Err(format!(
+                "army: garrison.revolt_hours ({}) must last at least one day ({} ticks), so a \
+                 rising lasts until the next daily revolt check",
+                data.garrison.revolt_hours, calendar.ticks_per_day
+            ));
+        }
         let mut trade_value = vec![0.0; econ.good_count()];
         for (name, v) in &data.trade_value {
             let i = econ
@@ -342,10 +353,6 @@ mod tests {
             c.hold_radius <= c.militia_radius,
             "the hold sits inside the contest radius"
         );
-        assert!(
-            a.data.garrison.revolt_hours >= 24.0,
-            "a rising lasts until the next daily check"
-        );
         // GP-05, SIM-24: supply leaves at least a fully secure store, so
         // feeding a garrison never costs the village loyalty.
         let villagers = sim_agents::Villagers::default_data(&Calendar::default_data());
@@ -363,6 +370,7 @@ mod tests {
             ("hold_hours: 2.0", "hold_hours: -1.0"),
             ("radius: 30.0", "radius: -3.0"),
             ("revolt_hours: 24.0", "revolt_hours: 0.0"),
+            ("revolt_hours: 24.0", "revolt_hours: 12.0"),
             ("crushed_loyalty: 0.1", "crushed_loyalty: 1.5"),
             ("loyalty_bonus: 0.3", "loyalty_bonus: inf"),
         ] {

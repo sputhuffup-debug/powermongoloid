@@ -162,6 +162,10 @@ fn state_hash_covers_every_sim_component() {
 /// Step 2 (GP-05, GP-06): a second warband, spawned before the first tick
 /// beside the hamlet nearest the start, takes it with an Attack and then
 /// garrisons it, so owned land, its loyalty and a garrison exist too.
+/// This run ends before a day tick reaches the conquest; serial versus
+/// parallel with an owned settlement at day ticks (loyalty drift, the
+/// unrest clock, a revolt) is `conquest.rs`'s
+/// `a_conquest_and_its_revolt_are_thread_independent`.
 #[test]
 fn run_state_hash_covers_every_sim_component() {
     let mut app = headless_app(HeadlessConfig::run(42, RunConfig::default()));

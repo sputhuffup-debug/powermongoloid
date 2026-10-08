@@ -37,7 +37,7 @@ M4 lets warlords own settlements ([M4_PLAN.md](../M4_PLAN.md), "Conquest and loy
 - **Conquest is an `Attack` in three phases** (`conquest` in army.ron):
   1. March.
   2. Provoke and fight until the militia breaks.
-  3. Hold. The break calls off the attacker's provocation, so the militia stands down; otherwise its half-day timer would keep raising militia through the hold. The captain must then hold the centre with no militia or enemy soldiers near for `hold_hours`.
+  3. Hold. The break calls off the attacker's provocation, so the militia stands down; otherwise its half-day timer would keep raising militia through the hold. For the same reason the attacker doesn't forage at the village it holds (an aggressive army short of food would plunder and provoke it again). The captain must then hold the centre with no militia or enemy soldiers near for `hold_hours`.
 
   A hold not won within `timeout_hours` fails. Attacking your own settlement is refused.
 - **Owned settlements serve their owner** (`garrison` in army.ron):
@@ -45,7 +45,7 @@ M4 lets warlords own settlements ([M4_PLAN.md](../M4_PLAN.md), "Conquest and loy
   - They draw the storehouse's food beyond `keep_days` at most once a day. A draw that finds nothing spare doesn't use up the day. This is counted as `supplied`.
   - Another warlord's village sends no recruits.
   - A new `Garrison { settlement }` order holds a settlement the issuer owns until the order is replaced or the settlement is lost.
-  - Deserters go home sworn to their settlement's owner.
+  - Deserters go home sworn to their settlement's owner, with its residents' current mean loyalty (the owner may have changed while they were away).
 - **Revolts are a daily serial step** (`conquest::revolts`, third in the hourly `progression::progress` driver, `MilitarySet::Progress`). After a day of unrest:
   - **No garrison:** the settlement goes independent at once. Starving villagers can't fight, so a starved, unguarded conquest falls without a blow.
   - **A garrison smaller than the residents able to fight:** the residents rise. The settlement is provoked against its owner for `revolt_hours`, so its militia fights the garrison.
@@ -56,7 +56,7 @@ M4 lets warlords own settlements ([M4_PLAN.md](../M4_PLAN.md), "Conquest and loy
 
 ## Consequences
 
-- **The developed world is unchanged.** It owns nothing, so revolts, supply, owner-aware threat and recruiting never act there. `sim_headless --seed 42` and `--skirmish` print the same statistics as before.
+- **The developed world is unchanged.** It starts owning nothing, and until an `Attack` completes, revolts, supply, owner-aware threat and loyalty-gated recruiting never act there. Attack orders do create owned land in the developed and skirmish worlds (from tests, `--commands`/`sample_orders` and replays), as conquest is always on. Default runs issue no attacks: `sim_headless --seed 42` prints byte-identical output, and `--skirmish` prints the same numbers, except that each faction stats line now ends with the new `conquests` and `supplied` fields (`, conquests: 0, supplied: 0.0`).
 - **New hashed state:** the four standing components, `Order.held_since` in `Captain`, and `FactionStats.{conquests, supplied}`. Hash values changed; nothing was golden.
 - **An `Attack` now takes the village** instead of ending when the militia breaks. In the skirmish the defenders broke at tick 354, and the village was taken two game hours later. `orders`' `attacking_a_village_raises_its_militia` asserts the conquest.
 - **A conquest moves a landless faction's seat**, and so where `Return` leads: in a run, from the start spot to the player's first village.
@@ -71,6 +71,6 @@ M4 lets warlords own settlements ([M4_PLAN.md](../M4_PLAN.md), "Conquest and loy
 - **A small village rarely has food to spare:** a hamlet's storehouse holds well under a day, so its garrison lives on its own baggage (the scenario picks the start boon with food).
 - **Tests:**
   - sim_agents unit tests for drift, aggregation and `set_owner`;
-  - sim_military unit tests for `transfer` (events, seat, win, refusals) and `revolts` (freed, risen, left alone, put down);
+  - sim_military unit tests for `transfer` (events, seat, win, refusals), `revolts` (freed, risen, left alone, put down, and a rising that beats a weak garrison), the Garrison order, owner-aware threat, supply, recruiting, equipping, deserters, and an aggressive attacker leaving the village it holds alone;
   - the strengthened `orders` attack test;
-  - the `conquest` scenario above, and `run_state_hash_covers_every_sim_component`, whose run now includes a conquest and a garrison.
+  - the `conquest` scenario above, whose starved branch is also compared single- against multi-threaded, and `run_state_hash_covers_every_sim_component`, whose run now includes a conquest and a garrison.

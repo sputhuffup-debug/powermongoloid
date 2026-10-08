@@ -9,8 +9,9 @@
 //!   [`drift_loyalty`] moves each villager toward [`loyalty_target`] and
 //!   [`aggregate_loyalty`] refreshes the settlement summaries.
 //!
-//! Enlisted villagers keep the loyalty they had when they left: they are
-//! neither drifted nor counted.
+//! Enlisted villagers are neither drifted nor counted. A deserter who
+//! comes home takes the settlement's current mean loyalty (sim_military's
+//! `apply_desertions`), since its owner may have changed meanwhile.
 
 use std::collections::BTreeMap;
 
@@ -249,6 +250,41 @@ mod tests {
         // aims below the revolt threshold, a fed one above its seed.
         assert!(starved < d.revolt_threshold, "starved {starved}");
         assert!(fed > 0.5, "fed {fed}");
+        // Treatment must count, or harsh owners could never lose a village.
+        assert!(d.w_goodwill > 0.0, "shipped loyalty ignores goodwill");
+    }
+
+    /// GP-06, SIM-24: treatment reaches loyalty through goodwill toward the
+    /// owner. Two villages, equally fed: the one that likes its owner ends
+    /// the day more loyal than the one that hates it, and goodwill toward
+    /// some other faction counts for nothing.
+    #[test]
+    fn goodwill_toward_the_owner_reaches_drift() {
+        let mut app = App::new();
+        app.add_plugins(TaskPoolPlugin::default());
+        let world = app.world_mut();
+        let calendar = Calendar::default_data();
+        let d = data();
+        world.insert_resource(Villagers::default_data(&calendar));
+        world.insert_resource(calendar);
+        world.insert_resource(SimTick(0));
+        world.insert_resource(FactionModifiers::default());
+        let fed = d.food_days;
+        let liked = village(world, 0, owned(0), fed);
+        let hated = village(world, 10, owned(0), fed);
+        let neutral = village(world, 20, owned(0), fed);
+        let elsewhere = village(world, 30, owned(0), fed);
+        let mut set = |v: &Village, f: FactionId, g: f32| {
+            world.get_mut::<Goodwill>(v.settlement).unwrap().set(f, g);
+        };
+        set(&liked, FactionId::PLAYER, 1.0);
+        set(&hated, FactionId::PLAYER, -1.0);
+        set(&elsewhere, FactionId::RIVAL, -1.0);
+        day(world, 0);
+        let l = |v: &Village| loyalty(world, v.people[0]);
+        assert!(l(&liked) > l(&neutral), "{} vs {}", l(&liked), l(&neutral));
+        assert!(l(&neutral) > l(&hated), "{} vs {}", l(&neutral), l(&hated));
+        assert_eq!(l(&elsewhere), l(&neutral), "goodwill toward the rival");
     }
 
     #[test]

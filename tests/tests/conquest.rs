@@ -7,7 +7,11 @@
 //! - a raiding band plunders the undefended village: its food runs out
 //!   and loyalty falls below where it started;
 //! - a village left without food or a garrison revolts within two to
-//!   three days, and the hamlet is independent again.
+//!   three days, and the hamlet is independent again;
+//! - that starved branch played single- and multi-threaded gives the same
+//!   state hash every 100 ticks (NFR-08), so the owned-settlement steps
+//!   (loyalty drift and aggregation, the revolt) don't depend on the
+//!   executor.
 //!
 //! Until saves arrive (M4 step 8) each branch replays the prefix in its
 //! own app. A branch's scenario edit (a raiding band arriving, the stores
@@ -20,13 +24,15 @@ use bevy_ecs::prelude::*;
 use bevy_math::IVec2;
 use common::*;
 use sim_agents::{
-    CombatStats, Enlisted, FoodSecurity, Goodwill, Loyalty, Owner, SettlementLoyalty, Villager,
+    CombatStats, Enlisted, FoodSecurity, Goodwill, Loyalty, Owner, SettlementLoyalty, Threat,
+    Villager,
 };
 use sim_core::{
     Allegiance, Calendar, Cause, CommandKind, FactionId, Offers, OrderSpec, Position, Posture,
-    SimEventKind, SimStepper, SimTick, SpawnId,
+    RunConfig, SimEventKind, SimStepper, SimTick, SpawnId,
 };
 use sim_economy::{SettlementEconomy, Stockpile};
+use sim_headless::{HeadlessConfig, Threading, headless_app};
 use sim_military::progression::Effect;
 use sim_military::{Army, ArmySpec, ArmyStats, Captain, Progression, RunProgress, spawn_army};
 use sim_world::{Settlement, SettlementSize, SizeTier};
@@ -93,6 +99,8 @@ struct Day {
     food_days: f32,
     below_since: Option<u64>,
     guards: u32,
+    /// `Threat.level`: how frightened the residents are.
+    threat: f32,
 }
 
 /// Steps to just after each of the next `n` day ticks (when loyalty
@@ -107,6 +115,7 @@ fn days(app: &mut App, s: Entity, n: u32) -> Vec<Day> {
         let sl = *app.world().get::<SettlementLoyalty>(s).expect("loyalty");
         let food_days = app.world().get::<FoodSecurity>(s).expect("food").days;
         let guards = garrison(app, s, FactionId::PLAYER);
+        let threat = app.world().get::<Threat>(s).expect("threat").level;
         let day = Day {
             tick: next - 1,
             owner,
@@ -114,10 +123,11 @@ fn days(app: &mut App, s: Entity, n: u32) -> Vec<Day> {
             food_days,
             below_since: sl.below_since,
             guards,
+            threat,
         };
         println!(
             "  day tick {}: owner {}, loyalty mean {:.3} min {:.3} ({} residents), \
-             food {:.2} days, below since {:?}, garrison {}",
+             food {:.2} days, below since {:?}, garrison {}, threat {:.2}",
             day.tick,
             day.owner.0,
             day.mean,
@@ -125,7 +135,8 @@ fn days(app: &mut App, s: Entity, n: u32) -> Vec<Day> {
             sl.residents,
             day.food_days,
             day.below_since,
-            day.guards
+            day.guards,
+            day.threat
         );
         out.push(day);
     }
@@ -135,11 +146,20 @@ fn days(app: &mut App, s: Entity, n: u32) -> Vec<Day> {
 /// The shared prefix (GP-05, GP-27): the run of `seed`, the start boon
 /// that adds food to the band's baggage (so it can hold a garrison for
 /// days), then an Attack on the nearest hamlet, polled every 100 ticks
-/// until the player owns it. Asserts the Conquest in the chronicle and
-/// that every resident now follows the player. Returns the app and the
-/// hamlet.
+/// until the player owns it. Asserts that the band broke the militia and
+/// then held the centre for `conquest.hold_hours` before the hamlet
+/// changed hands, the Conquest in the chronicle, and that every resident
+/// now follows the player. Returns the app and the hamlet.
 fn conquered(seed: u64) -> (App, Entity) {
-    let mut app = run_app(seed);
+    conquered_with(seed, Threading::Multi)
+}
+
+/// [`conquered`], on the executor `threading` picks.
+fn conquered_with(seed: u64, threading: Threading) -> (App, Entity) {
+    let mut app = headless_app(HeadlessConfig {
+        threading,
+        ..HeadlessConfig::run(seed, RunConfig::default())
+    });
     let champion = champion(&mut app);
     let offer = start_offer(&app);
     let data = app.world().resource::<Progression>().data.clone();
@@ -168,12 +188,25 @@ fn conquered(seed: u64) -> (App, Entity) {
         (center(&app, hamlet) - start).as_vec2().length()
     );
     order(&mut app, 1, champion, OrderSpec::Attack { settlement: id });
+    // The tick the defenders broke (the Attack's step 2 starts there). The
+    // hold lasts longer than a poll, so a poll sees it.
+    let mut broke = None;
     while owner_of(&app, hamlet) != FactionId::PLAYER {
         assert!(
             tick(&app) < CONQUEST_WITHIN,
             "seed {seed}: hamlet #{id} not taken by tick {CONQUEST_WITHIN}"
         );
         app.step(100);
+        let front = app
+            .world()
+            .get::<Captain>(champion)
+            .unwrap()
+            .orders
+            .front()
+            .copied();
+        if let Some(o) = front.filter(|o| o.step == 2) {
+            broke.get_or_insert(o.since);
+        }
     }
     let stats = app.world().resource::<ArmyStats>().get(FactionId::PLAYER);
     let since = app.world().get::<Owner>(hamlet).unwrap().since;
@@ -194,6 +227,21 @@ fn conquered(seed: u64) -> (App, Entity) {
     );
     assert_eq!(stats.rejected_commands, 0, "every command applied");
     assert_eq!(stats.conquests, 1);
+    // GP-05: break the militia, then hold the centre.
+    assert!(stats.kills > 0, "no blow struck: the militia never fought");
+    let broke = broke.expect("the hamlet changed hands without a hold");
+    let hold = {
+        let w = app.world();
+        let hours = w.resource::<Army>().data.conquest.hold_hours;
+        w.resource::<Calendar>().hours(hours)
+    };
+    println!("  defenders broke at tick {broke}; hold of {hold} ticks");
+    assert!(
+        conquest.tick >= broke + hold,
+        "taken at {} only {} ticks after the break at {broke}",
+        conquest.tick,
+        conquest.tick - broke
+    );
     let ev = conquest.event;
     let captain = spawn_id(&app, champion);
     assert_eq!(
@@ -286,10 +334,25 @@ fn a_fed_village_under_a_passive_garrison_grows_loyal() {
         Some(OrderSpec::Garrison { settlement: id }),
         "the garrison stays while the hamlet is ours"
     );
+    let fed = app
+        .world()
+        .resource::<sim_agents::Villagers>()
+        .data
+        .loyalty
+        .food_days;
     for d in &log {
         assert_eq!(d.owner, FactionId::PLAYER);
         assert!(d.guards > 0, "no garrison at tick {}", d.tick);
         assert_eq!(d.below_since, None, "unrest at tick {}", d.tick);
+        // GP-05: the garrison doesn't frighten its own village (or it would
+        // hide instead of working), and the village is fed.
+        assert_eq!(d.threat, 0.0, "the garrison frightens the village");
+        assert!(
+            d.food_days >= fed,
+            "not a fed village: {:.2} days at tick {}",
+            d.food_days,
+            d.tick
+        );
     }
     let mut last = seed;
     for d in &log {
@@ -383,20 +446,14 @@ fn a_plundered_village_loses_faith() {
     );
 }
 
-/// GP-06, SIM-24: a conquest left without food or a garrison revolts. The
-/// stores spoil and the farmers are cut off, and the warband rides away.
-/// Mean loyalty sinks below `loyalty.revolt_threshold`; a day later the
-/// hamlet throws off its owner. Within two to three days of the conquest
-/// it is independent again, its residents with it.
-#[test]
-fn a_starved_conquest_revolts() {
-    let (mut app, s) = conquered(SEED);
-    let (taken, seed) = conquest_tick_and_seed(&mut app, s);
-    let champion = champion(&mut app);
-    let id = spawn_id(&app, s);
+/// The starved branch's setup: the warband rides back to its start, the
+/// hamlet's stores (storehouse and homes) spoil and its farmers are cut
+/// off. Returns how many farmers were cut off.
+fn starve(app: &mut App, s: Entity) -> u32 {
+    let champion = champion(app);
     let home = app.world().resource::<RunProgress>().start;
     order(
-        &mut app,
+        app,
         1,
         champion,
         OrderSpec::MoveTo {
@@ -410,7 +467,20 @@ fn a_starved_conquest_revolts() {
             stock.goods.clear();
         }
     }
-    let cut = sim_headless::cut_off_farmers(&mut app, s);
+    sim_headless::cut_off_farmers(app, s)
+}
+
+/// GP-06, SIM-24: a conquest left without food or a garrison revolts. The
+/// stores spoil and the farmers are cut off, and the warband rides away.
+/// Mean loyalty sinks below `loyalty.revolt_threshold`; a day later the
+/// hamlet throws off its owner. Within two to three days of the conquest
+/// it is independent again, its residents with it.
+#[test]
+fn a_starved_conquest_revolts() {
+    let (mut app, s) = conquered(SEED);
+    let (taken, seed) = conquest_tick_and_seed(&mut app, s);
+    let id = spawn_id(&app, s);
+    let cut = starve(&mut app, s);
     let rules = app
         .world()
         .resource::<sim_agents::Villagers>()
@@ -479,4 +549,46 @@ fn a_starved_conquest_revolts() {
         .get(FactionId::PLAYER)
         .conquests;
     assert_eq!(conquests, 1, "a revolt is no conquest");
+}
+
+/// NFR-08 (GP-05, GP-06, SIM-24): the starved branch, played on the
+/// multi-threaded and on the single-threaded executor, gives the same
+/// state hash every 100 ticks from the conquest to three days after it.
+/// Over those days the hamlet is owned at day ticks, so loyalty drifts
+/// toward a real target (a parallel step), the unrest clock starts and the
+/// revolt frees it; none of that may depend on the executor. (Replays
+/// can't cover this: they don't redo the branch's store edits.)
+#[test]
+fn a_conquest_and_its_revolt_are_thread_independent() {
+    let play = |threading: Threading| {
+        let (mut app, s) = conquered_with(SEED, threading);
+        let taken = app.world().get::<Owner>(s).unwrap().since;
+        starve(&mut app, s);
+        let end = taken + 3 * ticks_per_day(&app) + 1;
+        let mut hashes = Vec::new();
+        while tick(&app) < end {
+            app.step(100);
+            hashes.push((tick(&app), sim_core::compute_state_hash(app.world_mut())));
+        }
+        let revolted = chronicle(&app)
+            .iter()
+            .any(|e| e.event.kind == SimEventKind::Revolt);
+        (hashes, revolted)
+    };
+    let (multi, revolted) = play(Threading::Multi);
+    let (single, _) = play(Threading::Single);
+    assert!(revolted, "the starved hamlet never revolted");
+    assert_eq!(multi.len(), single.len());
+    if let Some(i) = (0..multi.len()).find(|&i| multi[i] != single[i]) {
+        panic!(
+            "single- and multi-threaded runs diverge by tick {} ({:#018x} vs {:#018x})",
+            multi[i].0, multi[i].1, single[i].1
+        );
+    }
+    println!(
+        "{} checkpoints agree; final {:#018x} at tick {}",
+        multi.len(),
+        multi.last().unwrap().1,
+        multi.last().unwrap().0
+    );
 }

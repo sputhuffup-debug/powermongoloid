@@ -216,8 +216,8 @@ fn would_be_militia(world: &mut World, s: Entity) -> u32 {
 ///   rise: the settlement is provoked against its owner for
 ///   `garrison.revolt_hours`, and its militia fights the garrison.
 ///
-/// Draws no randomness and does nothing in a world with no owned
-/// settlements, such as the developed preset.
+/// Draws no randomness and does nothing while no settlement is owned (as
+/// in the developed and skirmish worlds until an `Attack` completes).
 pub fn revolts(world: &mut World) {
     let tick = world.resource::<SimTick>().0;
     let cal = world.resource::<Calendar>().clone();
@@ -301,7 +301,7 @@ fn crush(world: &mut World, s: Entity, owner: FactionId, penalty: f32) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::components::{Captain, MilitaryLog};
     use crate::progression::tests::{command, run_app};
@@ -309,7 +309,7 @@ mod tests {
     use sim_core::{Allegiance, Chronicle, CommandKind, OrderSpec, SimStepper};
 
     /// Populated settlements other than the rival's seat, in SpawnId order.
-    fn settlements(world: &mut World) -> Vec<(u64, Entity, IVec2)> {
+    pub(crate) fn settlements(world: &mut World) -> Vec<(u64, Entity, IVec2)> {
         let seat = world.resource::<RunProgress>().rival_seat;
         let mut q = world.query_filtered::<(Entity, &SpawnId, &Settlement), With<Owner>>();
         let mut v: Vec<(u64, Entity, IVec2)> = q
@@ -530,5 +530,117 @@ mod tests {
             "{lines:?}"
         );
         assert!(lines.iter().any(|l| l.contains("put down")), "{lines:?}");
+    }
+
+    /// GP-05: Garrison points the band at the settlement's centre, however
+    /// far away it stands, and ends once the settlement is lost.
+    #[test]
+    fn a_garrison_marches_to_its_village_and_ends_when_it_is_lost() {
+        let (mut app, start) = run_app(42);
+        let champ = app.world().get::<SpawnId>(start.champion).unwrap().0;
+        let (cid, c, cc) = settlements(app.world_mut())[2];
+        let world = app.world_mut();
+        transfer(world, c, FactionId::PLAYER, Cause::None).unwrap();
+        let radius = world.resource::<Army>().data.garrison.radius;
+        let tile = world.get::<sim_core::Position>(start.champion).unwrap().0;
+        assert!(
+            (cc - tile).as_vec2().length() > radius,
+            "the champion starts inside the garrison radius"
+        );
+        issue(&mut app, champ, OrderSpec::Garrison { settlement: cid });
+        assert_eq!(rejected(&app), 0);
+        app.step(1);
+        let captain = app.world().get::<Captain>(start.champion).unwrap();
+        assert_eq!(captain.goal, Some(cc), "marching on the centre");
+        assert_eq!(
+            captain.orders[0].spec,
+            OrderSpec::Garrison { settlement: cid }
+        );
+
+        transfer(app.world_mut(), c, FactionId::INDEPENDENT, Cause::Revolt).unwrap();
+        app.step(1);
+        let captain = app.world().get::<Captain>(start.champion).unwrap();
+        assert!(
+            captain
+                .orders
+                .front()
+                .is_none_or(|o| o.spec != OrderSpec::Garrison { settlement: cid }),
+            "still garrisoning a village it lost"
+        );
+        let log = &app.world().resource::<MilitaryLog>().entries;
+        assert!(
+            log.iter().any(|(_, l)| l.contains("no longer holds")),
+            "{log:?}"
+        );
+    }
+
+    /// GP-06: a rising against a weak garrison wins. A day of unrest under
+    /// a two-man garrison raises the residents against their owner; their
+    /// militia (`Stance::Militia { against: owner }`) takes the field, and
+    /// at the next daily check the settlement goes independent. Runs the
+    /// real schedule, so the villager AI, the threat exception for a
+    /// rising and the fighter grid all take part.
+    #[test]
+    fn a_rising_beats_a_weak_garrison() {
+        let (mut app, _) = run_app(42);
+        // Past tick 0's day tick, so the first drift is the one at `day`.
+        app.step(1);
+        let (bid, b, bc) = settlements(app.world_mut())[1];
+        let world = app.world_mut();
+        transfer(world, b, FactionId::PLAYER, Cause::None).unwrap();
+        spawn_army(world, &ArmySpec::new(FactionId::PLAYER, bc, 1));
+        // A day of unrest already, and loyalty low enough that the first
+        // day tick's drift keeps the mean below the threshold.
+        world.get_mut::<SettlementLoyalty>(b).unwrap().below_since = Some(0);
+        let mut q = world.query::<(&Villager, &mut Loyalty)>();
+        for (v, mut l) in q.iter_mut(world) {
+            if v.settlement == b {
+                l.0 = 0.0;
+            }
+        }
+        let cal = world.resource::<Calendar>().clone();
+        let day = cal.ticks_per_day;
+        let now = world.resource::<SimTick>().0;
+        app.step(day - now + 1);
+
+        let world = app.world_mut();
+        let sl = *world.get::<SettlementLoyalty>(b).unwrap();
+        assert_eq!(sl.revolt_since, Some(day), "no rising at the day tick");
+        assert_eq!(owner_of(world, b), FactionId::PLAYER);
+        assert_eq!(
+            world.get::<Threat>(b).unwrap().provoked_by,
+            Some(FactionId::PLAYER)
+        );
+
+        app.step(cal.hours(6.0));
+        let world = app.world_mut();
+        let mut q = world.query::<(&Villager, &CombatStats)>();
+        let risen = q
+            .iter(world)
+            .filter(|(v, cs)| {
+                v.settlement == b
+                    && cs.stance
+                        == Stance::Militia {
+                            against: FactionId::PLAYER,
+                        }
+            })
+            .count();
+        assert!(risen > 0, "nobody took up arms against the owner");
+        let (_, rebels) = garrison_and_rebels(world, bc, FactionId::PLAYER);
+        assert!(rebels > 0, "no rebel in the field");
+
+        let now = world.resource::<SimTick>().0;
+        app.step(2 * day - now + 1);
+        let world = app.world();
+        assert_eq!(owner_of(world, b), FactionId::INDEPENDENT);
+        let revolt = world
+            .resource::<Chronicle>()
+            .entries()
+            .iter()
+            .map(|e| e.event)
+            .find(|e| e.kind == SimEventKind::Revolt && e.subject == bid)
+            .expect("a Revolt in the chronicle");
+        assert_eq!(revolt.cause, Cause::Revolt);
+        assert_eq!(revolt.faction, FactionId::PLAYER);
     }
 }

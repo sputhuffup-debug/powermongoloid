@@ -54,3 +54,58 @@ pub(crate) fn update_threats(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::conquest::tests::settlements;
+    use crate::conquest::transfer;
+    use crate::progression::tests::run_app;
+    use crate::spawn::{ArmySpec, spawn_army};
+    use bevy_ecs::prelude::*;
+    use sim_agents::Threat;
+    use sim_core::{Cause, FactionId, Posture, SimStepper, SimTick};
+
+    fn level(app: &bevy_app::App, s: Entity) -> f32 {
+        app.world().get::<Threat>(s).unwrap().level
+    }
+
+    /// GP-05, GP-06, SIM-13: a settlement's own owner's army, even an
+    /// aggressive one at its centre, adds no threat, so a garrison doesn't
+    /// keep its villagers hiding; once the settlement rises against its
+    /// owner, that army frightens it again, and another faction's army
+    /// always does.
+    #[test]
+    fn an_owners_army_frightens_only_a_risen_village() {
+        let (mut app, _) = run_app(42);
+        let (_, a, ac) = settlements(app.world_mut())[0];
+        let world = app.world_mut();
+        transfer(world, a, FactionId::PLAYER, Cause::None).unwrap();
+        let spec = ArmySpec {
+            posture: Posture::Aggressive,
+            ..ArmySpec::new(FactionId::PLAYER, ac, 5)
+        };
+        spawn_army(world, &spec);
+        app.step(1);
+        assert_eq!(level(&app, a), 0.0, "the garrison frightens its village");
+
+        let world = app.world_mut();
+        let tick = world.resource::<SimTick>().0;
+        let mut threat = world.get_mut::<Threat>(a).unwrap();
+        threat.provoked_by = Some(FactionId::PLAYER);
+        threat.provoked_until = tick + 1_000;
+        app.step(1);
+        assert!(level(&app, a) >= 0.5, "a risen village fears its owner");
+
+        let world = app.world_mut();
+        let mut threat = world.get_mut::<Threat>(a).unwrap();
+        threat.provoked_by = None;
+        threat.provoked_until = 0;
+        let spec = ArmySpec {
+            posture: Posture::Aggressive,
+            ..ArmySpec::new(FactionId::RAIDERS, ac, 5)
+        };
+        spawn_army(world, &spec);
+        app.step(1);
+        assert!(level(&app, a) > 0.0, "raiders at the gate frighten nobody");
+    }
+}
