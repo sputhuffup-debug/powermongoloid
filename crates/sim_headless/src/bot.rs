@@ -115,12 +115,15 @@ enum Plan {
 pub struct Bot {
     seed: SimSeed,
     tasks: BTreeMap<u64, Task>,
-    /// The tick each captain's task began.
-    since: BTreeMap<u64, u64>,
+    /// The tick by which each captain's task should be done.
+    due: BTreeMap<u64, u64>,
     /// When each settlement was last recruited from.
     recruited: BTreeMap<u64, u64>,
     /// Failed attacks per settlement (raises its militia estimate).
     failed: BTreeMap<u64, u32>,
+    /// Settlements a captain couldn't reach in time, left alone until the
+    /// tick.
+    shunned: BTreeMap<u64, u64>,
     /// The most militia seen standing at each settlement.
     seen: BTreeMap<u64, u32>,
     plan: Plan,
@@ -384,10 +387,11 @@ impl Bot {
         Self {
             seed: SimSeed(seed),
             tasks: BTreeMap::new(),
-            since: BTreeMap::new(),
+            due: BTreeMap::new(),
             recruited: BTreeMap::new(),
             failed: BTreeMap::new(),
             seen: BTreeMap::new(),
+            shunned: BTreeMap::new(),
             plan: Plan::Grow,
             notes: Vec::new(),
         }
@@ -421,13 +425,19 @@ impl Bot {
         // A task that drags on (a captain that can't reach its goal) is
         // dropped and thought again.
         for cap in &view.caps {
-            let limit = match self.tasks.get(&cap.id) {
-                Some(Task::Hold(_) | Task::Stage(_)) | None => continue,
-                Some(Task::Attack(_) | Task::Assault(_)) => 3600,
-                Some(_) => 1200,
-            };
-            if self.since.get(&cap.id).is_some_and(|t| tick >= t + limit) {
+            if self.due.get(&cap.id).is_some_and(|t| tick >= *t) {
+                self.due.remove(&cap.id);
                 let task = self.tasks.remove(&cap.id);
+                if let Some(
+                    Task::Gather(s)
+                    | Task::Recruit(s)
+                    | Task::Equip(s)
+                    | Task::Give(s)
+                    | Task::Attack(s),
+                ) = task
+                {
+                    self.shunned.insert(s, tick + 2400);
+                }
                 self.note(tick, format!("captain {}: gave up on {task:?}", cap.id));
             }
         }
@@ -519,6 +529,11 @@ impl Bot {
         out
     }
 
+    /// Whether the bot leaves settlement `s` alone for now.
+    fn shuns(&self, s: u64, tick: u64) -> bool {
+        self.shunned.get(&s).is_some_and(|t| tick < *t)
+    }
+
     /// What the seat's defence is worth in soldiers: the garrison and the
     /// seat's militia, times its defence bonus.
     fn seat_defence(&self, v: &View) -> f32 {
@@ -573,7 +588,13 @@ impl Bot {
                     .all(|c| dist(c.at, at) <= 40.0);
                 let waited = v.tick - since;
                 if ready || waited >= 1000 {
-                    self.note(v.tick, format!("strike on the seat #{seat} ({soldiers} soldiers, garrison {})", v.garrison));
+                    self.note(
+                        v.tick,
+                        format!(
+                            "strike on the seat #{seat} ({soldiers} soldiers, garrison {})",
+                            v.garrison
+                        ),
+                    );
                     self.plan = Plan::Strike { since: v.tick };
                 }
             }
@@ -635,7 +656,8 @@ impl Bot {
     /// Whether `task` is still under way for `cap`.
     fn going(&self, v: &View, cap: &Cap, task: Task) -> bool {
         match task {
-            Task::Monument(_, since) => cap.orders > 0 || v.tick - since < 600,
+            // Until it is held (checked by the caller) or overdue.
+            Task::Monument(..) => true,
             Task::Hold(s) => v.site(s).is_some_and(|s| s.owner == FactionId::PLAYER),
             Task::Stage(_) => matches!(self.plan, Plan::Stage { .. }),
             _ => cap.orders > 0,
@@ -708,7 +730,7 @@ impl Bot {
             .map(|c| c.people)
             .sum();
         let target = ((self.seat_defence(v) * ASSAULT_MARGIN * 1.1) as u32).max(MIN_ARMY);
-        let recruit = if cap.people + others < target && cap.days >= 1.5 {
+        let recruit = if cap.people + others < target && (cap.days >= 1.5 || cap.people < 8) {
             self.recruit_site(v, cap)
         } else {
             None
@@ -747,7 +769,7 @@ impl Bot {
         if cap.unarmed >= 5 {
             let mut best: Option<(f32, u64)> = None;
             for s in &v.sites {
-                if s.owner == FactionId::RIVAL || s.weapons < 4 {
+                if s.owner == FactionId::RIVAL || s.weapons < 4 || self.shuns(s.id, v.tick) {
                     continue;
                 }
                 let d = dist(s.center, cap.at)
@@ -788,7 +810,7 @@ impl Bot {
         let mut best: Option<(f32, u64)> = None;
         let starving = cap.days < 0.5;
         for s in &v.sites {
-            if s.owner == FactionId::RIVAL {
+            if s.owner == FactionId::RIVAL || self.shuns(s.id, v.tick) {
                 continue;
             }
             // A hungry neutral army takes a day's food even from the
@@ -837,7 +859,7 @@ impl Bot {
         }
         let mut best: Option<(f32, u64)> = None;
         for s in &v.sites {
-            if s.owner == FactionId::PLAYER || Some(s.id) == v.seat {
+            if s.owner == FactionId::PLAYER || Some(s.id) == v.seat || self.shuns(s.id, v.tick) {
                 continue;
             }
             let d = dist(s.center, cap.at);
@@ -866,7 +888,7 @@ impl Bot {
         let rest = 1200;
         let mut best: Option<(f32, u64)> = None;
         for s in &v.sites {
-            if s.owner == FactionId::RIVAL || s.pop < 30 {
+            if s.owner == FactionId::RIVAL || s.pop < 30 || self.shuns(s.id, v.tick) {
                 continue;
             }
             if self.recruited.get(&s.id).is_some_and(|t| v.tick < t + rest) {
@@ -957,7 +979,33 @@ impl Bot {
         let prev = self.tasks.insert(cap.id, task);
         let fresh = prev != Some(task);
         if fresh {
-            self.since.insert(cap.id, v.tick);
+            // The walk there at about 8 ticks a tile, half again, plus the
+            // work itself; foraging, holding and staging end on their own.
+            let goal = match task {
+                Task::Gather(s)
+                | Task::Recruit(s)
+                | Task::Equip(s)
+                | Task::Give(s)
+                | Task::Attack(s)
+                | Task::Assault(s) => v.site(s).map(|s| s.center),
+                Task::Wander(at) => Some(at),
+                Task::Monument(m, _) => monument_tile(world, m),
+                Task::Forage | Task::Hold(_) | Task::Stage(_) => None,
+            };
+            let work = match task {
+                Task::Attack(_) | Task::Assault(_) => 3600,
+                Task::Monument(..) => 600,
+                _ => 300,
+            };
+            match goal {
+                Some(at) => {
+                    let walk = (dist(at, cap.at) * 12.0) as u64;
+                    self.due.insert(cap.id, v.tick + walk + work);
+                }
+                None => {
+                    self.due.remove(&cap.id);
+                }
+            }
         }
         let idle = cap.orders == 0;
         let at_center = |s: u64, r: f32| v.site(s).is_some_and(|s| dist(s.center, cap.at) <= r);
