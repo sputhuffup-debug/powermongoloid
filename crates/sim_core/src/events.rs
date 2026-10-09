@@ -87,11 +87,18 @@ pub enum SimEventKind {
     /// `other`: the fallen one; `at`: the new champion's tile; `amount`:
     /// traits kept; `cause`: the fallen's.
     Succession,
-    /// The rival enlisted men at its seat (GP-28). `amount`: how many.
+    /// The rival enlisted men at its seat (GP-28). `faction`: the rival;
+    /// `subject`: the garrison's captain; `at`: the seat's centre;
+    /// `amount`: how many.
     RivalLevy,
-    /// The rival sent a raiding band. `subject`: its captain.
+    /// The rival sent a raiding band (GP-28). `faction`: the rival;
+    /// `subject`: its captain; `at`: the seat's centre; `amount`: people in
+    /// the band, its captain included.
     RivalRaid,
-    /// The pacing director brought raiders (GP-16). `subject`: their captain.
+    /// The pacing director brought raiders (GP-16). `faction`: the raiders;
+    /// `subject`: their captain; `other`: the settlement they were sent to
+    /// raid (0 for none); `at`: where they appeared; `amount`: people in
+    /// the band, its captain included.
     RaidersArrived,
     /// An army's battle ended (SIM-36). `faction`: the army's; `subject`:
     /// its captain; `other`: the survivors who fought; `at`: the captain's

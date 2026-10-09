@@ -43,8 +43,9 @@ usage: sim_headless [options]
   --difficulty <name>       the run's difficulty: steady (default), chaotic
                             or harsh (needs --run)
   --bot                     the scripted player plays the run (needs --run;
-                            not with --commands or --timings); with
-                            --record its commands make the replay";
+                            not with --commands); with --record,
+                            --stats-every or --timings its commands are
+                            replayed";
 
 struct Args {
     seed: u64,
@@ -134,8 +135,8 @@ fn parse_args() -> Result<Args, String> {
         if !matches!(args.scenario, Scenario::Run(_)) {
             return Err("--bot needs --run".to_string());
         }
-        if args.commands > 0 || args.timings {
-            return Err("--bot can't be combined with --commands or --timings".to_string());
+        if args.commands > 0 {
+            return Err("--bot can't be combined with --commands".to_string());
         }
     }
     if args.population.is_some() && matches!(args.scenario, Scenario::Run(_)) {
@@ -477,7 +478,7 @@ fn main() -> ExitCode {
             played.cause,
             played.end_tick
         );
-        if args.record.is_none() && args.stats_every == 0 {
+        if args.record.is_none() && args.stats_every == 0 && !args.timings {
             report_speed(played.end_tick, start);
             println!(
                 "seed={} ticks={} bot outcome={} end_tick={}",

@@ -317,7 +317,8 @@ pub fn garrison(world: &mut World) -> Option<Entity> {
 /// GP-28: the rival's clock, once a game hour (slot 11 of
 /// `progression::progress`, run only). While the rival holds its seat, it
 /// sets the seat's defence bonus for the day, levies when due and sends a
-/// raid when due. Span `sim_military::rival::clock`.
+/// raid when due; while it doesn't, the bonus is 0 and the clock waits.
+/// Span `sim_military::rival::clock`.
 pub fn clock(world: &mut World) {
     let _span = tracing::info_span!("sim_military::rival::clock").entered();
     if !world.resource::<RunState>().in_run() {
@@ -332,6 +333,10 @@ pub fn clock(world: &mut World) {
     let held = crate::orders::find_settlement(world, seat)
         .is_some_and(|s| crate::conquest::owner_of(world, s) == FactionId::RIVAL);
     if !held {
+        // A seat the rival no longer holds shelters none of its people.
+        if world.resource::<RivalState>().defence_bonus != 0.0 {
+            world.resource_mut::<RivalState>().defence_bonus = 0.0;
+        }
         return;
     }
     let tick = world.resource::<SimTick>().0;
