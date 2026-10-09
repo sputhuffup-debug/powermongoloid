@@ -5,8 +5,10 @@ mod common;
 
 use bevy_ecs::prelude::*;
 use common::*;
-use sim_agents::{Enlisted, Villager};
-use sim_core::{CommandKind, FactionId, OrderSpec, Posture, SimStepper, SpawnId};
+use sim_agents::{Enlisted, Owner, Villager};
+use sim_core::{
+    Allegiance, CommandKind, FactionId, OrderSpec, Posture, SimEventKind, SimStepper, SpawnId,
+};
 use sim_economy::{Economy, GoodId, SettlementEconomy, Stockpile};
 use sim_headless::{HeadlessConfig, Scenario, headless_app};
 use sim_military::{ArmyStats, Captain, Equipment, Factions, Follower, Skirmish, setup_skirmish};
@@ -273,10 +275,13 @@ fn skirmish_scenario_is_reachable_from_config() {
     assert_eq!(factions, [1, 2]);
 }
 
+/// GP-02, SIM-13, GP-05: an Attack raises the militia, breaks it, holds
+/// the centre and takes the village, whose residents then follow the
+/// warband.
 #[test]
 fn attacking_a_village_raises_its_militia() {
     let (mut app, s) = skirmish();
-    let (_, vid) = nearest_village(&mut app, s.player);
+    let (village, vid) = nearest_village(&mut app, s.player);
     order(&mut app, 1, s.player, OrderSpec::Attack { settlement: vid });
     let mut fought = 0;
     for _ in 0..40 {
@@ -300,5 +305,28 @@ fn attacking_a_village_raises_its_militia() {
     assert!(
         captain(&app, s.player).orders.is_empty(),
         "attack never ended"
+    );
+    // GP-05: the hold took it.
+    assert_eq!(stats.conquests, 1, "the attack ended without a conquest");
+    let world = app.world_mut();
+    assert_eq!(world.get::<Owner>(village).unwrap().faction, FactionId(1));
+    let mut q = world.query_filtered::<(&Villager, &Allegiance), Without<Enlisted>>();
+    let (sworn, all) = q
+        .iter(world)
+        .filter(|(v, _)| v.settlement == village)
+        .fold((0, 0), |(n, t), (_, a)| {
+            (n + (a.0 == FactionId(1)) as u32, t + 1)
+        });
+    assert!(
+        all > 0 && sworn == all,
+        "{sworn} of {all} follow the warband"
+    );
+    let conquest = chronicle(&app)
+        .into_iter()
+        .find(|e| e.event.kind == SimEventKind::Conquest)
+        .expect("a Conquest in the chronicle");
+    assert_eq!(
+        (conquest.event.faction, conquest.event.subject),
+        (FactionId(1), vid)
     );
 }

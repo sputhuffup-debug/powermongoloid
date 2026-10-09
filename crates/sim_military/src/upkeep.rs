@@ -5,11 +5,13 @@
 use bevy_ecs::prelude::*;
 use rand::RngExt;
 use sim_agents::{
-    ActionKind, Activity, CombatStats, Enlisted, Needs, Stage, Stance, Travel, TravelState,
-    Villager, Villagers, civilian_stats, eat_from,
+    ActionKind, Activity, CombatStats, Enlisted, Loyalty, Needs, Owner, SettlementLoyalty, Stage,
+    Stance, Travel, TravelState, Villager, Villagers, civilian_stats, eat_from,
 };
 use sim_core::rng::rng_key;
-use sim_core::{Allegiance, FactionId, Motion, Position, SimSeed, SimTick, SpawnId};
+use sim_core::{
+    Allegiance, FactionId, FactionModifiers, Motion, Position, SimSeed, SimTick, SpawnId, Stat,
+};
 use sim_economy::{Economy, Inventory, SettlementEconomy, TransferOp, Transfers};
 use sim_world::world_pos;
 
@@ -17,7 +19,9 @@ use crate::combat::Casualties;
 use crate::components::{ArmyStats, Captain, Equipment, Follower, MilitaryLog};
 use crate::data::Army;
 use crate::index::ArmyIndex;
+use crate::monuments::NoUpkeep;
 use crate::soldiers::led;
+use crate::veterans::{Veteran, rank_gain};
 
 /// EconomySet::Post: hungry soldiers eat carried food, else ask the
 /// baggage for a meal (applied by the transfer resolver).
@@ -38,7 +42,7 @@ pub(crate) fn eat(
             Option<&Follower>,
             Has<Captain>,
         ),
-        With<Enlisted>,
+        (With<Enlisted>, Without<NoUpkeep>),
     >,
 ) {
     let _span = tracing::info_span!("sim_military::eat").entered();
@@ -75,7 +79,12 @@ pub(crate) fn eat(
 }
 
 /// Needs set: hunger, starvation, morale and the desertion roll for
-/// soldiers. Parallel; each writes only its own components.
+/// soldiers. Parallel; each writes only its own components. Monument
+/// guards ([`NoUpkeep`]) never get hungrier. The morale target is the
+/// unit's base morale times the faction's `Stat::Morale` multiplier
+/// (GP-23; exactly the base with no modifiers), plus the soldier's veteran
+/// rank gain (SIM-36). The desertion chance is scaled by the faction's
+/// `Stat::Desertion` multiplier and cut by the rank's `desertion` share.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // Bevy system parameters.
 pub(crate) fn soldier_upkeep(
     tick: Res<SimTick>,
@@ -84,6 +93,7 @@ pub(crate) fn soldier_upkeep(
     army: Res<Army>,
     index: Res<ArmyIndex>,
     fallen: Res<Casualties>,
+    mods: Res<FactionModifiers>,
     mut q: Query<
         (
             &SpawnId,
@@ -95,6 +105,8 @@ pub(crate) fn soldier_upkeep(
             &mut Needs,
             Option<&mut Follower>,
             Has<Captain>,
+            Has<NoUpkeep>,
+            Option<&Veteran>,
         ),
         With<Enlisted>,
     >,
@@ -111,26 +123,45 @@ pub(crate) fn soldier_upkeep(
     let desert = army.per_tick(u.desert_chance_per_day);
     let hunger = villagers.hunger_per_tick;
     q.par_iter_mut().for_each(
-        |(id, pos, motion, allegiance, act, mut cs, mut needs, follower, is_captain)| {
+        |(
+            id,
+            pos,
+            motion,
+            allegiance,
+            act,
+            mut cs,
+            mut needs,
+            follower,
+            is_captain,
+            no_upkeep,
+            veteran,
+        )| {
             if !cs.alive() {
                 return;
             }
-            needs.hunger = (needs.hunger + hunger).min(1.0);
-            if needs.hunger >= u.starving {
-                cs.health -= starve;
+            if !no_upkeep {
+                needs.hunger = (needs.hunger + hunger).min(1.0);
+                if needs.hunger >= u.starving {
+                    cs.health -= starve;
+                }
             }
             let p = world_pos(pos, Some(motion));
             let unfed = needs.hunger >= u.hungry;
+            // SIM-36: a ranked soldier's gains (none for a recruit).
+            let gain = rank_gain(&army, veteran);
             let mut morale = cs.morale;
             if unfed {
                 morale -= unfed_loss;
             } else {
                 let is_led = led(&index, &army, follower.as_deref(), p);
-                let base = if is_captain {
+                let mut base = if is_captain {
                     army.data.captain.morale
                 } else {
                     army.data.soldier.morale
-                };
+                } * mods.mult(allegiance.0, Stat::Morale);
+                if let Some(g) = gain {
+                    base += g.morale;
+                }
                 let target = if is_led { (base + 0.1).min(1.0) } else { base };
                 let rate = fed_gain + if is_led { lead_gain } else { 0.0 };
                 morale = if morale < target {
@@ -150,13 +181,23 @@ pub(crate) fn soldier_upkeep(
             if morale != cs.morale {
                 cs.morale = morale;
             }
+            // A follower who starved to death this tick doesn't desert:
+            // `find_fallen` removes him next tick (G4).
             if let Some(mut f) = follower
                 && !f.deserting
+                && cs.alive()
                 && morale < u.desert_below
                 && (unfed || act.kind == ActionKind::Rout)
             {
+                // The faction's Desertion modifier (SIM-34 traits, boons)
+                // and the soldier's rank make it less likely; both are
+                // exact no-ops without any.
+                let mut chance = desert * mods.mult(allegiance.0, Stat::Desertion);
+                if let Some(g) = gain {
+                    chance *= 1.0 - g.desertion;
+                }
                 let mut rng = seed.stream(rng_key("sim_military::desert") ^ id.0, tick);
-                if rng.random::<f32>() < desert {
+                if rng.random::<f32>() < chance.max(0.0) {
                     f.deserting = true;
                 }
             }
@@ -254,7 +295,9 @@ pub(crate) fn tally(
 }
 
 /// Needs set, last: deserters leave, in SpawnId order. A villager goes
-/// home and is a villager again; anyone else simply leaves.
+/// home and is a villager again, sworn to whoever owns its settlement
+/// (GP-05), with the settlement's current mean loyalty (GP-06); anyone
+/// else simply leaves.
 pub(crate) fn apply_desertions(world: &mut World) {
     let _span = tracing::info_span!("sim_military::apply_desertions").entered();
     let tick = world.resource::<SimTick>().0;
@@ -276,7 +319,17 @@ pub(crate) fn apply_desertions(world: &mut World) {
             world.despawn(e);
             continue;
         };
-        // Back to village life.
+        // Back to village life, under the settlement's owner, as loyal as
+        // its residents are now: the loyalty frozen at enlistment may have
+        // been toward an owner who has since lost the settlement (GP-06).
+        let owner = world
+            .get::<Owner>(v.settlement)
+            .map_or(FactionId::INDEPENDENT, |o| o.faction);
+        let loyalty = match world.get::<SettlementLoyalty>(v.settlement) {
+            Some(sl) if sl.residents > 0 => sl.mean,
+            _ => sim_agents::standing::default_seed(world, v.settlement, owner),
+        }
+        .clamp(0.0, 1.0);
         let mut civ = civilian_stats(&villagers);
         if let Some(cs) = world.get::<CombatStats>(e) {
             civ.health = (cs.health / cs.max_health.max(1.0)) * civ.max_health;
@@ -284,10 +337,11 @@ pub(crate) fn apply_desertions(world: &mut World) {
         }
         world
             .entity_mut(e)
-            .remove::<(Enlisted, Follower, Equipment)>()
+            .remove::<(Enlisted, Follower, Equipment, Veteran)>()
             .insert((
                 civ,
-                Allegiance(FactionId(0)),
+                Allegiance(owner),
+                Loyalty(loyalty),
                 Activity {
                     kind: ActionKind::GoHome,
                     stage: Stage::Done,

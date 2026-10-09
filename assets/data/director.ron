@@ -1,0 +1,44 @@
+// GP-16: the pacing director, sim_military::DirectorData. One personality
+// per difficulty (the run's RunConfig picks it). Hours are game hours of
+// 100 ticks (a day is 24 of them, about 10 seconds each at 1x).
+(
+    personalities: [
+        (
+            difficulty: Steady,
+            // Tension = threat x w + hunger x w + fights x w - quiet x w;
+            // each input is 0..1 (see docs/dev/DATA.md).
+            weights: (threat: 1.0, hunger: 0.5, fights: 1.0, quiet: 1.0),
+            quiet_limit_hours: 10.0,
+            first_event_within_hours: 4.0,
+            spacing_hours: 30.0,
+            raider_band: (min: 5, max: 16, per_day: 0.5, armed: false),
+            max_bands: 2,
+            auto_pause: [RaidersArrived, RivalRaid, ChampionFell, OfferPosted],
+        ),
+        (
+            difficulty: Chaotic,
+            weights: (threat: 0.5, hunger: 0.5, fights: 0.5, quiet: 1.0),
+            quiet_limit_hours: 8.0,
+            first_event_within_hours: 3.0,
+            spacing_hours: 16.0,
+            raider_band: (min: 4, max: 20, per_day: 0.75, armed: true),
+            max_bands: 4,
+            auto_pause: [RaidersArrived, RivalRaid, ChampionFell, OfferPosted],
+        ),
+        (
+            difficulty: Harsh,
+            weights: (threat: 0.75, hunger: 0.25, fights: 0.75, quiet: 1.0),
+            quiet_limit_hours: 8.0,
+            first_event_within_hours: 3.0,
+            spacing_hours: 20.0,
+            raider_band: (min: 8, max: 24, per_day: 1.0, armed: true),
+            max_bands: 3,
+            auto_pause: [RaidersArrived, RivalRaid, ChampionFell],
+        ),
+    ],
+    // A band appears this many tiles (min, max) from the village it is sent
+    // to raid (or from the champion, if no village is near).
+    spawn_distance: (70.0, 130.0),
+    // Days of food in a band's baggage.
+    band_food_days: 2.5,
+)

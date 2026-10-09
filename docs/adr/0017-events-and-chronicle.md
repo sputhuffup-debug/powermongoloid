@@ -1,0 +1,43 @@
+# ADR 0017: Events, the chronicle and the run summary
+
+Date: 2026-10-09 · Status: Accepted · Requirements: UI-05, UI-09 (also GP-16, GP-21, SIM-36)
+
+## Context
+
+M4 tells the player what happened ([M4_PLAN.md](../M4_PLAN.md), "Events, chronicle and run summary"): an event feed, a chronicle with causes ("Oakworth invited Brand's band in, after they drove off the raiders on day 4"), a report after each battle, and a summary at the end of a run. The event plumbing landed in step 1 ([ADR 0013](0013-runs-presets-and-run-config.md) mentions it); this records it with the step 9 additions. Constraints:
+
+- **The sim stores no text** (render and UI only read; names and phrasing change without changing outcomes).
+- **Determinism.** Writers in one system set run in executor order; messages live two ticks and are not hashed.
+- **A big battle promotes dozens of soldiers at once,** and the feed keeps 256 entries.
+- **Names outlive people.** A fallen champion or a promoted soldier may be despawned before anyone reads about them.
+
+## Decision
+
+- **Events.** Any sim crate writes a `SimEvent` (kind, faction, subject, other, place, amount, `Cause`). One reader, `record_events` (Bookkeeping, `BookkeepingSet::Record`), sorts the tick's events by a total key, stamps the tick, appends every event to the `EventFeed` (exempt, a 256-entry ring numbered by `seq`; saved so UI cursors carry on) and chronicled kinds to the `Chronicle` (hashed as lengths plus a running digest, so hashing stays O(1); saved). `settle_outcome` records `RunEnded` itself. `SimEventKind` and `Cause` are append only.
+- **Causes.** Every chronicled event names why it happened where there is a why. Step 9 appends `Cause::Lapsed` (a request nobody answered in time), `Cause::Neglect` (a monument that drifted back to nobody) and `Cause::Fight { faction }` (a battle, against its first foe), and sets causes on raids (`Raid { captain }`) and on the director's raiders. Only `RunStarted` and `RankUp` keep `Cause::None`.
+- **Battle reports.** `veterans::end_battles` writes a `BattleReport` into `Chronicle::reports` with each army's `Battle` event (same tick, faction and captain; `Chronicle::report_for` finds it): the factions it fought (`Captain.battle_foes`, bits set by `resolve_strikes`), its dead and the foes it killed (`battle_losses`, `battle_kills`), the turning point (`battle_rout`: the first tick `build_index` sees one of its men running; `None` if the line held), and the ranks earned with each soldier's `NameId`. Reports are folded into the chronicle's digest. Traits earned from triggers come with SIM-34's triggers in a later milestone; for now "traits earned" are the veteran ranks.
+- **Grouping.** `VeteranRank` is one event per army and rank reached (`other` = how many), not per soldier; the names are in the report. `ChampionFell` carries the champion's `NameId` in `amount`. `OfferChosen`'s `amount` is the offer kind's tag, so a reader knows which deck the card is from.
+- **Words.** `sim_military::chronicle::describe(world, entry)` (and `describe_entries` for many) writes one sentence per entry: "Day N: " + what happened, with settlement, monument and people names from the `NameTable`, faction names from army.ron, and the cause worded by progression.ron `chronicle.causes` (one phrase per `Cause`, with `{faction}`, `{settlement}`, `{captain}`, `{boon}` and `{foe}` filled in, validated). A `Battle` sentence adds its report: who fought, who fell, the foes slain, where the line broke or that it held, and the Elites by name.
+- **Summary.** `RunSummary::of(chronicle, stats, progress, run_state, ticks_per_day, now, top_rank)` is a pure function: outcome and cause, days played, settlements taken, lost and held (from `Conquest`, `Invited` and `Revolt` entries), people held (the last dominion tally), monuments taken and held, battles, kills and losses, veterans and Elites (distinct soldiers in the player's reports), requests answered, boons. `sim_military::run_summary(world)` reads it from a world.
+- **The military log** gains a `seq` counter and `since(cursor)`, so the feed can merge its lines with the `EventFeed` by cursor.
+- **sim_headless.** `stats::run_summary(app)` and `stats::chronicle(app)` give lines; `--chronicle` prints the chronicle in words and the summary at the end of a plain run, `--bot` or `--load`; the `--stats-every` loop prints the summary when a run ends.
+
+## Consequences
+
+- The UI reads `EventFeed` by `seq` and `MilitaryLog::since` for the feed, `Chronicle::entries`/`reports` plus `describe_entries` for the chronicle, and `run_summary` for the end screen. It never formats events itself.
+- New `Captain` fields and causes change every scenario's state hash (nothing is golden); the developed and skirmish outputs are byte-identical.
+- The chronicle grows by a report per battle (about 30 in ten days of a bot run); its hash stays O(1).
+- Tests: `chronicle` (a three-day bot run: a battle with its report, a monument taken by holding it, a request lapsed or answered, the run's end, each with its cause; every entry described; the summary agrees), `champion` (the grouped `VeteranRank` and the report's promotions), and the sim_military unit tests `entries_read_as_sentences_with_their_causes`, `the_summary_counts_the_run` and `a_battle_ends_after_a_quiet_hour_and_ranks_its_fighters`.
+
+## As built (reviewed at M4's close, step 12)
+
+The decisions above held. Differences and additions:
+
+- **`describe` is not re-exported at the sim_military root** (the root `describe` already words orders): call `sim_military::chronicle::describe`, or `describe_entries` for a batch (one name lookup for the whole batch; a single `describe` scans every named entity).
+- **A side wiped out to the last man has no battle report,** since there is no captain left to end its battle. The turning point is each army's own first rout (`battle_rout`), so the two sides of one battle tell different stories.
+- **"Traits earned" in a report are the veteran ranks** with names; soldiers' trait triggers (SIM-34) are not built.
+- **Event meanings changed during the step** (kinds stayed append only): `OfferChosen.amount` is the offer kind's tag, `VeteranRank` is one event per army and rank, `ChampionFell.amount` is the champion's `NameId`. Only `RunStarted` and `RankUp` keep `Cause::None`.
+- **Words:** faction names come from army.ron as written ("Rival", "Beasts"), so sentences read "against Rival"; a per-faction chronicle name could be added to the data. `Cause::describe` (sim_core) gives the plain, nameless wording used by `RunSummary::lines()` and the headless "run ended" line ("run abandoned (by your choice) after 1.8 days"); the end screen's `cause_text` delegates to it and adds the faction for a death or a fight.
+- **UI:** the feed (`crates/game_ui/src/feed.rs`) reads the `EventFeed` by `seq`, tells new entries with `describe_entries`, merges the player's `MilitaryLog` lines, and auto-pauses on the difficulty's `auto_pause` kinds (director.ron). The end screen shows `run_summary(world).lines()`, the player's last three battle reports and a timeline of the entries on the player's story (what it did, what was done to it, the run's start and end, anyone's conquests, rival raids).
+- **Not built:** UI-09's short biographies of settlements and named characters (the chronicle and reports are in; the biographies are not), a filter on the timeline (a long run lists every lapsed request), and a drill-down into battles older than the last three.
+- **The chronicle test has no conquest** (the three-day bot of that time did not conquer); conquest sentences are covered by the `entries_read_as_sentences_with_their_causes` unit test, and `bot_run` plays whole winning runs.

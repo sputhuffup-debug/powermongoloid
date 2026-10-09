@@ -131,10 +131,21 @@ pub(crate) fn quantile(values: &[f32], select: impl Fn(usize) -> bool, q: f32) -
 /// 4-neighbour breadth-first distance from every tile to the nearest
 /// water tile, capped at 255.
 pub(crate) fn water_distance(terrain: &[Terrain], size: usize) -> Vec<u8> {
+    distance_to(terrain, size, |t| t == Terrain::Water)
+}
+
+/// 4-neighbour breadth-first distance (over any terrain) from every tile to
+/// the nearest tile where `source` holds, capped at 255 (also when there is
+/// no source).
+pub(crate) fn distance_to(
+    terrain: &[Terrain],
+    size: usize,
+    source: impl Fn(Terrain) -> bool,
+) -> Vec<u8> {
     let mut dist = vec![u8::MAX; terrain.len()];
     let mut queue = VecDeque::new();
     for (i, t) in terrain.iter().enumerate() {
-        if *t == Terrain::Water {
+        if source(*t) {
             dist[i] = 0;
             queue.push_back(i);
         }

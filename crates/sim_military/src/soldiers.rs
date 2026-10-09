@@ -9,7 +9,7 @@ use sim_agents::{
     ActionKind, Activity, CombatStats, DecisionTrace, Enlisted, Factors, ScoredOption, Stage,
     Strike, Villagers,
 };
-use sim_core::{Allegiance, Motion, Position, SimTick, SpawnId};
+use sim_core::{Allegiance, FactionModifiers, Motion, Position, SimTick, SpawnId, Stat};
 use sim_world::{SpatialGrid, TravelCosts, WorldMap, world_pos};
 
 use crate::components::{Captain, Follower};
@@ -226,12 +226,14 @@ fn speed_at(villagers: &Villagers, map: &WorldMap, p: Vec2) -> f32 {
 }
 
 /// Captains march along their flow field, slowing for stragglers and
-/// halting to fight. Serial; there are few captains.
+/// halting to fight, at the terrain's speed times the faction's
+/// `MarchSpeed` modifier (GP-23). Serial; there are few captains.
 #[allow(clippy::type_complexity)]
 pub(crate) fn move_captains(
     map: Res<WorldMap>,
     villagers: Res<Villagers>,
     index: Res<ArmyIndex>,
+    mods: Res<FactionModifiers>,
     mut q: Query<(
         Entity,
         &mut Position,
@@ -249,7 +251,7 @@ pub(crate) fn move_captains(
         if !stats.alive() {
             continue;
         }
-        let speed = speed_at(&villagers, &map, p);
+        let speed = speed_at(&villagers, &map, p) * mods.mult(captain.faction, Stat::MarchSpeed);
         let v = match act.kind {
             // The army halts to fight; the captain holds its ground in the
             // middle of it and strikes whoever comes within reach.
@@ -286,14 +288,16 @@ pub(crate) fn move_captains(
 
 /// Followers keep a loose formation around the captain (descending the
 /// flow field when far behind), fight, or flee; militia close with their
-/// foe. Everyone pushes away from close neighbours. Parallel per soldier,
-/// then the militia serially.
+/// foe. Everyone pushes away from close neighbours. Followers move at their
+/// army's `MarchSpeed` like their captain (GP-23), or the band would string
+/// out. Parallel per soldier, then the militia serially.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // Bevy system parameters.
 pub(crate) fn move_soldiers(
     map: Res<WorldMap>,
     army: Res<Army>,
     villagers: Res<Villagers>,
     index: Res<ArmyIndex>,
+    mods: Res<FactionModifiers>,
     spatial: Res<SpatialGrid>,
     grid: Res<FighterGrid>,
     mut soldiers: Query<
@@ -337,14 +341,19 @@ pub(crate) fn move_soldiers(
     };
     // `in_melee`: a fighter closing on a foe queues rather than crush into
     // a crowded tile (army.ron `max_per_tile`); marching ignores the cap.
-    let apply = |pos: &mut Position, motion: &mut Motion, p: Vec2, want: Vec2, in_melee: bool| {
+    let apply = |pos: &mut Position,
+                 motion: &mut Motion,
+                 p: Vec2,
+                 want: Vec2,
+                 in_melee: bool,
+                 march: f32| {
         if want == Vec2::ZERO {
             if motion.velocity != Vec2::ZERO {
                 motion.velocity = Vec2::ZERO;
             }
             return;
         }
-        let v = want.clamp_length_max(1.2) * speed_at(&villagers, &map, p);
+        let v = want.clamp_length_max(1.2) * (speed_at(&villagers, &map, p) * march);
         let to = step_unless(&map, costs, p, v, |t| {
             in_melee && grid.fighters_on(t) >= f.max_per_tile
         });
@@ -401,12 +410,16 @@ pub(crate) fn move_soldiers(
                 _ => follow(1.0),
             };
             let want = want + separate(e, p);
+            let march = follower
+                .and_then(|fl| index.get(fl.captain))
+                .map_or(1.0, |a| mods.mult(a.faction, Stat::MarchSpeed));
             apply(
                 &mut pos,
                 &mut motion,
                 p,
                 want,
                 act.kind == ActionKind::Fight,
+                march,
             );
         });
     for &(_, e) in &grid.militia {
@@ -418,7 +431,7 @@ pub(crate) fn move_soldiers(
         }
         let p = world_pos(&pos, Some(&motion));
         let want = chase(strike, p) + separate(e, p);
-        apply(&mut pos, &mut motion, p, want, true);
+        apply(&mut pos, &mut motion, p, want, true, 1.0);
     }
 }
 

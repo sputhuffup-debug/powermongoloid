@@ -2,7 +2,7 @@
 //! component (NFR-08). See ADR 0003.
 
 use std::any::TypeId;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
@@ -129,6 +129,8 @@ pub struct HashRegistry {
     components: Vec<(&'static str, ComponentHashFn)>,
     /// Types in the hash, plus types deliberately left out of it.
     covered: BTreeSet<TypeId>,
+    /// Types in the hash only (not the exempt ones), with their names.
+    hashed: BTreeMap<TypeId, &'static str>,
     exempt: Vec<(&'static str, &'static str)>,
 }
 
@@ -140,6 +142,11 @@ impl HashRegistry {
     /// Names of hashed components, in hashing order.
     pub fn component_names(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.components.iter().map(|(n, _)| *n)
+    }
+    /// `(TypeId, type name)` of every hashed type (exempt types excluded).
+    /// Every one must also be saved (GP-12, `every_hashed_type_is_saved`).
+    pub fn hashed_types(&self) -> impl Iterator<Item = (TypeId, &'static str)> + '_ {
+        self.hashed.iter().map(|(id, n)| (*id, *n))
     }
     /// `(type name, reason)` for each type deliberately left out of the hash.
     pub fn exemptions(&self) -> &[(&'static str, &'static str)] {
@@ -164,6 +171,7 @@ impl AppHashExt for App {
         let name = std::any::type_name::<T>();
         let mut reg = self.world_mut().get_resource_or_init::<HashRegistry>();
         if reg.covered.insert(TypeId::of::<T>()) {
+            reg.hashed.insert(TypeId::of::<T>(), name);
             reg.components.push((name, |e, h| match e.get::<T>() {
                 Some(c) => {
                     h.u8(1);
@@ -179,6 +187,7 @@ impl AppHashExt for App {
         let name = std::any::type_name::<T>();
         let mut reg = self.world_mut().get_resource_or_init::<HashRegistry>();
         if reg.covered.insert(TypeId::of::<T>()) {
+            reg.hashed.insert(TypeId::of::<T>(), name);
             reg.resources
                 .push((name, |w, h| match w.get_resource::<T>() {
                     Some(r) => {
@@ -217,7 +226,11 @@ pub fn unhashed_state(world: &mut World) -> Vec<String> {
     let empty = HashRegistry::default();
     let registry = world.get_resource::<HashRegistry>().unwrap_or(&empty);
     let covered = |id: Option<TypeId>| {
-        id.is_some_and(|id| id == TypeId::of::<HashRegistry>() || registry.covered.contains(&id))
+        id.is_some_and(|id| {
+            id == TypeId::of::<HashRegistry>()
+                || id == TypeId::of::<crate::save::SaveRegistry>()
+                || registry.covered.contains(&id)
+        })
     };
 
     let mut missing = BTreeSet::new();

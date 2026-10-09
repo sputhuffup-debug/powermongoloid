@@ -1,0 +1,334 @@
+// Runs (GP-21, GP-27, SIM-34): the start draws, band templates, the
+// champion's traits, boons and run modifiers. A card's `id` is its index in
+// its list: append only, never reorder (offers and saves store the index).
+(
+    // GP-21: where the band wakes up. A day's march is about 312 tiles.
+    start: (
+        // Monuments within this many tiles (straight line) count as nearby.
+        monument_radius: 160.0,
+        min_monuments: 2,
+        max_monuments: 3,
+        // At least this many tiles from every settlement centre.
+        min_settlement_distance: 40.0,
+        // Within this many tiles of the start region's edge (coast or border).
+        edge_distance: 8,
+        // Seeded spread (tiles) added to the distance from the rival's seat.
+        jitter: 120.0,
+        terrain_weights: [(Coast, 1.0), (ForestEdge, 1.0), (Hills, 1.0)],
+    ),
+
+    // GP-27: the band's make-up, one template drawn per run. Each group is
+    // `count` followers with these stats and gear; the champion leads them
+    // with army.ron's captain stats. `food_days` fills the baggage.
+    bands: [
+        (
+            name: "Hunters and farmhands",
+            groups: [
+                (count: 6, unit: (health: 100.0, attack: 13.0, defense: 3.0, morale: 0.8), armed: true, tools: false),
+                (count: 4, unit: (health: 110.0, attack: 10.0, defense: 3.0, morale: 0.75), armed: false, tools: true),
+            ],
+            food_days: 2.0,
+        ),
+        (
+            name: "Deserters with spears",
+            groups: [
+                (count: 8, unit: (health: 100.0, attack: 12.0, defense: 4.0, morale: 0.65), armed: true, tools: false),
+            ],
+            food_days: 1.5,
+        ),
+        (
+            name: "Outlaws",
+            groups: [
+                (count: 7, unit: (health: 95.0, attack: 14.0, defense: 2.0, morale: 0.7), armed: false, tools: false),
+                (count: 3, unit: (health: 100.0, attack: 12.0, defense: 3.0, morale: 0.8), armed: true, tools: false),
+            ],
+            food_days: 1.0,
+        ),
+        (
+            name: "Kin and neighbours",
+            groups: [
+                (count: 12, unit: (health: 100.0, attack: 9.0, defense: 2.0, morale: 0.9), armed: false, tools: true),
+            ],
+            food_days: 3.0,
+        ),
+    ],
+
+    // SIM-34, SIM-35: the champion's trait pool (trait ids). The champion
+    // starts with one trait drawn from these, and each rank offers three of
+    // them (ones it doesn't hold first).
+    champion_traits: [0, 1, 2, 3, 4, 5],
+    // Traits: a name, the chronicle's phrase, and stat effects (fractions,
+    // +0.05 is +5%; see `sim_core::Stat`).
+    traits: [
+        (id: 0, name: "Brave", phrase: "who never gave ground", effects: [(Morale, 0.05)]),
+        (id: 1, name: "Beloved", phrase: "whom the villages loved", effects: [(LoyaltyDrift, 0.1), (RecruitChance, 0.05)]),
+        (id: 2, name: "Feared", phrase: "whose name emptied the roads", effects: [(Attack, 0.03), (LoyaltyDrift, -0.05)]),
+        (id: 3, name: "Forager", phrase: "who could live off a hedge", effects: [(ForageYield, 0.2)]),
+        (id: 4, name: "Quartermaster", phrase: "whose baggage was never empty", effects: [(Desertion, -0.1)]),
+        (id: 5, name: "Duelist", phrase: "quick with a blade", effects: [(Attack, 0.05)]),
+        (id: 6, name: "Shaken", phrase: "who had seen too much", effects: [(Morale, -0.05)]),
+    ],
+
+    // GP-27 (start) and GP-24 (dominion): three are offered, drawn by weight
+    // without repeats from the boons whose `when` matches.
+    boons: [
+        (id: 0, name: "Well fed", text: "Three more days of food in the baggage.", when: Start, weight: 1.0, effects: [FoodDays(3.0)]),
+        (id: 1, name: "Armed", text: "Spears for everyone in the band.", when: Start, weight: 1.0, effects: [ArmBand]),
+        (id: 2, name: "Known", text: "The nearest village has heard well of you.", when: Start, weight: 1.0, effects: [Goodwill(0.4)]),
+        (id: 3, name: "Hardy", text: "+5% morale.", when: Start, weight: 0.8, effects: [Stat(Morale, 0.05)]),
+        (id: 4, name: "Woodwise", text: "+25% food from foraging.", when: Start, weight: 0.8, effects: [Stat(ForageYield, 0.25)]),
+        (id: 5, name: "Silver tongue", text: "+10% trade value.", when: Start, weight: 0.6, effects: [Stat(TradeValue, 0.1)]),
+        // Dominion boons may name a `favour`: (holding, w) pairs that
+        // multiply the weight by 1 + w x amount, so the three on offer
+        // reflect what the player holds in the region (GP-24).
+        (id: 6, name: "Granary of the region", text: "+10% food yield in owned settlements.", when: Dominion, weight: 1.0, effects: [Stat(FoodYield, 0.1)], favour: [(Farms, 0.15)]),
+        (id: 7, name: "Seat of power", text: "+1 captain slot.", when: Dominion, weight: 1.0, effects: [CaptainSlots(1)], favour: [(LargestSettlement, 2.0)]),
+        (id: 8, name: "Hardened", text: "Veterans rank up 25% faster.", when: Dominion, weight: 1.0, effects: [Stat(VeteranRate, 0.25)], favour: [(Battles, 0.25), (Kills, 0.01)]),
+        (id: 9, name: "Smiths' guild", text: "+10% smithing speed.", when: Dominion, weight: 1.0, effects: [Stat(SmithSpeed, 0.1)], favour: [(Smithy, 2.0)]),
+        (id: 10, name: "Iron discipline", text: "+5% defence and 10% less desertion.", when: Dominion, weight: 0.8, effects: [Stat(Defence, 0.05), Stat(Desertion, -0.1)], favour: [(Kills, 0.01)]),
+    ],
+
+    // GP-27: run modifiers, drawn by weight without repeats at the start and
+    // shown to the player. Cards sharing a `group` never come together.
+    // `Stat` effects here apply to everyone (the world row of
+    // `FactionModifiers`).
+    modifiers_per_run: (1, 2),
+    modifiers: [
+        (id: 0, name: "Lean year", text: "Crops yield 15% less.", group: Some("harvest"), weight: 1.0, effects: [Stat(FoodYield, -0.15)]),
+        (id: 1, name: "Bumper harvest", text: "Crops yield 15% more.", group: Some("harvest"), weight: 1.0, effects: [Stat(FoodYield, 0.15)]),
+        (id: 2, name: "Rats in the stores", text: "Every storehouse has lost a tenth of its food.", group: None, weight: 1.0, effects: [Stores(0.1)]),
+        (id: 3, name: "Restless roads", text: "Raiders come sooner.", group: None, weight: 1.0, effects: [RaiderPace(1.5)]),
+        (id: 4, name: "Sellswords", text: "A band for hire waits near the start.", group: None, weight: 0.7, effects: [Sellswords(12)]),
+        (id: 5, name: "Stronger rival", text: "The rival levies more men and builds faster.", group: Some("rival"), weight: 0.8, effects: [RivalStrength(1.25)]),
+        (id: 6, name: "Weaker rival", text: "The rival levies fewer men.", group: Some("rival"), weight: 0.8, effects: [RivalStrength(0.8)]),
+    ],
+
+    // GP-22: goodwill change (-1..1) at a settlement for each deed done
+    // there, toward the doer's faction. villagers.ron `goodwill` spreads a
+    // fraction of it to nearby settlements. The "Known" boon's goodwill is
+    // its own `Goodwill(..)` effect above.
+    goodwill_deeds: (
+        trade: 0.02,     // food bought with goods (Trade, passive gathering)
+        equip: 0.02,     // arms bought with food (passive Equip)
+        seize: -0.05,    // a hungry neutral army takes from the reserve
+        plunder: -0.1,   // an aggressive army plunders
+        provoke: -0.1,   // the settlement is provoked into arms
+        killing: -0.02,  // each of its militia killed
+        request: 0.2,    // a request answered (M4 step 3b)
+    ),
+
+    // SIM-38: wild food. The island is cut into 16-tile patches; a full
+    // patch holds `per_tile` food value per grass or forest tile and grows
+    // back `regrow_per_day` of that each day. A band on a Forage order
+    // stands still and, every `every_ticks`, gathers `per_member` per head
+    // (times its ForageYield modifier) from the patches within its radius,
+    // emptying them, until its baggage is full or nothing is left. A day's
+    // foraging (24 harvests) brings about 1.3 days of food per head. A band
+    // of eleven foraging within 32 tiles (about 20 patches, ~35 food value)
+    // empties them in about four days, so it has to keep moving.
+    forage: (
+        per_tile: 0.01,
+        regrow_per_day: 0.1,
+        every_ticks: 100,
+        per_member: 0.05,
+        max_radius: 64,
+        default_radius: 32,
+    ),
+
+    // GP-22: village requests, addressed to the player. Once a game hour
+    // (100 ticks), settlements in SpawnId order (independent or the
+    // player's, never the rival's seat) may post one: "drive off" when an
+    // army at war with the player (raiders, rival, beasts) is within
+    // army.ron `threat.radius` of the centre, else "bring food" after
+    // `low_samples` hourly samples in a row below `food_days` of food
+    // security (storehouse and homes, `FoodSecurity`). At most one open
+    // request per settlement. The sim detects completion: food delivered
+    // by `Give` reaching the need, or no hostile army near for
+    // `clear_hours` with a player captain there. The reward comes from the
+    // real storehouse and villagers to the nearest player captain within
+    // `reward_radius`, plus `goodwill_deeds.request`.
+    requests: (
+        food_days: 0.5,
+        low_samples: 2,
+        need_days: 0.25,
+        max_need: 30.0,
+        deadline_hours: 36.0,
+        cooldown_hours: 12.0,
+        clear_hours: 1.0,
+        reward_radius: 40.0,
+        reward_food_days: 0.5,
+        reward_max_food: 30.0,
+        reward_goods: 4,
+        volunteers: (0, 2),
+        // ClearCamp (GP-23): a monument whose guard camp still has a
+        // captain, within this many tiles of a settlement, may be named by
+        // its "clear the camp" request (one open request per camp, posted
+        // by the nearest settlement that may ask). It is done once the
+        // camp has no captain, with a player captain within
+        // `reward_radius` of the monument. Monuments stand at least 52
+        // tiles from every centre (worldgen.ron).
+        camp_radius: 80.0,
+    ),
+
+    // GP-22: a settlement that likes the player (goodwill), with a player
+    // captain near and no strong owner, offers lordship (an Invitation
+    // offer, accept or decline). Accepting hands it over with loyalty
+    // seeded from goodwill.
+    invitations: (
+        goodwill: 0.5,
+        radius: 40.0,
+        weak_loyalty: 0.4,
+        expiry_hours: 24.0,
+        cooldown_days: 3.0,
+    ),
+
+    // GP-22: once a day, villagers of settlements that like the player
+    // join a player band passing near (real villagers, enlisted like
+    // recruits).
+    drifters: (
+        radius: 60.0,
+        goodwill: 0.25,
+        per_settlement: (0, 2),
+        max_per_day: 3,
+    ),
+
+    // GP-23: monuments. Once a game hour, soldiers (not militia, not
+    // routed) within `hold_radius` tiles of a monument are counted by
+    // faction; one faction alone there for `hold_hours` takes it from its
+    // holder. A holder whose soldiers haven't stood there for `drift_days`,
+    // and that owns no settlement within `drift_distance` tiles, loses it
+    // to nobody.
+    monuments: (
+        hold_radius: 10.0,
+        hold_hours: 2.0,
+        drift_days: 3.0,
+        drift_distance: 120.0,
+        // A set bonus needs at least this many monuments of a kind in the
+        // region.
+        set_min: 2,
+        // Per kind: the stat it raises, `bonus` per monument held, capped
+        // at `cap` in all, plus `set_bonus` (beyond the cap) for each
+        // region in which the faction holds every monument of the kind.
+        // Fractions (+0.01 is +1%), except ThreatRadius (flat tiles; keep
+        // threat radius + cap + sets below the 52 tiles between monuments
+        // and settlement centres, or a guard camp frightens a village).
+        kinds: [
+            (kind: StandingStones, stat: Morale, bonus: 0.01, cap: 0.1, set_bonus: 0.02),
+            (kind: RuinedFort, stat: Defence, bonus: 0.01, cap: 0.1, set_bonus: 0.02),
+            (kind: HolyWell, stat: FoodYield, bonus: 0.01, cap: 0.1, set_bonus: 0.02),
+            (kind: RoadMarker, stat: MarchSpeed, bonus: 0.01, cap: 0.1, set_bonus: 0.02),
+            (kind: AncientForge, stat: SmithSpeed, bonus: 0.01, cap: 0.1, set_bonus: 0.02),
+            (kind: MarketCross, stat: TradeValue, bonus: 0.01, cap: 0.1, set_bonus: 0.02),
+            (kind: Wayshrine, stat: LoyaltyDrift, bonus: 0.01, cap: 0.1, set_bonus: 0.02),
+            (kind: Watchtower, stat: ThreatRadius, bonus: 1.0, cap: 2.0, set_bonus: 1.0),
+        ],
+        // Guard camps, drawn per monument at the start (chances add up to
+        // at most 1; the rest stay unguarded): `base` followers plus
+        // `per_tile` for every tile between the start and the monument, at
+        // most `max`. Guards hold their ground, never eat and fight
+        // whoever comes near; the guard faction holds the monument.
+        guards: [
+            (kind: RaiderCamp, chance: 0.3, base: 4, per_tile: 0.02, max: 24, armed: true),
+            (kind: Beasts, chance: 0.2, base: 3, per_tile: 0.015, max: 18, armed: false),
+        ],
+    ),
+
+    // GP-24, GP-25: dominion boons and captain slots. Once a game hour the
+    // run tallies each region's people and the part of them in settlements
+    // the player owns. The first time that share reaches a threshold, the
+    // player is offered three Dominion boons (once per threshold and
+    // region: losing land and taking it back offers nothing new). Captain
+    // slots: max(first_village_slots once a settlement is held,
+    // floor(people held / per_captain)) plus slot boons, at most `cap`;
+    // the champion's own army needs none.
+    dominion: (
+        thresholds: [0.25, 0.5],
+        per_captain: 300,
+        cap: 8,
+        first_village_slots: 1,
+    ),
+
+    // SIM-35: the champion's ranks. Deeds earn points: a battle its army
+    // lived through, a monument taken, a settlement conquered or invited
+    // into, a village request answered. Each rank (the total points in
+    // `ranks`) offers three traits; the pick is the champion's for good.
+    champion: (
+        points: (battle: 1, monument: 2, settlement: 3, request: 1),
+        ranks: [3, 7, 12, 18, 25],
+    ),
+
+    // GP-28: the rival warlord's clock, one row per difficulty (the run's
+    // RunConfig picks it). The rival starts with every settlement of its
+    // seat's region (residents' loyalty `start_loyalty`) and `garrison`
+    // armed men at the seat. Every `levy_every_days` it enlists
+    // `levy_size` of its own villagers into the garrison. The seat's
+    // defence bonus steps up on the listed days: blows on the rival's
+    // people within `seat_radius` tiles of the seat are divided by
+    // (Defence + bonus), so +0.5 takes half again as many blows. From
+    // `raid_from_day`, every `raid_every_days`, a band of `raid_size`
+    // (at most half the garrison) leaves the seat to raid the player. The
+    // stronger and weaker rival run modifiers scale the garrison, levies
+    // and defence bonus. A day is 2,400 ticks (about 4 minutes at 1x).
+    rival: [
+        (
+            difficulty: Steady,
+            start_loyalty: 0.8,
+            garrison: 24,
+            garrison_food_days: 3.0,
+            seat_radius: 30.0,
+            levy_every_days: 2.0,
+            levy_size: 6,
+            defence_steps: [(0.0, 0.0), (5.0, 0.25), (10.0, 0.5), (20.0, 0.75), (30.0, 1.0)],
+            raid_from_day: 10.0,
+            raid_every_days: 3.0,
+            raid_size: 10,
+        ),
+        (
+            difficulty: Chaotic,
+            start_loyalty: 0.75,
+            garrison: 24,
+            garrison_food_days: 3.0,
+            seat_radius: 30.0,
+            levy_every_days: 2.0,
+            levy_size: 6,
+            defence_steps: [(0.0, 0.0), (5.0, 0.25), (10.0, 0.5), (20.0, 0.75), (30.0, 1.0)],
+            raid_from_day: 8.0,
+            raid_every_days: 2.0,
+            raid_size: 12,
+        ),
+        (
+            difficulty: Harsh,
+            start_loyalty: 0.85,
+            garrison: 32,
+            garrison_food_days: 3.0,
+            seat_radius: 30.0,
+            levy_every_days: 1.5,
+            levy_size: 8,
+            defence_steps: [(0.0, 0.25), (4.0, 0.5), (8.0, 0.75), (16.0, 1.0), (24.0, 1.5)],
+            raid_from_day: 8.0,
+            raid_every_days: 2.5,
+            raid_size: 14,
+        ),
+    ],
+    // UI-09: how the chronicle words why something happened, one phrase
+    // per cause. A phrase follows the sentence after a comma; {faction},
+    // {settlement}, {captain}, {boon} and {foe} are filled in.
+    chronicle: (
+        causes: (
+            player: "by {faction}'s choice",
+            request: "answering the call of {settlement}",
+            conquest: "taken by force under {captain}",
+            invitation: "at the village's own invitation",
+            starvation: "of hunger",
+            plunder: "after plunder",
+            revolt: "in open revolt",
+            raid: "in a raid led by {captain}",
+            hold: "by holding the ground",
+            boon: "by the boon {boon}",
+            death: "at the hands of {foe}",
+            lapsed: "for no help came in time",
+            neglect: "left unwatched too long",
+            fight: "against {foe}",
+        ),
+    ),
+)

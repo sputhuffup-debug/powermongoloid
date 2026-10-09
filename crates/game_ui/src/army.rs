@@ -3,24 +3,27 @@
 //! player's faction; the UI never changes the simulation itself.
 //!
 //! Mouse: right-click ground = move there (Shift queues); right-click a
-//! village = attack, recruit, gather food, trade, equip or move.
-//! Keys (army selected): R return to camp, Backspace cancel orders,
-//! P cycle posture.
+//! village = attack, recruit, gather food, trade, equip, give food,
+//! garrison or move.
+//! Keys (army selected): R return to camp, F forage where the army stands,
+//! Backspace cancel orders, P cycle posture.
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use game_render::CameraRig;
 use sim_agents::{ActionKind, Activity, CombatStats, Villager};
-use sim_core::{CommandKind, FactionId, NameTable, OrderSpec, Posture, SimCommand, SpawnId};
+use sim_core::{
+    Calendar, CommandKind, FactionId, NameTable, OrderSpec, Posture, RunState, SimCommand, SpawnId,
+};
 use sim_economy::{Economy, SettlementEconomy, Stockpile};
-use sim_military::{Army, Captain, Equipment, Follower, MilitaryLog, Soldier, describe};
+use sim_military::{
+    Army, Captain, Champion, ChampionRank, Equipment, Follower, MilitaryLog, Progression,
+    RunProgress, Soldier, Traits, describe,
+};
 use sim_world::{Settlement, WorldMap};
 
 use crate::selection::{Selection, ground_hit};
 use crate::style;
-
-/// The player's faction. Rival warlords arrive in M5.
-pub const PLAYER: FactionId = FactionId(1);
 
 pub struct ArmyUiPlugin;
 
@@ -31,14 +34,15 @@ impl Plugin for ArmyUiPlugin {
             .add_systems(
                 Update,
                 (
-                    right_click,
+                    right_click.run_if(crate::playing),
                     menu_buttons,
                     panel_buttons,
-                    hotkeys,
+                    hotkeys.run_if(crate::playing),
                     draw_menu,
                     army_panel,
                 )
-                    .chain(),
+                    .chain()
+                    .in_set(crate::UiSet::Hud),
             );
     }
 }
@@ -66,6 +70,7 @@ struct ArmyText;
 enum PanelButton {
     Posture(Posture),
     Return,
+    Forage,
     Cancel,
     Appoint,
 }
@@ -96,16 +101,20 @@ enum MenuAction {
     GatherFood,
     Trade,
     Equip,
+    Give,
+    Garrison,
     Move,
 }
 
 impl MenuAction {
-    const ALL: [MenuAction; 6] = [
+    const ALL: [MenuAction; 8] = [
         MenuAction::GatherFood,
         MenuAction::Recruit,
         MenuAction::Trade,
         MenuAction::Equip,
+        MenuAction::Give,
         MenuAction::Attack,
+        MenuAction::Garrison,
         MenuAction::Move,
     ];
 
@@ -116,6 +125,10 @@ impl MenuAction {
             MenuAction::GatherFood => "Gather food",
             MenuAction::Trade => "Trade",
             MenuAction::Equip => "Equip",
+            // GP-22: food beyond the army's own few days.
+            MenuAction::Give => "Give food",
+            // GP-05: refused unless you hold the settlement.
+            MenuAction::Garrison => "Garrison",
             MenuAction::Move => "Move here",
         }
     }
@@ -157,6 +170,7 @@ fn spawn_army_panel(mut commands: Commands) {
                 ],
                 vec![
                     PanelButton::Return,
+                    PanelButton::Forage,
                     PanelButton::Cancel,
                     PanelButton::Appoint,
                 ],
@@ -170,6 +184,7 @@ fn spawn_army_panel(mut commands: Commands) {
                         let label = match b {
                             PanelButton::Posture(p) => capitalise(p.name()),
                             PanelButton::Return => "Return (R)".into(),
+                            PanelButton::Forage => "Forage (F)".into(),
                             PanelButton::Cancel => "Cancel".into(),
                             PanelButton::Appoint => "Appoint captain".into(),
                         };
@@ -206,12 +221,13 @@ fn own_army(
 ) -> Option<(Entity, u64)> {
     let e = selection.army?;
     let (id, c) = captains.get(e).ok()?;
-    (c.faction == PLAYER).then_some((e, id.0))
+    (c.faction == FactionId::PLAYER).then_some((e, id.0))
 }
 
-fn send(out: &mut MessageWriter<SimCommand>, kind: CommandKind) {
+/// Sends a player command (the one path every UI order takes).
+pub(crate) fn send(out: &mut MessageWriter<SimCommand>, kind: CommandKind) {
     info!("order: {kind:?}");
-    out.write(SimCommand::player(PLAYER, kind));
+    out.write(SimCommand::player(FactionId::PLAYER, kind));
 }
 
 #[allow(clippy::too_many_arguments)] // Bevy system parameters.
@@ -357,6 +373,8 @@ fn menu_buttons(
             MenuAction::GatherFood => OrderSpec::GatherFood { settlement: s },
             MenuAction::Trade => OrderSpec::Trade { settlement: s },
             MenuAction::Equip => OrderSpec::Equip { settlement: s },
+            MenuAction::Give => OrderSpec::Give { settlement: s },
+            MenuAction::Garrison => OrderSpec::Garrison { settlement: s },
             MenuAction::Move => OrderSpec::MoveTo {
                 x: t.tile.x,
                 y: t.tile.y,
@@ -392,6 +410,7 @@ fn panel_buttons(
     captains: Query<(&SpawnId, &Captain)>,
     followers: Query<(&SpawnId, &Follower)>,
     buttons: Query<(&Interaction, &PanelButton), Changed<Interaction>>,
+    progression: Res<Progression>,
     mut out: MessageWriter<SimCommand>,
 ) {
     let Some((captain_e, captain)) = own_army(&selection, &captains) else {
@@ -413,6 +432,7 @@ fn panel_buttons(
                     queue: false,
                 },
             ),
+            PanelButton::Forage => send(&mut out, forage(captain, &progression)),
             PanelButton::Cancel => send(&mut out, CommandKind::CancelOrders { captain }),
             PanelButton::Appoint => {
                 // The selected person, if they follow this captain.
@@ -428,10 +448,23 @@ fn panel_buttons(
     }
 }
 
+/// SIM-38: forage where the army stands, within progression.ron
+/// `forage.default_radius`.
+fn forage(captain: u64, progression: &Progression) -> CommandKind {
+    CommandKind::IssueOrder {
+        captain,
+        order: OrderSpec::Forage {
+            radius: progression.data.forage.default_radius,
+        },
+        queue: false,
+    }
+}
+
 fn hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
     selection: Res<Selection>,
     captains: Query<(&SpawnId, &Captain)>,
+    progression: Res<Progression>,
     mut out: MessageWriter<SimCommand>,
 ) {
     let Some((e, captain)) = own_army(&selection, &captains) else {
@@ -446,6 +479,9 @@ fn hotkeys(
                 queue: false,
             },
         );
+    }
+    if keys.just_pressed(KeyCode::KeyF) {
+        send(&mut out, forage(captain, &progression));
     }
     if keys.just_pressed(KeyCode::Backspace) {
         send(&mut out, CommandKind::CancelOrders { captain });
@@ -478,6 +514,13 @@ fn army_panel(
     econ: Option<Res<Economy>>,
     villagers: Option<Res<sim_agents::Villagers>>,
     log: Option<Res<MilitaryLog>>,
+    calendar: Option<Res<Calendar>>,
+    (run, progress, progression): (
+        Option<Res<RunState>>,
+        Option<Res<RunProgress>>,
+        Option<Res<Progression>>,
+    ),
+    champions: Query<(Option<&ChampionRank>, Option<&Traits>), With<Champion>>,
     captains: Query<(
         &Captain,
         &CombatStats,
@@ -495,8 +538,27 @@ fn army_panel(
     let (Ok(mut vis), Ok(mut text)) = (panel.single_mut(), text.single_mut()) else {
         return;
     };
-    let (Some(names), Some(army), Some(econ), Some(villagers), Some(log)) =
-        (names, army, econ, villagers, log)
+    let (
+        Some(names),
+        Some(army),
+        Some(econ),
+        Some(villagers),
+        Some(log),
+        Some(calendar),
+        Some(run),
+        Some(progress),
+        Some(progression),
+    ) = (
+        names,
+        army,
+        econ,
+        villagers,
+        log,
+        calendar,
+        run,
+        progress,
+        progression,
+    )
     else {
         return;
     };
@@ -509,6 +571,10 @@ fn army_panel(
         return;
     };
     *vis = Visibility::Inherited;
+    let captain_count = captains
+        .iter()
+        .filter(|(c, ..)| c.faction == FactionId::PLAYER)
+        .count();
     let (mut n, mut fighting, mut routed, mut morale, mut weapons, mut tools) =
         (0u32, 0u32, 0u32, cs.morale, 0u32, 0u32);
     if let Some(eq) = cap_eq {
@@ -546,7 +612,9 @@ fn army_panel(
         | OrderSpec::GatherFood { settlement }
         | OrderSpec::Equip { settlement }
         | OrderSpec::Attack { settlement }
-        | OrderSpec::Trade { settlement } => {
+        | OrderSpec::Trade { settlement }
+        | OrderSpec::Give { settlement }
+        | OrderSpec::Garrison { settlement } => {
             format!("{} at {}", describe(spec), settlement_name(settlement))
         }
         _ => describe(spec),
@@ -557,6 +625,36 @@ fn army_panel(
         person_name(&names, villager, soldier)
     );
     s += &format!("Posture: {}\n", c.posture.name());
+    // SIM-34, SIM-35: the champion's rank and traits.
+    if let Ok((rank, traits)) = champions.get(e) {
+        let ranks = &progression.data.champion.ranks;
+        let (r, points) = rank.map_or((0, 0), |r| (r.rank, r.points));
+        let next = ranks
+            .get(r as usize)
+            .map_or_else(|| "top rank".to_string(), |n| format!("next at {n}"));
+        let traits: Vec<&str> = traits
+            .map(|t| {
+                t.0.iter()
+                    .filter_map(|&id| progression.trait_data(id))
+                    .map(|t| t.name.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+        s += &format!(
+            "Champion, rank {r} ({points} points, {next}) | Traits: {}\n",
+            if traits.is_empty() {
+                "none".to_string()
+            } else {
+                traits.join(", ")
+            }
+        );
+    }
+    // GP-25: captains beyond the champion's army need slots.
+    let slots_full = run.in_run() && c.faction == FactionId::PLAYER && {
+        let used = captain_count.saturating_sub(1) as u32;
+        s += &format!("Captain slots: {used}/{} used\n", progress.captain_slots);
+        used >= progress.captain_slots
+    };
     s += &format!("Men: {n} ({fighting} fighting, {routed} routed)\n");
     s += &format!("Morale {} {:.0}%\n", style::bar(morale, 12), morale * 100.0);
     s += &format!(
@@ -573,10 +671,10 @@ fn army_panel(
     }
     s += "\nRecent:\n";
     for (tick, line) in log.entries.iter().rev().take(4) {
-        let day = tick / 2400 + 1;
+        let day = calendar.at(*tick).day + 1;
         s += &format!("  day {day}: {line}\n");
     }
-    if c.faction != PLAYER {
+    if c.faction != FactionId::PLAYER {
         s += "(not yours: no orders)";
     } else {
         s += "Right-click: move / village orders (Shift queues)";
@@ -586,6 +684,8 @@ fn army_panel(
         let active = matches!(b, PanelButton::Posture(p) if *p == c.posture);
         bg.0 = if active {
             style::BUTTON_ACTIVE
+        } else if *b == PanelButton::Appoint && slots_full {
+            style::BUTTON_OFF
         } else {
             style::BUTTON
         };

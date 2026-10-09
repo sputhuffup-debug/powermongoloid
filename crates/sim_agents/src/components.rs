@@ -2,7 +2,9 @@
 
 use bevy_ecs::prelude::*;
 use bevy_math::IVec2;
-use sim_core::{FactionId, NameId, StateHash, StateHasher};
+use sim_core::{
+    FactionId, NameId, SaveError, SaveReader, SaveState, SaveWriter, StateHash, StateHasher,
+};
 use sim_economy::GoodId;
 use sim_world::SharedPath;
 
@@ -408,5 +410,155 @@ impl StateHash for Strike {
         h.bool(self.swing);
         h.f32(self.bonus);
         h.u64(self.ready_at);
+    }
+}
+
+// GP-12: saved field by field; entities as their SpawnIds. Enums store a
+// tag (append only).
+sim_core::save_fields!(Villager {
+    name,
+    age_days,
+    home,
+    settlement
+});
+sim_core::save_fields!(Employment { workplace, cycles });
+sim_core::save_fields!(Needs {
+    hunger,
+    rest,
+    safety,
+    meals
+});
+sim_core::save_fields!(Activity {
+    kind,
+    target,
+    dropoff,
+    good,
+    stage,
+    step,
+    until_tick,
+    started_tick
+});
+sim_core::save_fields!(Travel { state });
+sim_core::save_newtype!(NextDecision);
+sim_core::save_unit!(Enlisted);
+sim_core::save_fields!(CombatStats {
+    health,
+    max_health,
+    attack,
+    defense,
+    morale,
+    stance
+});
+sim_core::save_fields!(Threat {
+    level,
+    from,
+    provoked_by,
+    provoked_until
+});
+sim_core::save_fields!(Strike {
+    target,
+    at,
+    swing,
+    bonus,
+    ready_at
+});
+
+fn bad_tag(what: &str, t: u8) -> SaveError {
+    SaveError::Corrupt(format!("bad {what} tag {t}"))
+}
+
+impl SaveState for ActionKind {
+    fn save(&self, w: &mut SaveWriter) {
+        w.u8(*self as u8);
+    }
+    fn load(r: &mut SaveReader) -> Result<Self, SaveError> {
+        let t = r.u8()?;
+        ActionKind::ALL
+            .get(t as usize)
+            .copied()
+            .ok_or_else(|| bad_tag("action", t))
+    }
+}
+
+impl SaveState for Stage {
+    fn save(&self, w: &mut SaveWriter) {
+        w.u8(*self as u8);
+    }
+    fn load(r: &mut SaveReader) -> Result<Self, SaveError> {
+        Ok(match r.u8()? {
+            0 => Stage::Travel,
+            1 => Stage::Perform,
+            2 => Stage::Deliver,
+            3 => Stage::Done,
+            t => return Err(bad_tag("stage", t)),
+        })
+    }
+}
+
+/// The whole path is saved: a resumed walk follows the same waypoints.
+impl SaveState for TravelState {
+    fn save(&self, w: &mut SaveWriter) {
+        match self {
+            TravelState::Idle => w.u8(0),
+            TravelState::Pending { goal } => {
+                w.u8(1);
+                w.ivec2(*goal);
+            }
+            TravelState::Moving { goal, path, next } => {
+                w.u8(2);
+                w.ivec2(*goal);
+                path.save(w);
+                w.u32(*next);
+            }
+            TravelState::Arrived => w.u8(3),
+            TravelState::Failed => w.u8(4),
+        }
+    }
+    fn load(r: &mut SaveReader) -> Result<Self, SaveError> {
+        Ok(match r.u8()? {
+            0 => TravelState::Idle,
+            1 => TravelState::Pending { goal: r.ivec2()? },
+            2 => TravelState::Moving {
+                goal: r.ivec2()?,
+                path: SharedPath::load(r)?,
+                next: r.u32()?,
+            },
+            3 => TravelState::Arrived,
+            4 => TravelState::Failed,
+            t => return Err(bad_tag("travel", t)),
+        })
+    }
+}
+
+impl SaveState for Stance {
+    fn save(&self, w: &mut SaveWriter) {
+        match *self {
+            Stance::Civilian => w.u8(0),
+            Stance::Militia { against } => {
+                w.u8(1);
+                against.save(w);
+            }
+            Stance::Soldier => w.u8(2),
+        }
+    }
+    fn load(r: &mut SaveReader) -> Result<Self, SaveError> {
+        Ok(match r.u8()? {
+            0 => Stance::Civilian,
+            1 => Stance::Militia {
+                against: FactionId::load(r)?,
+            },
+            2 => Stance::Soldier,
+            t => return Err(bad_tag("stance", t)),
+        })
+    }
+}
+
+/// Only presence is saved: the trace explains a past decision and is
+/// rewritten at the next one (UI-03). Every person keeps the component so
+/// the deciding systems still see them after a load.
+impl SaveState for DecisionTrace {
+    fn save(&self, _w: &mut SaveWriter) {}
+    fn load(_r: &mut SaveReader) -> Result<Self, SaveError> {
+        Ok(DecisionTrace::default())
     }
 }

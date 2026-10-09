@@ -3,6 +3,8 @@
 (
     population: (
         // M2 populates one region at full detail; the rest wait for LOD (M5).
+        // The run island ignores total, region and min_per_settlement: every
+        // settlement there is populated at its drawn size (worldgen.ron sizes).
         total: 5000,
         // Region to populate: Auto = the region with the most settlements.
         region: Auto,
@@ -80,6 +82,38 @@
 
     // A civilian's fighting strength when defending their home (SIM-13).
     combat: (health: 60.0, attack: 5.0, defense: 0.0, morale: 0.6),
+
+    // Loyalty to a settlement's owner (GP-06, SIM-24), 0..1. Each day it
+    // closes `drift_per_day` of the gap to a target: under an owner, the
+    // weighted mean of food security (days of food over `food_days`, capped
+    // at 1), goodwill toward the owner ((g + 1) / 2) and time under the owner
+    // (days over `settle_days`, capped at 1). Independent settlements aim at
+    // `independent_target`, which is also every villager's starting loyalty.
+    // A settlement whose mean is below `revolt_threshold` for a day may rise.
+    loyalty: (
+        // At the day tick, when the drift runs, a fed village holds about
+        // 0.45 to 2 days of food (storehouse and homes; farm stock isn't
+        // counted), so half a day is fully secure. The conquest scenario
+        // (fed garrison rises, starved conquest revolts) guards it.
+        food_days: 0.5,
+        w_food: 0.55,
+        w_goodwill: 0.3,
+        w_time: 0.15,
+        settle_days: 10.0,
+        drift_per_day: 0.4,
+        independent_target: 0.6,
+        revolt_threshold: 0.35,
+    ),
+
+    // GP-22: word of a deed travels. Each goodwill change at a settlement
+    // (a fair trade, a seizure, a killing, a request answered) also reaches
+    // every other settlement whose centre lies within `spread_radius` tiles
+    // of its centre, scaled by `spread_fraction`. Deltas per deed are in
+    // progression.ron `goodwill_deeds`.
+    goodwill: (
+        spread_radius: 150.0,
+        spread_fraction: 0.25,
+    ),
 
     // Original names: given name + household family name.
     names: (

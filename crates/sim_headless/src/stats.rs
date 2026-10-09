@@ -409,5 +409,88 @@ pub fn armies(app: &mut App) -> Vec<String> {
             s
         ));
     }
+    if let Some(line) = run_line(world) {
+        out.push(line);
+    }
     out
+}
+
+/// In a run, one line on band life (GP-22): requests, invitations,
+/// drifters, the player's share of each region with its dominion flags
+/// (GP-24), captain slots (GP-25), the best goodwill toward the player, the
+/// rival's lands, garrison and clock (GP-28) and the pacing director's
+/// tension and bands (GP-16).
+/// `None` outside a run.
+pub fn run_line(world: &mut World) -> Option<String> {
+    use sim_core::{FactionId, OfferKind, Offers, RunState};
+    use sim_military::{RequestBoard, RunProgress};
+    if !world.resource::<RunState>().in_run() {
+        return None;
+    }
+    let board = world.resource::<RequestBoard>();
+    let invitations = world
+        .resource::<Offers>()
+        .pending
+        .iter()
+        .filter(|o| matches!(o.kind, OfferKind::Invitation { .. }))
+        .count();
+    let line = format!(
+        "run: requests open {} posted {} done {} failed {} | invitations pending {invitations} | drifters {}",
+        board.open.len(),
+        board.posted,
+        board.done,
+        board.failed,
+        world.resource::<RunProgress>().drifters,
+    );
+    let progress = world.resource::<RunProgress>();
+    let shares: Vec<String> = progress
+        .dominion
+        .iter()
+        .enumerate()
+        .map(|(r, t)| format!("r{r} {:.0}%/{:02b}", t.share() * 100.0, t.flags))
+        .collect();
+    let line = format!(
+        "{line} | dominion {} | captain slots {}",
+        shares.join(" "),
+        progress.captain_slots
+    );
+    let mut q = world.query::<&sim_agents::Goodwill>();
+    let best = q
+        .iter(world)
+        .map(|g| g.get(FactionId::PLAYER))
+        .fold(f32::NEG_INFINITY, f32::max);
+    // GP-28, GP-16: the rival's garrison and clock, the director's mood.
+    let rival = world.resource::<sim_military::RivalState>().clone();
+    let garrison = sim_military::rival::garrison(world).map_or(0, |g| {
+        let mut q = world.query::<&sim_military::Follower>();
+        q.iter(world).filter(|f| f.captain == g).count() + 1
+    });
+    let mut q = world.query::<(&sim_agents::Owner, &sim_economy::SettlementEconomy)>();
+    let (lands, people) = q
+        .iter(world)
+        .filter(|(o, _)| o.faction == FactionId::RIVAL)
+        .fold((0, 0), |(n, p), (_, se)| (n + 1, p + se.population));
+    let director = world.resource::<sim_military::Director>().clone();
+    Some(format!(
+        "{line} | best goodwill {best:.2} | rival: {lands} settlements ({people} people), garrison {garrison}, defence +{:.2}, levied {}, raids {} | director: tension {:.2}, bands {}",
+        rival.defence_bonus, rival.levied, rival.raids, director.tension, director.bands
+    ))
+}
+
+/// UI-09: the run's summary ([`sim_military::RunSummary`]) as lines: how
+/// it ended, days, settlements, monuments, battles and veterans. Empty
+/// outside a run.
+pub fn run_summary(app: &App) -> Vec<String> {
+    if !app.world().resource::<sim_core::RunState>().in_run() {
+        return Vec::new();
+    }
+    sim_military::run_summary(app.world()).lines()
+}
+
+/// UI-09: every chronicle entry as a sentence
+/// ([`sim_military::chronicle::describe`]), oldest first.
+pub fn chronicle(app: &App) -> Vec<String> {
+    let world = app.world();
+    let entries = world.resource::<sim_core::Chronicle>().entries();
+    sim_military::describe_entries(world, entries)
 }

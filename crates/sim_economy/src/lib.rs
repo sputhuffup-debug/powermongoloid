@@ -21,7 +21,7 @@ pub mod layout;
 
 use bevy_app::{App, FixedUpdate, Plugin};
 use bevy_ecs::prelude::*;
-use sim_core::{AppHashExt, SimSet};
+use sim_core::{AppHashExt, AppSaveExt, SimSet};
 
 pub use data::{Economy, GoodId, Occupation, RecipeId, WorkplaceKind};
 pub use goods::{Inventory, Stockpile, TransferOp, Transfers};
@@ -60,6 +60,16 @@ impl Plugin for EconomyPlugin {
             .register_hashed::<Workplace>()
             .register_hashed::<Home>()
             .register_hashed::<SettlementEconomy>()
-            .register_hashed::<Occupation>();
+            .register_hashed::<Occupation>()
+            // GP-12: every hashed type is saved.
+            .register_saved_resource::<Economy>()
+            .register_saved::<Stockpile>()
+            .register_saved::<Inventory>()
+            .register_saved::<Transfers>()
+            .register_saved::<Building>()
+            .register_saved::<Workplace>()
+            .register_saved::<Home>()
+            .register_saved::<SettlementEconomy>()
+            .register_saved::<Occupation>();
     }
 }

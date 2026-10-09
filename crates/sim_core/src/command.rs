@@ -104,6 +104,25 @@ pub enum OrderSpec {
         x: i32,
         y: i32,
     },
+    /// Hold a settlement the issuer owns (GP-05, M4): the army stands at
+    /// its centre until ordered elsewhere or the settlement is lost, and
+    /// draws its food from the settlement's spare stores. Append only:
+    /// saves (postcard) store the variant's position, and `hash_spec`
+    /// gives each variant its own tag byte.
+    Garrison {
+        settlement: u64,
+    },
+    /// Live off the land (SIM-38, M4): the band stands where it is and
+    /// gathers wild food from the patches within `radius` tiles until its
+    /// baggage is full or nothing is left (`sim_military::wild`).
+    Forage {
+        radius: u16,
+    },
+    /// Hand the food the baggage holds beyond a few days' need to the
+    /// settlement's storehouse (GP-22, M4): a gift, or a request answered.
+    Give {
+        settlement: u64,
+    },
 }
 
 /// Command payloads.
@@ -124,18 +143,31 @@ pub enum CommandKind {
     CancelOrders {
         captain: u64,
     },
-    /// Promote one of a captain's followers to captain (GP-01).
+    /// Promote one of a captain's followers to captain (GP-01). In a run,
+    /// the player needs a free captain slot (GP-25).
     AppointCaptain {
         follower: u64,
     },
+    /// Answer pending offer `offer` (a boon, a trait, an invitation) with
+    /// `choice`, an index into its choices (GP-27; `sim_core::Offers`).
+    ChooseOffer {
+        offer: u64,
+        choice: u8,
+    },
+    /// Give up the current run (GP-21).
+    AbandonRun,
 }
 
-/// Ordering inside [`SimSet::Input`](crate::SimSet::Input): scripted commands
-/// are injected and recorded first, then consumers read them.
+/// Ordering inside [`SimSet::Input`](crate::SimSet::Input), chained: scripted
+/// commands are injected and recorded first, then the sim's AI writes its
+/// commands, then consumers read them all. The fixed order makes the arrival
+/// order of commands (which consumers apply in) the same in every run.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SimInputSet {
     /// Replays scripted commands and records every command for this tick.
     Inject,
+    /// The sim's own AI (raiders, the rival) writes `SimCommand::ai` here.
+    Ai,
     /// Systems that act on `SimCommand`s go here.
     Consume,
 }
@@ -196,6 +228,10 @@ impl StateHash for CommandsProcessed {
         h.u64(self.0);
     }
 }
+
+crate::save_newtype!(CommandsProcessed);
+// Saved by variant index (append only, guide D4).
+crate::save_serde!(OrderSpec, Posture);
 
 pub(crate) fn inject_scripted(
     tick: Res<SimTick>,

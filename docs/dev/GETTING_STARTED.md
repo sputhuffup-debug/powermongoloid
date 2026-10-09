@@ -29,12 +29,18 @@ Building the workspace needs about **16 GB of RAM** and **25 GB of disk** for `t
 
 | What | Command |
 | --- | --- |
-| The game (opens on the M3 skirmish start) | `cargo run -p game_app` |
+| The game: a run (M4) on a fresh island | `cargo run -p game_app` |
+| A given run island and difficulty | `cargo run -p game_app -- --seed 7 --difficulty harsh` (`steady`, `chaotic`, `harsh`) |
+| The M3 skirmish start | `cargo run -p game_app -- --skirmish` |
 | The game, villages only (M2 start) | `cargo run -p game_app -- --villages` |
-| A different world | `cargo run -p game_app -- --seed 7` |
 | The stress view (RND-04) | `cargo run --release -p game_app -- --stress 20000` |
 | Headless, print the state hash | `cargo run --release -p sim_headless -- --seed 42 --ticks 10000` |
+| Headless, a run | `cargo run --release -p sim_headless -- --run --seed 7 --difficulty harsh --ticks 24000 --stats-every 2400` |
+| Headless, the scripted player plays a run | `cargo run --release -p sim_headless -- --run --bot --seed 1 --ticks 96000 --chronicle` |
+| Headless, save and resume a run | `... --run --ticks 2400 --save day1.sav`, then `... --load day1.sav --ticks 1000` |
 | Headless options | `cargo run --release -p sim_headless -- --help` |
+
+**Starting a run.** In the game, a run is the default start: the new-game screen shows the seed (type digits or press *Random*), the difficulty, the band you wake up with, the run modifiers drawn from the seed and three start-boon cards; click a card to begin. Closing the game saves the run (see [Saves](../../README.md#playing)); the new-game screen then lists it under *Resume*. Headless, `--run` seats the same band, picks the first start boon for you at tick 0 and runs the clock; add `--bot` to let the scripted player play it, or `--commands <n>` for random orders. A run is its seed plus its difficulty, so the same two give the same island and start ([ADR 0013](../adr/0013-runs-presets-and-run-config.md)). The playtest checklist is [docs/M4_PLAYTEST.md](../M4_PLAYTEST.md).
 
 The first build takes 10–20 minutes, mostly compiling Bevy; later builds take seconds.
 
@@ -49,19 +55,21 @@ Defined in `.cargo/config.toml`:
 | --- | --- |
 | `cargo game [args]` | the game, dev build (e.g. `cargo game --seed 7`) |
 | `cargo headless [args]` | `sim_headless`, release build (e.g. `cargo headless --ticks 1000`) |
+| `cargo bot [args]` | the scripted player plays a run, release build (e.g. `cargo bot --seed 1 --ticks 96000 --chronicle`) |
 | `cargo lint` | clippy on everything with warnings as errors (run `cargo fmt --check` too) |
 | `cargo test-fast` | unit tests only (the sim crates and UI helpers; seconds) |
-| `cargo test-all` | every test, including the scenario and determinism suites (minutes) |
+| `cargo test-all` | every test, including the scenario and determinism suites (9 minutes of tests plus the build) |
 
 ## 3. Test
 
 ```sh
 cargo fmt --check                                     # formatting
 cargo clippy --workspace --all-targets -- -D warnings # lints, warnings fail
-cargo test --workspace                                # everything (~4 min on 4 cores)
+cargo test --workspace                                # everything (~9 min of tests; 16 min in all warm, ~36 cold, on 4 cores with -j 2)
 ```
 
-- The integration tests in `tests/tests/` each build a 2048-tile world with thousands of villagers, so they take 10–100 s each. They run at full speed because the sim crates are optimised even in dev builds.
+- The integration tests in `tests/tests/` each build a world with thousands of villagers (2048 tiles for the M2/M3 tests, the 1024-tile run island for the M4 ones), so they take 10–170 s each; the whole suite spends about 9 minutes in tests on 4 cores, the determinism file taking about 3 of them, and the rest is compiling (the debug builds of the game crates are the slow part of a cold run). They run at full speed because the sim crates are optimised even in dev builds. For a quick check use `cargo test-fast`.
+- `bot_run` (the scripted player must win 3 of 5 runs) is `#[ignore]`d in that run and takes about 5 minutes in release: `cargo test --release -p integration_tests --test bot_run -- --ignored`. CI runs it.
 - Run one test with `cargo test -p integration_tests --test posture`.
 - Add `-- --nocapture` to see what a test prints.
 - [TESTING.md](TESTING.md) says what each test guards.

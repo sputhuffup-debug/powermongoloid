@@ -16,40 +16,114 @@
 //!    removes the fallen.
 //! 6. **Upkeep** (Needs): [`upkeep`] covers eating, morale, starvation and
 //!    desertion.
+//! 7. **Progress** (Needs, hourly): [`progression::progress`] drives
+//!    settlement-level steps in a fixed order, such as
+//!    [`veterans::end_battles`], [`monuments::hold`],
+//!    [`conquest::revolts`], the daily [`wild::regrow`] and
+//!    [`drifters::draw`], [`requests::step`], [`invitations::step`], the
+//!    dominion tally ([`progression::dominion::tally`]), the champion's
+//!    rank-ups ([`progression::champion::rank_ups`]),
+//!    [`progression::rebuild_modifiers`], the rival's clock
+//!    ([`rival::clock`]) and the pacing director ([`director::step`]).
+//!
+//! Settlements change hands through [`conquest::transfer`]: an `Attack`
+//! that breaks the militia and holds the centre, or a revolt (GP-05,
+//! GP-06). A `Garrison` order holds an owned settlement, which feeds its
+//! owner's armies from its spare food.
+//!
+//! A landless band lives off the land with a `Forage` order ([`wild`],
+//! SIM-38) and hands food to a village with `Give`. Deeds at a settlement
+//! (fair trade, seizure, plunder, provocation, killing its militia,
+//! answering its request) post goodwill changes to
+//! `sim_agents::GoodwillLedger`, with deltas from progression.ron
+//! `goodwill_deeds` (GP-22). In a run, settlements post [`requests`] the
+//! sim checks off, liked settlements send [`drifters`] and offer lordship
+//! ([`invitations`]).
+//!
+//! In a run, [`monuments`] are held by whoever stands at them alone long
+//! enough; some start guarded by raider camps or beasts (GP-23). Held
+//! monuments, boons, the champion's traits and run modifiers become each
+//! faction's `sim_core::FactionModifiers`, rebuilt hourly and read where
+//! each stat is used (morale, defence and attack, march speed, trade,
+//! threat radius here; yields, smithing and loyalty in sim_agents).
 //!
 //! Also here: army data ([`Army`], `army.ron`), [`spawn::spawn_army`] and
-//! the playtest setup, and the scripted [`raiders`].
+//! the playtest setup, the scripted [`raiders`] and the rival's
+//! [`rival::think`] (in `SimInputSet::Ai`, in that order), and
+//! runs ([`progression`], `progression.ron`, GP-21/27): the start draws,
+//! [`setup_run`], offers and the champion, and dominion boons and captain
+//! slots from the land held ([`progression::dominion`], GP-24/25).
+//!
+//! In a run, the rival warlord ([`rival`], GP-28) holds the region around
+//! its seat, levies men into the seat's garrison and, from mid-run, sends
+//! raiding bands against the player; taking its seat wins the run. The
+//! pacing director ([`director`], GP-16, `director.ron`) watches the
+//! player's tension and brings raider bands so the run never goes quiet
+//! for long.
+//!
+//! Soldiers rank up by battles survived ([`veterans`], SIM-36); the
+//! champion ranks up by deeds, picks traits and, once a run, passes the
+//! title to a captain when it falls ([`progression::champion`], SIM-34,
+//! SIM-35).
 //!
 //! Systems go in [`sim_core::SimSet`]s. This crate never depends on
 //! rendering, windowing, audio or asset crates.
 
+pub mod chronicle;
 pub mod combat;
 pub mod components;
+pub mod conquest;
 pub mod data;
+pub mod director;
+pub mod drifters;
 pub mod index;
+pub mod invitations;
+pub mod monuments;
 pub mod orders;
+pub mod progression;
 pub mod raiders;
+pub mod requests;
+pub mod rival;
+mod save;
 pub mod soldiers;
 pub mod spawn;
 pub mod threat;
 pub mod upkeep;
+pub mod veterans;
+pub mod wild;
 
 use bevy_app::{App, FixedUpdate, Plugin};
 use bevy_ecs::prelude::*;
 use sim_agents::AgentSet;
-use sim_core::{AppHashExt, Calendar, SimInputSet, SimSet};
+use sim_core::{AppHashExt, Calendar, SimInputSet, SimSet, on_hour};
 use sim_economy::{Economy, EconomySet};
 
 pub use combat::Casualties;
+// `chronicle::describe` stays in its module: the root's `describe` words orders.
+pub use chronicle::{CausePhrases, ChronicleData, RunSummary, describe_entries, run_summary};
 pub use components::{
     ArmyStats, Captain, Equipment, FactionStats, Factions, Follower, MilitaryLog, Order, Raider,
     Soldier, describe,
 };
-pub use data::Army;
+pub use conquest::{militia_or_foes_near, owner_of, transfer, transfer_seeded};
+pub use data::{Army, RankGain, VeteranData};
+pub use director::{Director, DirectorData, Personality, RaiderBandData, TensionWeights};
 pub use index::{ArmyIndex, ArmyInfo, FighterGrid, Side};
-pub use orders::{CommandInbox, arm_followers, enlist, find_settlement, provoke};
+pub use monuments::{Guard, Holder, NoUpkeep};
+pub use orders::{CommandInbox, arm_followers, enlist, enlist_into, find_settlement, provoke};
+pub use progression::{
+    Champion, ChampionData, ChampionPoints, ChampionRank, DominionData, DriftersData, ForageData,
+    GoodwillDeeds, GuardData, GuardKind, Holding, Holdings, InvitationData, MonumentBonus,
+    MonumentData, Progression, RegionTally, RequestData, RunProgress, RunStart, RunWorld,
+    StartDraws, StartTerrain, Traits, captain_slots, champion_of, draw_start, rebuild_modifiers,
+    setup_run,
+};
+pub use requests::{Request, RequestBoard, RequestKind, Reward};
+pub use rival::{RivalBand, RivalData, RivalState};
 pub use soldiers::slot_offset;
 pub use spawn::{ArmySpec, Skirmish, nearest_passable, setup_battle, setup_skirmish, spawn_army};
+pub use veterans::Veteran;
+pub use wild::WildFood;
 
 /// Military systems, in tick order within their `SimSet`s.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -66,6 +140,10 @@ pub enum MilitarySet {
     Combat,
     /// Hunger, morale, desertion (Needs).
     Upkeep,
+    /// The hourly progress driver: battles, monuments, revolts and the
+    /// run's settlement-level steps, the rival's clock and the pacing
+    /// director (Needs, after `Upkeep` and `AgentSet::Standing`).
+    Progress,
 }
 
 /// Captains, followers, orders, combat and morale.
@@ -84,6 +162,13 @@ impl Plugin for MilitaryPlugin {
             .cloned()
             .unwrap_or_else(Economy::default_data);
         app.insert_resource(Army::default_data(&calendar, &econ))
+            .insert_resource(Progression::default_data())
+            .insert_resource(DirectorData::default_data())
+            .init_resource::<RunProgress>()
+            .init_resource::<RivalState>()
+            .init_resource::<Director>()
+            .init_resource::<WildFood>()
+            .init_resource::<RequestBoard>()
             .init_resource::<Factions>()
             .init_resource::<ArmyStats>()
             .init_resource::<MilitaryLog>()
@@ -104,15 +189,26 @@ impl Plugin for MilitaryPlugin {
                     MilitarySet::Combat
                         .in_set(SimSet::Act)
                         .after(EconomySet::Resolve),
+                    // After loyalty too: desertions remove `Enlisted`, which
+                    // decides who drifts and who counts (GP-06).
                     MilitarySet::Upkeep
                         .in_set(SimSet::Needs)
-                        .after(AgentSet::Needs),
+                        .after(AgentSet::Needs)
+                        .after(AgentSet::Standing),
+                    // Revolts read the day's loyalty summary (GP-06).
+                    MilitarySet::Progress
+                        .in_set(SimSet::Needs)
+                        .after(MilitarySet::Upkeep)
+                        .after(AgentSet::Standing),
                 ),
             )
             .add_systems(
                 FixedUpdate,
                 (
-                    raiders::think.in_set(SimInputSet::Inject),
+                    // GP-16, GP-28: the scripted factions, in a fixed order.
+                    (raiders::think, rival::think)
+                        .chain()
+                        .in_set(SimInputSet::Ai),
                     (
                         orders::collect_commands,
                         orders::apply_commands.run_if(orders::has_commands),
@@ -145,6 +241,9 @@ impl Plugin for MilitaryPlugin {
                     )
                         .chain()
                         .in_set(MilitarySet::Upkeep),
+                    progression::progress
+                        .run_if(on_hour)
+                        .in_set(MilitarySet::Progress),
                 ),
             )
             .register_hashed_resource::<Army>()
@@ -155,6 +254,21 @@ impl Plugin for MilitaryPlugin {
             .register_hashed::<Equipment>()
             .register_hashed::<Soldier>()
             .register_hashed::<Raider>()
+            .register_hashed_resource::<Progression>()
+            .register_hashed_resource::<RunProgress>()
+            .register_hashed::<Champion>()
+            .register_hashed::<Traits>()
+            .register_hashed_resource::<WildFood>()
+            .register_hashed_resource::<RequestBoard>()
+            .register_hashed::<Holder>()
+            .register_hashed::<Guard>()
+            .register_hashed::<NoUpkeep>()
+            .register_hashed::<Veteran>()
+            .register_hashed::<ChampionRank>()
+            .register_hashed_resource::<RivalState>()
+            .register_hashed::<RivalBand>()
+            .register_hashed_resource::<DirectorData>()
+            .register_hashed_resource::<Director>()
             .exempt_from_hash::<MilitaryLog>("UI history; its effects are in the hashed state")
             .exempt_from_hash::<CommandInbox>("always empty between ticks")
             .exempt_from_hash::<ArmyIndex>("rebuilt from hashed state every tick")
@@ -163,5 +277,6 @@ impl Plugin for MilitaryPlugin {
             .exempt_from_hash::<upkeep::Deserters>(
                 "this tick's deserters; derived from hashed state",
             );
+        save::register(app);
     }
 }

@@ -230,6 +230,59 @@ pub struct CivilianCombat {
     pub morale: f32,
 }
 
+/// Loyalty drift (`loyalty` in villagers.ron; GP-06, SIM-24, ADR 0014).
+///
+/// Each day a villager's loyalty closes `drift_per_day` of the gap to a
+/// target. Under an owner the target is the weighted mean of food security
+/// (`FoodSecurity.days / food_days`, capped at 1), goodwill toward the owner
+/// (`(g + 1) / 2`) and time under the owner (`days / settle_days`, capped at
+/// 1). Independent settlements aim at `independent_target`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LoyaltyData {
+    /// Days of food (storehouse and homes) that count as fully secure.
+    pub food_days: f32,
+    /// Weight of food security in the target.
+    pub w_food: f32,
+    /// Weight of goodwill toward the owner (the treatment term).
+    pub w_goodwill: f32,
+    /// Weight of time under the owner.
+    pub w_time: f32,
+    /// Days under one owner until the time term is full.
+    pub settle_days: f32,
+    /// Fraction of the gap to the target closed each day (0..1), before the
+    /// owner's `LoyaltyDrift` modifier.
+    pub drift_per_day: f32,
+    /// Target (and starting loyalty) for independent settlements.
+    pub independent_target: f32,
+    /// A settlement whose mean loyalty is below this is in unrest
+    /// (`SettlementLoyalty::below_since`); a day of it risks revolt.
+    pub revolt_threshold: f32,
+}
+
+/// How word of a deed travels (GP-22): `goodwill` in villagers.ron. A
+/// fraction of every goodwill change at one settlement reaches each other
+/// settlement whose centre lies within the radius of its centre.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GoodwillData {
+    /// Tiles (centre to centre) within which word of a deed spreads.
+    pub spread_radius: f32,
+    /// Fraction (0..1) of a change that reaches each settlement in range.
+    pub spread_fraction: f32,
+}
+
+impl GoodwillData {
+    /// Checks the ranges: a finite radius >= 0 and a fraction in 0..1.
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.spread_radius.is_finite() || self.spread_radius < 0.0 {
+            return Err("villagers: goodwill.spread_radius must be >= 0".into());
+        }
+        if !(0.0..=1.0).contains(&self.spread_fraction) {
+            return Err("villagers: goodwill.spread_fraction must be in 0..1".into());
+        }
+        Ok(())
+    }
+}
+
 /// Original given and family names.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NameData {
@@ -248,6 +301,8 @@ pub struct VillagerData {
     pub movement: MovementData,
     pub idle: IdleData,
     pub combat: CivilianCombat,
+    pub loyalty: LoyaltyData,
+    pub goodwill: GoodwillData,
     pub names: NameData,
 }
 
@@ -303,6 +358,8 @@ impl Villagers {
         if data.ai.decision_interval == 0 {
             return Err("villagers: ai.decision_interval must be > 0".into());
         }
+        data.loyalty.validate()?;
+        data.goodwill.validate()?;
         let day = calendar.ticks_per_day as f32;
         let mut per_terrain = [None; 8];
         for t in Terrain::ALL {
@@ -333,6 +390,48 @@ impl Villagers {
     }
 }
 
+impl LoyaltyData {
+    /// Checks the ranges: positive days, non-negative weights with a
+    /// positive sum, and rates and levels in 0..1.
+    pub fn validate(&self) -> Result<(), String> {
+        let l = self;
+        let finite = [
+            l.food_days,
+            l.w_food,
+            l.w_goodwill,
+            l.w_time,
+            l.settle_days,
+            l.drift_per_day,
+            l.independent_target,
+            l.revolt_threshold,
+        ];
+        if finite.iter().any(|v| !v.is_finite()) {
+            return Err("villagers: loyalty values must be finite".into());
+        }
+        if l.food_days <= 0.0 || l.settle_days <= 0.0 {
+            return Err("villagers: loyalty.food_days and settle_days must be > 0".into());
+        }
+        if l.w_food < 0.0 || l.w_goodwill < 0.0 || l.w_time < 0.0 {
+            return Err("villagers: loyalty weights must be >= 0".into());
+        }
+        if l.w_food + l.w_goodwill + l.w_time <= 0.0 {
+            return Err("villagers: loyalty weights must not all be zero".into());
+        }
+        for (name, v) in [
+            ("drift_per_day", l.drift_per_day),
+            ("independent_target", l.independent_target),
+            ("revolt_threshold", l.revolt_threshold),
+        ] {
+            if !(0.0..=1.0).contains(&v) {
+                return Err(format!(
+                    "villagers: loyalty.{name} must be in 0..1, not {v}"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 impl StateHash for Villagers {
     fn hash_state(&self, h: &mut StateHasher) {
         h.bytes(
@@ -341,6 +440,23 @@ impl StateHash for Villagers {
                 .as_bytes(),
         );
     }
+}
+
+/// GP-12: saves the data as its RON text (what the state hash reads).
+pub(crate) fn save_villagers(world: &World, w: &mut sim_core::SaveWriter) {
+    w.ron(&world.resource::<Villagers>().data);
+}
+
+/// GP-12: rebuilds [`Villagers`] from saved RON text and the loaded calendar.
+pub(crate) fn load_villagers(
+    world: &mut World,
+    r: &mut sim_core::SaveReader,
+) -> Result<(), sim_core::SaveError> {
+    let text = r.str()?;
+    let v = Villagers::from_ron(&text, world.resource::<Calendar>())
+        .map_err(sim_core::SaveError::Mismatch)?;
+    world.insert_resource(v);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -355,6 +471,65 @@ mod tests {
         let road = v.travel_costs.per_terrain[Terrain::Road as usize].unwrap();
         let grass = v.travel_costs.per_terrain[Terrain::Grass as usize].unwrap();
         assert!(road < grass, "roads are cheaper to travel");
+    }
+
+    #[test]
+    fn rejects_bad_loyalty() {
+        let good = Villagers::default_data(&Calendar::default_data())
+            .data
+            .loyalty;
+        assert_eq!(good.validate(), Ok(()));
+        let bad = [
+            LoyaltyData {
+                food_days: 0.0,
+                ..good.clone()
+            },
+            LoyaltyData {
+                w_food: 0.0,
+                w_goodwill: 0.0,
+                w_time: 0.0,
+                ..good.clone()
+            },
+            LoyaltyData {
+                w_time: -0.1,
+                ..good.clone()
+            },
+            LoyaltyData {
+                drift_per_day: 1.5,
+                ..good.clone()
+            },
+            LoyaltyData {
+                revolt_threshold: f32::NAN,
+                ..good.clone()
+            },
+        ];
+        for l in bad {
+            assert!(l.validate().is_err(), "{l:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_bad_goodwill() {
+        let good = Villagers::default_data(&Calendar::default_data())
+            .data
+            .goodwill;
+        assert_eq!(good.validate(), Ok(()));
+        for bad in [
+            GoodwillData {
+                spread_radius: -1.0,
+                ..good.clone()
+            },
+            GoodwillData {
+                spread_fraction: 1.5,
+                ..good.clone()
+            },
+            GoodwillData {
+                spread_fraction: f32::NAN,
+                ..good.clone()
+            },
+        ] {
+            assert!(bad.validate().is_err(), "{bad:?}");
+        }
     }
 
     #[test]

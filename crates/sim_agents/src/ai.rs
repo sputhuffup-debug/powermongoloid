@@ -45,6 +45,8 @@ pub struct AiWorld<'w, 's> {
     pub villagers: Res<'w, Villagers>,
     pub seed: Res<'w, SimSeed>,
     pub map: Res<'w, WorldMap>,
+    pub owners: Query<'w, 's, &'static crate::standing::Owner>,
+    pub mods: Res<'w, sim_core::FactionModifiers>,
 }
 
 /// Whether a worker can produce right now.
@@ -392,7 +394,23 @@ impl AiWorld<'_, '_> {
         let Some(recipe) = wp.recipe.map(|r| self.econ.recipe(r)) else {
             return WorkState::Impossible;
         };
-        let out_units: u32 = recipe.outputs.iter().map(|(_, q)| *q as u32).sum();
+        // GP-23: a FoodYield bonus makes a cycle yield more (rounded up
+        // here: room for the best case).
+        let mult = match recipe.modifier {
+            Some(sim_core::Stat::FoodYield) => {
+                let owner = self
+                    .owners
+                    .get(me.villager.settlement)
+                    .map_or(sim_core::FactionId::INDEPENDENT, |o| o.faction);
+                self.mods.mult(owner, sim_core::Stat::FoodYield)
+            }
+            _ => 1.0,
+        };
+        let out_units: u32 = recipe
+            .outputs
+            .iter()
+            .map(|(_, q)| (*q as f32 * mult).max(0.0).ceil() as u32)
+            .sum();
         // Haul once the workplace is well stocked, before it fills up.
         let well_stocked = stock.total() * 10 >= stock.capacity * 6;
         if (well_stocked || stock.room() < out_units) && me.inventory.room() >= MIN_LOAD as u16 / 2

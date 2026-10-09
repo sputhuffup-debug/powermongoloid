@@ -108,6 +108,129 @@ pub struct RecruitData {
     pub willing: KeepDays,
     pub hungry_village_bonus: f32,
     pub fed_army_bonus: f32,
+    /// In a village the recruiter owns, the chance rises by this times the
+    /// village's mean loyalty (GP-06).
+    pub loyalty_bonus: f32,
+}
+
+/// How an `Attack` takes a settlement (GP-05; `conquest` in army.ron).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConquestData {
+    /// Ticks of fighting before the defenders can count as broken.
+    pub break_ticks: u64,
+    /// The assault fails if the militia still stands after this many days.
+    pub give_up_days: f32,
+    /// Standing militia or enemy soldiers this close to the centre (tiles)
+    /// keep the defenders unbroken and contest a hold.
+    pub militia_radius: f32,
+    /// The captain must be this close to the centre (tiles) to hold it.
+    pub hold_radius: f32,
+    /// Game hours of uncontested holding that take the settlement.
+    pub hold_hours: f32,
+    /// Game hours after the defenders broke when an unwon hold fails.
+    pub timeout_hours: f32,
+}
+
+/// Garrisons and revolts (GP-05, GP-06; `garrison` in army.ron).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GarrisonData {
+    /// The owner's soldiers this close to the centre (tiles) are the
+    /// settlement's garrison.
+    pub radius: f32,
+    /// Days of food an owned settlement keeps when it feeds its owner's
+    /// armies.
+    pub keep_days: f32,
+    /// Game hours a rising's provocation lasts; keep it at least 24 so it
+    /// lasts until the next daily revolt check.
+    pub revolt_hours: f32,
+    /// Loyalty every resident loses when a rising is put down.
+    pub crushed_loyalty: f32,
+}
+
+/// What one veteran rank adds (SIM-36; `veterans.gains` in army.ron).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RankGain {
+    /// Added to the soldier's attack.
+    pub attack: f32,
+    /// Added to the soldier's defense.
+    pub defense: f32,
+    /// Added to the morale the soldier recovers to.
+    pub morale: f32,
+    /// The fraction (0..1) taken off the soldier's chance to desert.
+    pub desertion: f32,
+}
+
+/// Veterans (SIM-36; `veterans` in army.ron): soldiers rank up by battles
+/// survived.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VeteranData {
+    /// A battle ends once the army has struck or taken no blow for this
+    /// many game hours.
+    pub quiet_hours: f32,
+    /// Battles needed for rank 1, 2, ... (strictly ascending, at least 1).
+    pub thresholds: Vec<u16>,
+    /// Rank names, from rank 0 (one more than `thresholds`).
+    pub names: Vec<String>,
+    /// What each rank from 1 up gives in all (not on top of the rank
+    /// below); one per threshold.
+    pub gains: Vec<RankGain>,
+}
+
+impl VeteranData {
+    /// The rank `battles` battles earn at a ranking pace of `rate` (the
+    /// faction's `Stat::VeteranRate` multiplier; 1.0 normally): the number
+    /// of thresholds that `battles x rate` reaches.
+    pub fn rank_for(&self, battles: u16, rate: f32) -> u8 {
+        let effective = battles as f32 * rate.max(0.0);
+        self.thresholds
+            .iter()
+            .take_while(|&&t| effective + 1e-4 >= t as f32)
+            .count() as u8
+    }
+
+    /// What rank `rank` gives; `None` for rank 0 (a recruit).
+    pub fn gain(&self, rank: u8) -> Option<&RankGain> {
+        rank.checked_sub(1).and_then(|i| self.gains.get(i as usize))
+    }
+
+    /// The rank's name ("?" past the last).
+    pub fn name(&self, rank: u8) -> &str {
+        self.names.get(rank as usize).map_or("?", |n| n.as_str())
+    }
+
+    /// Checks the ranks hang together.
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.quiet_hours.is_finite() || self.quiet_hours <= 0.0 {
+            return Err(format!(
+                "army: veterans.quiet_hours must be finite and > 0, not {}",
+                self.quiet_hours
+            ));
+        }
+        if self.thresholds.first() == Some(&0)
+            || self.thresholds.windows(2).any(|w| w[0] >= w[1])
+            || self.thresholds.len() > u8::MAX as usize
+        {
+            return Err("army: veterans.thresholds must be strictly ascending from 1".into());
+        }
+        if self.gains.len() != self.thresholds.len()
+            || self.names.len() != self.thresholds.len() + 1
+        {
+            return Err(
+                "army: veterans needs one gain per threshold and one name more than thresholds"
+                    .into(),
+            );
+        }
+        for g in &self.gains {
+            if [g.attack, g.defense, g.morale]
+                .iter()
+                .any(|v| !v.is_finite())
+                || !(0.0..=1.0).contains(&g.desertion)
+            {
+                return Err("army: veterans.gains must be finite, with desertion in 0..=1".into());
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The whole of army.ron, as written. See docs/dev/DATA.md.
@@ -130,6 +253,54 @@ pub struct ArmyData {
     pub gather_target_days: f32,
     pub trade_keep_days: f32,
     pub trade_value: Vec<(String, f32)>,
+    /// `Give` (GP-22, M4): the army keeps this many days of its own food
+    /// and hands the rest to the settlement.
+    pub give_keep_days: f32,
+    /// Taking settlements (M4).
+    pub conquest: ConquestData,
+    /// Holding them: garrisons, supply and revolts (M4).
+    pub garrison: GarrisonData,
+    /// Veteran ranks (SIM-36, M4).
+    pub veterans: VeteranData,
+}
+
+impl ArmyData {
+    /// Checks the M4 conquest, garrison, recruit-loyalty and veteran
+    /// numbers.
+    pub fn validate(&self) -> Result<(), String> {
+        let c = &self.conquest;
+        let g = &self.garrison;
+        let finite_non_negative = [
+            ("recruit.loyalty_bonus", self.recruit.loyalty_bonus),
+            ("conquest.give_up_days", c.give_up_days),
+            ("conquest.militia_radius", c.militia_radius),
+            ("conquest.hold_hours", c.hold_hours),
+            ("conquest.timeout_hours", c.timeout_hours),
+            ("garrison.keep_days", g.keep_days),
+            ("give_keep_days", self.give_keep_days),
+        ];
+        for (name, v) in finite_non_negative {
+            if !v.is_finite() || v < 0.0 {
+                return Err(format!("army: {name} must be finite and >= 0, not {v}"));
+            }
+        }
+        for (name, v) in [
+            ("conquest.hold_radius", c.hold_radius),
+            ("garrison.radius", g.radius),
+            ("garrison.revolt_hours", g.revolt_hours),
+        ] {
+            if !v.is_finite() || v <= 0.0 {
+                return Err(format!("army: {name} must be finite and > 0, not {v}"));
+            }
+        }
+        if !(0.0..=1.0).contains(&g.crushed_loyalty) {
+            return Err(format!(
+                "army: garrison.crushed_loyalty must be in 0..=1, not {}",
+                g.crushed_loyalty
+            ));
+        }
+        self.veterans.validate()
+    }
 }
 
 /// Army data plus per-tick rates derived with the calendar.
@@ -147,6 +318,18 @@ impl Army {
         let data: ArmyData = ron::from_str(text).map_err(|e| e.to_string())?;
         if data.factions.len() < 2 {
             return Err("army: need at least the independent faction and one warlord".into());
+        }
+        data.validate()?;
+        // GP-06: a rising's provocation must outlast the day until the
+        // next daily revolt check, which counts its rebels; a shorter one
+        // has stood down by then and every rising would be put down.
+        let rising = calendar.hours(data.garrison.revolt_hours);
+        if rising < calendar.ticks_per_day {
+            return Err(format!(
+                "army: garrison.revolt_hours ({}) must last at least one day ({} ticks), so a \
+                 rising lasts until the next daily revolt check",
+                data.garrison.revolt_hours, calendar.ticks_per_day
+            ));
         }
         let mut trade_value = vec![0.0; econ.good_count()];
         for (name, v) in &data.trade_value {
@@ -258,5 +441,43 @@ mod tests {
         assert!(a.threat_of(Posture::Passive) < a.threat_of(Posture::Aggressive));
         assert!(a.keep_days(Posture::Aggressive) < a.keep_days(Posture::Passive));
         assert!(a.trade_value(GoodId(7)) > 0.0, "weapons trade for food");
+        let c = &a.data.conquest;
+        assert!(
+            c.hold_radius <= c.militia_radius,
+            "the hold sits inside the contest radius"
+        );
+        // GP-05, SIM-24: supply leaves at least a fully secure store, so
+        // feeding a garrison never costs the village loyalty.
+        let villagers = sim_agents::Villagers::default_data(&Calendar::default_data());
+        assert!(
+            a.data.garrison.keep_days >= villagers.data.loyalty.food_days,
+            "garrison.keep_days below villagers.ron loyalty.food_days"
+        );
+    }
+
+    #[test]
+    fn rejects_bad_conquest_and_garrison_data() {
+        // Also the veteran ranks (SIM-36).
+        let (cal, econ) = (Calendar::default_data(), Economy::default_data());
+        for (from, to) in [
+            ("hold_radius: 12.0", "hold_radius: 0.0"),
+            ("hold_hours: 2.0", "hold_hours: -1.0"),
+            ("radius: 30.0", "radius: -3.0"),
+            ("revolt_hours: 24.0", "revolt_hours: 0.0"),
+            ("revolt_hours: 24.0", "revolt_hours: 12.0"),
+            ("crushed_loyalty: 0.1", "crushed_loyalty: 1.5"),
+            ("loyalty_bonus: 0.3", "loyalty_bonus: inf"),
+            ("thresholds: [1, 3, 6]", "thresholds: [1, 3]"),
+            ("thresholds: [1, 3, 6]", "thresholds: [0, 3, 6]"),
+            ("quiet_hours: 1.0", "quiet_hours: 0.0"),
+            ("desertion: 0.1)", "desertion: 1.1)"),
+        ] {
+            assert!(DEFAULT_ARMY_RON.contains(from), "{from} not in army.ron");
+            let text = DEFAULT_ARMY_RON.replacen(from, to, 1);
+            assert!(
+                Army::from_ron(&text, &cal, &econ).is_err(),
+                "{to} should be refused"
+            );
+        }
     }
 }

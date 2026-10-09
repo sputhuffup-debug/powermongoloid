@@ -5,12 +5,15 @@ use std::collections::BTreeMap;
 
 use bevy::prelude::*;
 use sim_agents::{
-    ActionKind, Activity, CombatStats, DecisionTrace, Employment, Enlisted, FoodSecurity, Needs,
-    Stage, Stance, Threat, Villager, Villagers,
+    ActionKind, Activity, CombatStats, DecisionTrace, Employment, Enlisted, FoodSecurity, Goodwill,
+    Needs, Owner, SettlementLoyalty, Stage, Stance, Threat, Villager, Villagers,
 };
-use sim_core::{Calendar, NameTable};
+use sim_core::{Calendar, FactionId, NameTable, SimTick, SpawnId};
 use sim_economy::{Building, Economy, Occupation, SettlementEconomy, Stockpile};
-use sim_military::{Army, Captain, Equipment, Follower, Soldier};
+use sim_military::{
+    Army, Captain, Equipment, Follower, Progression, RequestBoard, RequestKind, Soldier, Traits,
+    Veteran,
+};
 use sim_world::Settlement;
 
 use crate::selection::Selection;
@@ -20,8 +23,10 @@ pub struct PanelsPlugin;
 
 impl Plugin for PanelsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_panels)
-            .add_systems(Update, (villager_panel, settlement_panel));
+        app.add_systems(Startup, spawn_panels).add_systems(
+            Update,
+            (villager_panel, settlement_panel).in_set(crate::UiSet::Hud),
+        );
     }
 }
 
@@ -43,7 +48,8 @@ fn panel(top: bool) -> (Node, BackgroundColor, Interaction, Visibility) {
     (
         Node {
             position_type: PositionType::Absolute,
-            top: if top { Val::Px(56.0) } else { Val::Auto },
+            // Below the time bar and the run bar (M4).
+            top: if top { Val::Px(146.0) } else { Val::Auto },
             bottom: if top { Val::Auto } else { Val::Px(10.0) },
             right: Val::Px(10.0),
             width: Val::Px(380.0),
@@ -104,7 +110,7 @@ fn describe_action(kind: ActionKind, stage: Stage, target: Option<String>) -> St
     }
 }
 
-#[allow(clippy::too_many_arguments)] // Bevy system parameters.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)] // Bevy system parameters.
 fn villager_panel(
     selection: Res<Selection>,
     names: Option<Res<NameTable>>,
@@ -124,6 +130,10 @@ fn villager_panel(
     settlements: Query<&Settlement>,
     soldiers: Query<SoldierQuery, With<Enlisted>>,
     army: Option<Res<Army>>,
+    (progression, ranks): (
+        Option<Res<Progression>>,
+        Query<(Option<&Veteran>, Option<&Traits>)>,
+    ),
     mut panel: Query<&mut Visibility, With<VillagerPanel>>,
     mut text: Query<&mut Text, With<VillagerText>>,
 ) {
@@ -138,6 +148,30 @@ fn villager_panel(
     if let Some(Ok(soldier)) = selection.villager.map(|e| soldiers.get(e)) {
         *vis = Visibility::Inherited;
         text.0 = soldier_text(soldier, &names, &army, &settlements);
+        // SIM-34, SIM-36: veteran rank and traits.
+        if let Some(Ok((veteran, traits))) = selection.villager.map(|e| ranks.get(e)) {
+            let mut extra = String::new();
+            if let Some(v) = veteran {
+                extra += &format!(
+                    "Rank: {} ({} battles)\n",
+                    army.data.veterans.name(v.rank),
+                    v.battles
+                );
+            }
+            if let (Some(t), Some(p)) = (traits, progression.as_ref())
+                && !t.0.is_empty()
+            {
+                let names: Vec<&str> =
+                    t.0.iter()
+                        .filter_map(|&id| p.trait_data(id))
+                        .map(|t| t.name.as_str())
+                        .collect();
+                extra += &format!("Traits: {}\n", names.join(", "));
+            }
+            if let Some(i) = text.0.find("\nHealth") {
+                text.0.insert_str(i, &format!("\n{}", extra.trim_end()));
+            }
+        }
         return;
     }
     let Some(Ok((v, occ, job, needs, act, trace, inv))) =
@@ -349,6 +383,17 @@ fn settlement_panel(
         Option<&FoodSecurity>,
         Option<&Threat>,
     )>,
+    standing: Query<(
+        &SpawnId,
+        Option<&Owner>,
+        Option<&Goodwill>,
+        Option<&SettlementLoyalty>,
+    )>,
+    (board, calendar, tick): (
+        Option<Res<RequestBoard>>,
+        Option<Res<Calendar>>,
+        Option<Res<SimTick>>,
+    ),
     stocks: Query<&Stockpile>,
     villagers: Query<(&Villager, &Occupation, &CombatStats, &Activity), Without<Enlisted>>,
     army: Option<Res<Army>>,
@@ -369,10 +414,72 @@ fn settlement_panel(
     *vis = Visibility::Inherited;
     let sel = selection.settlement.expect("checked above");
     let mut s = format!("{}\n", names.get(settlement.name));
-    s += &format!(
-        "Region {} | Owner: independent | Loyalty: n/a until M4\n\n",
-        settlement.region
-    );
+    s += &format!("Region {}", settlement.region);
+    // GP-05, GP-06, GP-22: who holds it, how it feels about you, and what
+    // it asks.
+    if let Ok((id, owner, goodwill, loyalty)) = standing.get(sel) {
+        let owner = owner.map_or(FactionId::INDEPENDENT, |o| o.faction);
+        let owner_name = army
+            .as_ref()
+            .map_or("?".to_string(), |a| a.faction_name(owner).to_string());
+        s += &format!(" | Owner: {owner_name}\n");
+        if let Some(g) = goodwill {
+            let g = g.get(FactionId::PLAYER);
+            s += &format!(
+                "Goodwill to you {} {:+.2}\n",
+                style::bar((g + 1.0) / 2.0, 10),
+                g
+            );
+        }
+        if let Some(l) = loyalty
+            && owner != FactionId::INDEPENDENT
+        {
+            s += &format!(
+                "Loyalty {} mean {:.0}%, lowest {:.0}%",
+                style::bar(l.mean, 10),
+                l.mean * 100.0,
+                l.min * 100.0
+            );
+            if let (Some(since), Some(cal)) = (l.below_since, calendar.as_ref()) {
+                s += &format!(" | unrest since day {}", cal.at(since).day + 1);
+            }
+            s += "\n";
+        }
+        if let (Some(board), Some(cal), Some(tick)) =
+            (board.as_ref(), calendar.as_ref(), tick.as_ref())
+        {
+            for r in board.open.iter().filter(|r| r.settlement == id.0) {
+                let left = r.deadline.saturating_sub(tick.0) / cal.ticks_per_hour().max(1);
+                let what = match r.kind {
+                    RequestKind::BringFood { need, delivered } => {
+                        format!("bring food ({delivered:.0}/{need:.0})")
+                    }
+                    k => k.name().to_string(),
+                };
+                let mut reward = Vec::new();
+                if r.reward.food > 0.0 {
+                    reward.push(format!("{:.0} food", r.reward.food));
+                }
+                for (g, q) in &r.reward.goods {
+                    reward.push(format!("{q} {}", econ.good_name(*g)));
+                }
+                if r.reward.volunteers > 0 {
+                    reward.push(format!("{} volunteers", r.reward.volunteers));
+                }
+                s += &format!(
+                    "Asks you: {what}, {left}h left | reward: {}\n",
+                    if reward.is_empty() {
+                        "goodwill".to_string()
+                    } else {
+                        reward.join(", ")
+                    }
+                );
+            }
+        }
+        s += "\n";
+    } else {
+        s += "\n\n";
+    }
     let Some(se) = se else {
         s += "Nobody is simulated here yet: one region is populated in M2;\nthe rest of the island arrives with LOD in M5.";
         text.0 = s;

@@ -45,9 +45,9 @@ The player interacts only through captains, settlements and the map. Requirement
 | GP-05 | Settlements can be visited to recruit, buy, seize food and goods, or conquer | Must | M4 |
 | GP-06 | Conquest transfers a settlement's allegiance; loyalty then drifts based on treatment and food security | Must | M4 |
 | GP-07 | Orders to lieutenants are carried by a messenger entity and take effect only on arrival | Must | M5 |
-| GP-08 | Settlements with the right workers and materials can produce new equipment (bows, catapults, boats) when a captain commissions it | Should | M5 |
+| GP-08 | Settlements with the right workers and materials can produce new equipment (bows, catapults, boats) when a captain commissions it | Should | M4b (tiers 1–3), M5 (siege) |
 | GP-09 | Rival warlords (AI) pursue the same goals using the same rules and order system as the player | Must | M5 |
-| GP-10 | The world is divided into regions; the campaign is won by controlling a set fraction of a region's population | Must | M6 |
+| GP-10 | The world is divided into regions; the campaign is won by controlling a set fraction of a region's population | Later | Grand campaign (runs are won by GP-28) |
 | GP-11 | Time controls: pause, 1x, 2x, 4x, 8x; orders can be issued while paused | Must | M2 |
 | GP-12 | Save and load the full world state at any time | Must | M4 |
 | GP-13 | Multiplayer, with diplomacy (truces, tribute, alliances) between players and AI warlords | Later | — |
@@ -58,6 +58,14 @@ The player interacts only through captains, settlements and the map. Requirement
 | GP-18 | Origins: the campaign can start as different kinds of warlord (exiled lord, bandit chief, prophet, merchant) with different men, goods and standing | Should | M6 |
 | GP-19 | The player designs their banner and colours and can name captains and settlements they found or take | Should | M6 |
 | GP-20 | Seeds, battles and whole campaigns can be shared as replay files and replayed exactly | Should | M6 |
+| GP-21 | A run lasts about an hour on a small island and a fresh seed. It starts with the champion and a small band with no land, and ends in a win, the champion's death with no successor, or abandonment | Must | M4 |
+| GP-22 | Villages hold goodwill toward each faction and post requests arising from their state; goodwill can make a village invite a lord | Must | M4 |
+| GP-23 | Monuments: worldgen places typed sites, some guarded; holding one grants its holder a small bonus, capped per type | Must | M4 |
+| GP-24 | Dominion boons: at 25% and 50% of a region's population held, the player picks one of three boons, kept for the run | Must | M4 |
+| GP-25 | Captain slots come from population held | Must | M4 |
+| GP-26 | Meta-progression between runs unlocks origins, trait choices and cards, never raw power | Should | M6 |
+| GP-27 | Start draws: a starting boon picked from three, the band's make-up, and one or two run modifiers, all from the seed | Must | M4 |
+| GP-28 | A rival warlord's seat grows on a clock and raids from mid-run; taking it wins the run | Must | M4 (scripted), M5 (rules-based) |
 
 ## Simulation requirements
 
@@ -87,9 +95,9 @@ The simulation must run 250,000 people across a full world, with up to 20,000 at
 | SIM-15 | Population changes through births, deaths (age, starvation, combat) and migration between settlements | Should | M4b |
 | SIM-16 | Every settlement starts as a hamlet and grows through tiers (hamlet, village, town, city) by building on a master plan generated from its town style; it shrinks and leaves ruins when it loses people | Must | M4b |
 | SIM-17 | Builders construct planned buildings from wood, plus stone from quarries for town and city buildings; construction stalls without materials or workers | Must | M4b |
-| SIM-50 | Each settlement follows a faith (data-defined) and holds a piety level that rises with worship, offerings and feasts and falls with hunger, desecration and neglect | Must | M4 |
-| SIM-51 | Sustained high piety brings divine favour: one of the settlement's militia becomes a hero (at most one living hero per settlement; cooldown after a hero dies) | Must | M4 |
-| SIM-52 | Heroes are never controllable by the player or any AI warlord; a hero autonomously leads its settlement's militia within a radius (morale and combat bonus, rallying, engage or fall back) | Must | M4 |
+| SIM-50 | Each settlement follows a faith (data-defined) and holds a piety level that rises with worship, offerings and feasts and falls with hunger, desecration and neglect | Must | M4b |
+| SIM-51 | Sustained high piety brings divine favour: one of the settlement's militia becomes a hero (at most one living hero per settlement; cooldown after a hero dies) | Must | M4b |
+| SIM-52 | Heroes are never controllable by the player or any AI warlord; a hero autonomously leads its settlement's militia within a radius (morale and combat bonus, rallying, engage or fall back) | Must | M4b |
 
 ### Economy
 
@@ -110,6 +118,10 @@ The simulation must run 250,000 people across a full world, with up to 20,000 at
 | SIM-32 | Combat resolves per individual with simple stats (health, attack, defense, equipment) and morale-driven routing | Must | M3 |
 | SIM-33 | Battles in aggregate regions resolve with a statistical model that produces the same expected outcome as per-agent combat | Must | M5 |
 | SIM-34 | Captains, heroes and long-serving soldiers earn traits from what they live through (brave, cruel, beloved, shaken); traits change their AI and morale, and veterans gain ranks | Must | M4 |
+| SIM-35 | The champion ranks up from deeds and picks one of three traits per rank; once per run, a captain succeeds a fallen champion | Must | M4 |
+| SIM-36 | Soldiers rank up by battles survived; ranks change stats and desertion | Must | M4 |
+| SIM-37 | Equipment tiers are goods made by settlements of a sufficient tier; gear sets combat stats; bows are ranged | Must | M4b |
+| SIM-38 | Wild foraging feeds a landless band at a small rate, from wild food that depletes and regrows | Must | M4 |
 
 ### Information
 
@@ -333,8 +345,8 @@ Captains, followers, orders, posture, flow-field movement, combat, food upkeep.
 - [x] The player orders a captain with 200 followers across the region; they move as a crowd around obstacles (`tests/army_march.rs`)
 - [x] Posture visibly changes how followers treat villagers (`tests/posture.rs`; screenshots in the M3 report)
 - [x] An army without food loses morale and starts deserting within the specified days (`tests/starving_army.rs`; deadline in `army.ron`)
-- [x] 20,000 visible agents at 60 fps on the reference machine (run `cargo run --release -p game_app -- --stress 20000` there; the container renders in software). 2026-10-07: 118–176 fps (frame 6–9 ms) with 20,000 agents. The clash of the two armies froze the game for seconds; fixed in ADR 0012 (melee crowding and the catch-up cap), to be confirmed with a re-run
-- [ ] **Go/no-go**: playtest whether marching an army through living villages is interesting. If not, revise the design before M4 (checklist: `docs/M3_PLAYTEST.md`)
+- [x] 20,000 visible agents at 60 fps on the reference machine (run `cargo run --release -p game_app -- --stress 20000` there; the container renders in software). 2026-10-07, Ryzen 5 7600X (6 cores) and RTX 4070: 118–176 fps (frame 6–9 ms) with 20,000 agents. The first run froze for seconds when the armies clashed; after ADR 0012 the re-run's worst 5-second window during the clash was 81 fps (frame 12.5 ms, sim tick 7.2 ms average)
+- [x] **Go/no-go**: playtest whether marching an army through living villages is interesting. If not, revise the design before M4 (checklist: `docs/M3_PLAYTEST.md`). 2026-10-07: everything runs well, but leading a big army should be the payoff, not the start; the design is being revised around progression (`docs/PROGRESSION_DESIGN.md`) before M4
 
 ### M3b: Developer handbook
 
@@ -344,20 +356,24 @@ Documentation so human developers can work alongside Claude Code. No gameplay. P
 - [x] `cargo doc --workspace --no-deps` builds without warnings in CI, and every crate has an overview
 - [x] Every data field is documented and every HOWTO recipe points at code that exists (both checked by tests: `tests/tests/docs.rs`)
 
-### M4: Conquest and faith
+### M4: Rise
 
-Settlement conquest, loyalty, faith, piety and heroes, overlays, event feed, save/load.
+One complete, playable hour: a roguelite run from a wandering band to the rival warlord's seat (design: `docs/PROGRESSION_DESIGN.md`, plan: `docs/M4_PLAN.md`). Conquest, loyalty, save and resume, event feed, chronicle, traits and the pacing director carry over from the earlier "Conquest and faith" plan; faith moves to M4b.
 
-- [ ] Conquering a settlement transfers it; loyalty responds to treatment and food security
-- [ ] Overlays show ownership, loyalty and food security; the event feed jumps to its stories
-- [ ] Sustained piety raises a hero who leads the militia and obeys no one
-- [ ] Save and load restore an identical state hash
-- [ ] The chronicle tells a battle, a famine and a hero's rise, each with its cause; captains and veterans carry traits earned in play
-- [ ] The pacing director keeps a playtest free of long dead stretches, and fast-forward stops at the next notable event
+- [x] A run starts from a seed: band, starting boons, modifiers and nearby monuments come from it; the same seed gives the same start, and seeds visibly differ (`tests/run_start.rs`: twenty seeds, same-seed identity; `tests/worldgen.rs`)
+- [x] A landless band survives on foraging and village requests, and starves if it does neither (`tests/wanderers.rs`)
+- [x] Monuments can be taken, held and lost; their bonuses stack to the caps (`tests/monuments.rs`)
+- [x] Conquest or invitation transfers a settlement; loyalty responds to treatment and food security; a starved conquest revolts (`tests/conquest.rs`, `tests/invitation.rs`)
+- [x] Holding 25% and 50% of a region offers one of three boons; captain slots follow population held (`tests/dominion.rs`)
+- [x] The champion ranks up and picks traits, soldiers rank up, and a captain succeeds a fallen champion once (`tests/champion.rs`)
+- [x] The rival grows on its clock and raids from mid-run; taking its seat wins; a scripted bot wins most fixed seeds (`tests/rival.rs`; `tests/bot_run.rs`, ignored in the normal suite and run in release by CI: 5 of 5 seeds won on days 18-31, 2026-10-09)
+- [x] Save and load restore an identical state hash (`tests/save_load.rs`, which also checks NFR-07's 3 s; `every_hashed_type_is_saved`)
+- [x] The chronicle tells the run with causes; the pacing director keeps runs free of long dead stretches (`tests/chronicle.rs`, `tests/director.rs`, and the quiet limit checked over every `bot_run` seed). UI-09's short biographies, and UI-04's knowledge-age and supply-route overlays, are not built in M4
+- [ ] **Playtest:** a run takes about an hour, and two seeds feel different in their first ten minutes (playtest: `docs/M4_PLAYTEST.md`)
 
 ### M4b: Living towns
 
-Settlements grow from hamlets to cities in their own town styles; population, construction, trade, seasons and food decay. Design: `docs/TOWNS_DESIGN.md`.
+Settlements grow from hamlets to cities in their own town styles; population, construction, trade, seasons and food decay; equipment tiers; faith, piety and heroes (moved from M4). Growth is tuned to a 30-day run. Design: `docs/TOWNS_DESIGN.md`, `docs/PROGRESSION_DESIGN.md`.
 
 - [ ] Every settlement starts as a hamlet; under good conditions one grows to a village and then a town within the configured days, stalls in famine and shrinks after a sack
 - [ ] Every town style produces a valid master plan on the sites it suits (no overlaps, every plot reachable), and a seed always yields the same styles and plans
@@ -365,23 +381,25 @@ Settlements grow from hamlets to cities in their own town styles; population, co
 - [ ] Seasons change yields, decay and travel, and a year of play keeps villages alive without intervention
 - [ ] Captains on standing orders defend, patrol and forage without new commands; plundered buildings burn and leave ruins; weather slows marches
 - [ ] Follow-cam and a growth time-lapse work on any settlement
+- [ ] Equipment tiers 1–3 are made by settlements of the right tier and change how soldiers fight; bows shoot
+- [ ] Sustained piety raises a hero who leads the militia and obeys no one
 
 ### M5: Scale and information
 
-Simulation LOD across the full world, faction knowledge, messengers, rival AI warlords, equipment production.
+The rival plays by the player's rules, sieges and siege equipment, faction knowledge and messengers, dilemmas. Simulation LOD for a large "grand campaign" island is optional (decided 2026-10-07).
 
-- [ ] 250,000 total population across the island within NFR budgets
-- [ ] LOD consistency test passes; promotion causes no visible hitch below 30 fps
+- [ ] (Optional, grand campaign) 250,000 total population across the island within NFR budgets
+- [ ] (Optional, grand campaign) LOD consistency test passes; promotion causes no visible hitch below 30 fps
 - [ ] The player's map shows only known, aged information; orders to lieutenants arrive by messenger
-- [ ] Two AI warlords expand, fight each other and the player using the same command path
+- [ ] The rival warlord expands and fights using the same command path as the player, replacing M4's script
 - [ ] A walled city can be starved out by blockade or taken by assault
 - [ ] Dilemma events arise from sim state, and their choices visibly change loyalty and morale
 
 ### M6: Campaign
 
-Win and lose conditions, multiple regions, onboarding, audio, options, origins, heraldry, shareable replays, polish.
+The roguelite layer (meta-progression, origins, the legends book of past runs), onboarding, audio, options, heraldry, shareable replays, polish.
 
-- [ ] A complete campaign can be won or lost
+- [ ] Unlocks earned in runs carry over between runs and widen choices without adding raw power
 - [ ] A new player can learn the basics through a short guided first region
 - [ ] Each origin plays differently from the first day; banners and names are the player's own
 - [ ] A shared replay file reproduces a campaign exactly on another machine with the same build
@@ -466,5 +484,5 @@ Open questions to decide before or during the noted milestone:
 - [x] Art direction: flat-shaded low-poly, or a stylized texture look? (before M2) **Decided 2026-10-06: both, by zoom level: flat-shaded low-poly beyond a detail distance, stylized textures closer in. See docs/M2_PLAN.md and ADR 0009.**
 - [x] Should the player see and control a warlord avatar on the map, or only an abstract command view? (before M3) **Decided 2026-10-06: abstract command view. The warlord is the player, not a unit; the player starts with one captain (their champion) and may appoint up to 8 more (GP-01). From M5, orders travel by messenger from the player's seat (GP-07).**
 - [x] Combat depth: individual duels with equipment, or simpler morale-dominant clashes? (during M3) **Decided 2026-10-06: duels with equipment, with morale-driven routing (SIM-32).**
-- [ ] Is the campaign one large island or a sequence of islands of increasing size? (before M6)
+- [x] Is the campaign one large island or a sequence of islands of increasing size? (before M6) **Decided 2026-10-07: neither; the game is roguelite runs of about an hour on small fresh islands (`docs/PROGRESSION_DESIGN.md`). A large island may return as an optional grand campaign.**
 - [ ] Final title and setting details (before M6)

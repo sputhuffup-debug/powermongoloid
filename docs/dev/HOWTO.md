@@ -11,9 +11,10 @@ The definition of done for any change is in [CONTRIBUTING.md](../../CONTRIBUTING
    - Hash `Entity` fields with `h.entity(e)`, which writes the target's SpawnId.
    - Hash an `Option` as a tag byte, then the value.
    - Iterate collections in a stable order: `Vec` in order, `BTreeMap` in key order.
-3. **Register it** in the crate's plugin with `.register_hashed::<T>()` or `.register_hashed_resource::<T>()` (see `crates/sim_agents/src/lib.rs`). If it is derived, a cache or diagnostics, use `.exempt_from_hash::<T>("why")` instead (see `crates/sim_military/src/lib.rs`).
-4. **Add it to every spawn site** that should have it: villagers in `crates/sim_agents/src/population.rs`, soldiers in `crates/sim_military/src/spawn.rs`.
-5. **Run the coverage test:** `cargo test -p integration_tests --test determinism state_hash_covers`.
+3. **Implement `SaveState`** (GP-12, [ADR 0016](../adr/0016-save-format.md)), writing the same fields in a fixed order. For a plain struct use `sim_core::save_fields!(T { a, b, c })` where its fields are visible (see `crates/sim_military/src/save.rs`); `save_newtype!` for `struct T(U)`, `save_unit!` for a marker, `save_serde!` for a serde enum with no entities. `Entity` fields save as SpawnIds by themselves; an enum holding entities or vectors gets a hand-written `save`/`load` with a tag byte (see `TravelState` in `crates/sim_agents/src/components.rs`). Saved enums are append only.
+4. **Register it hashed and saved** in the crate's plugin: `.register_hashed::<T>()` and `.register_saved::<T>()` (or the `_resource` forms), in the same order as the other types (see `crates/sim_agents/src/lib.rs`). A data resource is saved as its RON text with `register_saved_resource_with` (see `crates/sim_agents/src/data.rs`). If it is derived, a cache or diagnostics, use `.exempt_from_hash::<T>("why")` instead (see `crates/sim_military/src/lib.rs`), and if it must be rebuilt after a load, add an `.on_load(hook)` (see `crates/sim_world/src/lib.rs`). An exempt type the next tick reads before rebuilding it must be saved anyway (the army index in `crates/sim_military/src/index.rs`).
+5. **Add it to every spawn site** that should have it: villagers in `crates/sim_agents/src/population.rs`, soldiers in `crates/sim_military/src/spawn.rs`.
+6. **Run the coverage tests:** `cargo test -p integration_tests --test determinism state_hash_covers` and `cargo test -p integration_tests --test save_load` (`every_hashed_type_is_saved`, and a run saved, loaded and played on).
 
 ## Add a simulation system
 
@@ -56,15 +57,24 @@ Example: `Hide` (SIM-13).
 
 ## Add a captain order
 
-1. **Add the variant** to `OrderSpec` in `crates/sim_core/src/command.rs`. Name entities by SpawnId (`u64`), never `Entity`. Bump `REPLAY_FORMAT` in `crates/sim_core/src/replay.rs` if a command's meaning changes.
-2. **Hash and describe it:** `hash_spec` and `describe` in `crates/sim_military/src/components.rs`.
-3. **Validate it** in `validate_spec`, and **execute it** in `step_order`, both in `crates/sim_military/src/orders.rs`:
+1. **Add the variant** at the end of `OrderSpec` in `crates/sim_core/src/command.rs`. Append only: saves encode the variant's position. Name entities by SpawnId (`u64`), never `Entity`. Bump `REPLAY_FORMAT` in `crates/sim_core/src/replay.rs` if a command's meaning changes.
+2. **Hash and describe it:** `hash_spec` (the next free tag byte) and `describe` in `crates/sim_military/src/components.rs`.
+3. **Validate it** in `validate_spec`, which knows the issuer, and **execute it** in `step_order`, both in `crates/sim_military/src/orders.rs`. `Garrison` is a small example. It is refused unless the issuer owns the settlement (`conquest::owner_of`), and it keeps the army at the centre until the settlement is lost. For the execution:
    - Set the captain's goal.
    - Do the order's work when the army arrives.
    - Pop the order when it's done.
    - Anything that moves goods between stockpiles belongs here: it is the serial logistics step.
+   - An order that stays put and works on a clock, like `Forage` (SIM-38, `crates/sim_military/src/wild.rs`), sets the goal to `None`, records its start in `order.since` at step 0, and acts every N ticks from it.
 4. **Make it reachable from the UI** in `crates/game_ui/src/army.rs` (menu entry or hotkey). The UI only writes `SimCommand`s.
-5. **Add it to the random orders** in `sample_orders` in `crates/sim_headless/src/lib.rs`, so the determinism test exercises it. Add a scenario test in `tests/tests/orders.rs`.
+5. **Add it to the random orders** in `sample_orders` in `crates/sim_headless/src/lib.rs`, so the determinism test exercises it. Add a scenario test in `tests/tests/orders.rs`, or in a file of its own for an order that plays out over days (Garrison's is `tests/tests/conquest.rs`).
+
+## Make a deed move goodwill
+
+Goodwill (GP-22) changes only through the ledger in `crates/sim_agents/src/standing.rs`, so the spread to nearby settlements and the order of application stay deterministic.
+1. **Name the deed:** append a variant to `Deed` (append only: the tag is hashed and saved).
+2. **Give it a delta** in `assets/data/progression.ron` `goodwill_deeds`, read through `GoodwillDeeds::delta` in `crates/sim_military/src/progression/mod.rs`, and document it in [DATA.md](DATA.md).
+3. **Post it from a serial step** with `orders::goodwill_deed(world, settlement, faction, deed)` (in `crates/sim_military/src/orders.rs`), once per deed, not once per tick of an ongoing one (see `provoke`, which posts only a fresh provocation). Never write `Goodwill` directly.
+4. **Test it** like `deeds_move_goodwill_and_word_spreads`: check the ledger right after the deed, then step a tick and check the settlement and a neighbour within `goodwill.spread_radius`.
 
 ## Add a data field
 
@@ -84,11 +94,63 @@ UI code reads sim state and writes `SimCommand`s only. Copy the captain panel in
 ## Add a scenario test
 
 Copy `tests/tests/posture.rs`. Shared helpers (commands, positions, village lists) are in `tests/tests/common/mod.rs`.
-1. **Build a world:** `headless_app(HeadlessConfig::new(SEED))`, or `Scenario::Skirmish` for armies. Set up extra state before the first tick (`spawn_army`, `cut_off_farmers`).
-2. **Send input** as commands: `common::order(...)`, never by editing components mid-run.
+1. **Build a world:** `headless_app(HeadlessConfig::new(SEED))`, or `Scenario::Skirmish` for armies, or `common::run_app(SEED)` for a run on the run island (`HeadlessConfig::run(SEED, RunConfig::default())`; its start boon waits for a pick: `common::choose(&mut app, offer, 0)` with `offer` from `common::start_offer(&app)`). Set up extra state before the first tick (`spawn_army`, `cut_off_farmers`, spoiling a village's stores so it asks for food, setting a settlement's `Goodwill`). `tests/tests/run_start.rs` is a run example. For a run scenario that needs a particular band or start, pick a seed whose draws fit (`cargo run --release -p sim_headless -- --run --seed N --ticks 1` prints the band, the start and the boons on offer) and search its world for the settlement you need; `tests/tests/wanderers.rs` plays a band through commands only, as a player would. In a run the pacing director brings raider bands and the rival levies and raids on its clock: a test that needs quiet sets the director's limits beyond its length (edit `DirectorData` before the first tick), and a test of the rival's later clock shortens its `progression.ron` `rival` row before the first tick together with `RivalState`'s next levy and raid (`tests/tests/rival.rs` does both). `sim_headless::step_until_event` fast-forwards to the next notable event (`tests/tests/director.rs`), and `sim_headless::bot::run_bot` plays a whole run with player commands.
+2. **Send input** as commands: `common::order(...)`, never by editing components mid-run. Another faction's band takes orders the same way, with its faction as the issuer (`common::order(&mut app, 2, raiders, ...)`). A scenario that branches from a shared prefix, as the conquest scenario (`tests/tests/conquest.rs`) does until saves arrive, may make each branch's setup edits (spawning a band, spoiling stores) right after the prefix, between ticks, as it would after loading a save.
 3. **Step** with `app.step(n)`, and read results through queries or `sim_headless::stats`.
 4. **Assert** the requirement, and print the numbers so a failure explains itself.
 5. **Note what the test guards** in [TESTING.md](TESTING.md).
+
+## Add a run scenario test
+
+A run scenario plays an M4 rule on the run island with a real band, from one seed, through the same commands a player sends. Copy `tests/tests/wanderers.rs` (a band, commands only), `tests/tests/champion.rs` (state set up before the first tick) or `tests/tests/conquest.rs` (branches from one saved prefix). It is a scenario test (see "Add a scenario test") with these run-specific steps:
+1. **Build it:** `common::run_app(SEED)`, then `common::start_offer(&app)` and `common::choose(&mut app, offer, 0)` to pick the start boon (the cards are generic over which boon the seed offers, so assert on effects, not names). Pick a seed whose draws fit (`--run --seed N --ticks 1` prints the band and the boons on offer) and search its world for the settlements or monuments you need; don't hard-code coordinates.
+2. **Quiet what you aren't testing:** `common::quiet_director(&mut app)` before the first tick stops director bands, and the rival's clock can be shortened in `Progression` data (`tests/tests/rival.rs`). Hourly steps run at ticks 0, 100, 200, ...; modifiers apply at the next hourly rebuild, not at once.
+3. **Set up before the first tick** by editing state directly (spawn a band with `sim_military::spawn_army`, set a `Goodwill`, spoil a store), then **act only with commands** (`common::order`, `common::command`), as the player would.
+4. **Read the result** from the chronicle (`common::chronicle`), `RunState`, `RunProgress` and the components, not from `SimEvent` messages (they live two ticks). A run that ends freezes `SimTick`, so don't assert that every scripted command ran.
+5. **Keep it short and cheap:** under about a minute at the test profile. Tests in one file run in parallel threads with a full world each, so loop seeds inside one `#[test]`, and play a shared prefix once (a `OnceLock` plus `sim_headless::save_app` and `load_app`, as `conquest.rs` does) when several branches need it.
+6. **Cover the state it adds:** extend `run_state_hash_covers_every_sim_component` in `tests/tests/determinism.rs`, add the test's row to [TESTING.md](TESTING.md), and say which requirement ID it guards in its doc comment.
+
+## Add a run-only rule
+
+Runs (GP-21, M4) add rules that the developed world, the benchmarks and the M2/M3 tests must never feel ([ADR 0013](../adr/0013-runs-presets-and-run-config.md)). Example: the start boon, applied in `crates/sim_military/src/progression/offers.rs`.
+1. **Put the data** in `assets/data/progression.ron` and document every field in [DATA.md](DATA.md). Cards are append only: a card's `id` is its index, and offers and saves store it.
+2. **Gate it:** add the system with `.run_if(in_run)`, or check `RunState::in_run()` in a serial step, so nothing runs or draws outside a run. Hourly or daily steps go inside the progress driver (`progression::progress`) in its documented order, like `wild::regrow` or `rival::clock`, never as systems of their own. A scripted faction's decisions (like `rival::think`) go in `SimInputSet::Ai`, chained after the others, and send `SimCommand::ai` orders. A rule that changes goodwill posts to the `GoodwillLedger` (see "Make a deed move goodwill").
+3. **Draw from a new stream key** (`rng_key("sim_military::your_step")`), never an existing one, and spawn only in a serial step with `NextSpawnId::allocate`.
+4. **Keep multipliers exact no-ops:** read `FactionModifiers::mult`, which is exactly 1.0 when nothing applies (see "Add a modifier").
+5. **Player choices arrive as commands.** Post an offer with `sim_core::post_offer` and apply the pick in `progression::choose`; a run ends only through `RunState::finish(outcome, cause)` from a serial step (`settle_outcome` records `RunEnded`).
+6. **Test it on a run** with `common::run_app` and read what happened from `common::chronicle`, never from `SimEvent` messages. Extend `run_state_hash_covers_every_sim_component` in `tests/tests/determinism.rs` so the new state is covered.
+7. **Show the developed world didn't change:** re-run `village_day`, `famine`, `army_march`, `posture`, `starving_army` and `orders`, and compare `cargo run --release -p sim_headless -- --seed 42 --ticks 1200 --stats-every 600` with its output before the change (only the state hash may differ).
+
+## Add a monument type
+
+Monuments (GP-23, [ADR 0015](../adr/0015-monuments-and-faction-modifiers.md)) are placed by worldgen and held, guarded and turned into bonuses by `sim_military`. Example: the watchtower, which widens its holder's threat radius.
+1. **Name the kind:** append a variant to `MonumentKind` in `crates/sim_world/src/monuments.rs` (append only: the index is hashed and saved), with its `name()` and `title()`, and bump `COUNT` and `ALL`.
+2. **Place it:** add it to `monuments.kinds` in the run preset of `assets/data/worldgen.ron` with a weight and a `SiteRule` (`crates/sim_world/src/settings.rs`; a new kind of site needs a rule in `crates/sim_world/src/worldgen/monuments.rs`). Re-run `--test worldgen` and `--test run_start`: the start still needs 2-3 monuments nearby.
+3. **Give it a bonus:** add a `monuments.kinds` entry in `assets/data/progression.ron` (`stat`, `bonus`, `cap`, `set_bonus`). If its stat has no consumer yet, add one (see "Add a modifier"). `shipped_monument_data_fits_the_island` in `crates/sim_military/src/progression/mod.rs` checks every kind has an entry.
+4. **Document it** in [DATA.md](DATA.md) and the glossary's Monument row, and test the bonus with `monument_modifiers` like `caps_and_set_bonus`.
+
+## Add a trait or boon
+
+Traits (SIM-34) and boons (GP-24, GP-27) are cards in `assets/data/progression.ron`, read by `crates/sim_military/src/progression/mod.rs`. Example: the "Quartermaster" trait, whose `(Desertion, -0.1)` makes the champion's soldiers 10% less likely to desert.
+1. **Append the card:** a `traits` entry (`id`, `name`, `phrase`, `effects`) or a `boons` entry (`id`, `name`, `text`, `when: Start` or `Dominion`, `weight`, `effects`, and for a Dominion boon optionally `favour`). The `id` is the card's index: append only, never reorder (offers, `RunProgress` and saves store it).
+2. **Use effects something reads.** A `Stat(stat, value)` effect is folded into `FactionModifiers` at the next hourly rebuild (`rebuild_modifiers`): the trait's for its champion's faction, the boon's for the player. Pick a stat with a consumer (DATA.md's `traits[].effects` row lists them); a new kind of effect needs a consumer first (see "Add a modifier"). Boons also have one-off effects applied at the pick in `crates/sim_military/src/progression/offers.rs` (`FoodDays`, `ArmBand`, `Goodwill`, `CaptainSlots`); a new one is an appended `Effect` variant handled there.
+3. **Let the champion be offered a trait** by adding its id to `champion_traits`: its starting trait and each rank's offer of three come from that pool (`crates/sim_military/src/progression/champion.rs`). Leave negative traits (Shaken) out of it.
+4. **Check it:** `shipped_data_is_valid` and `rejects_bad_data` in `crates/sim_military/src/progression/mod.rs` must pass; re-run `--test champion` (traits) or `--test run_start` and `--test dominion` (boons), whose draws change with a new card. Document the card's effect in [DATA.md](DATA.md) if it needs more than its `text`.
+
+## Add a run modifier
+
+Run modifiers (GP-27) are the one or two cards drawn from the seed at the start of every run and shown on the new-game screen. They live in `assets/data/progression.ron` (`modifiers`, `modifiers_per_run`), are drawn in `crates/sim_military/src/progression/start.rs` and applied in `crates/sim_military/src/progression/mod.rs`. Example: "Lean year", whose `Stat(FoodYield, -0.15)` cuts every crop by 15%.
+1. **Append the card:** `id` (its index, append only: `RunProgress` and saves store it), `name`, `text`, `group` (cards in one group, like "harvest" or "rival", never come together), `weight` and `effects`.
+2. **Pick an effect something reads.** `Stat(stat, v)` goes into the world row of `FactionModifiers` at the hourly rebuild and applies to every faction, so the stat needs a consumer (see "Add a modifier"). `Stores(f)` acts once at setup, `RaiderPace(x)` is read by the director (`crates/sim_military/src/director.rs`) and `RivalStrength(x)` by the rival (`crates/sim_military/src/rival.rs`). `Sellswords(n)` is accepted but does nothing yet. A new kind of effect is an appended `Effect` variant with its reader.
+3. **Check it:** `shipped_data_is_valid` and `rejects_bad_data` in `crates/sim_military/src/progression/mod.rs`, then `--test run_start` (the twenty seeds' draws change with a new card) and `--test rival` or `--test director` for a card they read. Document the card's effect in [DATA.md](DATA.md) (`modifiers[].effects`).
+
+## Add a modifier
+
+A modifier is a `Stat` in `crates/sim_core/src/modifiers.rs` that monuments, boons, traits and run modifiers can raise, summed per faction into `FactionModifiers` by `rebuild_modifiers` (`crates/sim_military/src/progression/mod.rs`). Example: `MarchSpeed`, read by both `move_captains` and `move_soldiers` in `crates/sim_military/src/soldiers.rs`.
+1. **Append the stat** to `Stat` (append only: data files and saves name it), with `COUNT`, `ALL` and `name()`. Fractions are added to 1.0 (`mult`); flat amounts are read with `value`.
+2. **Read it where the stat is used,** at the point of use: `mods.mult(faction, Stat::X)` with `Res<FactionModifiers>` in a system, or `world.resource::<FactionModifiers>()` in a serial step. Never fold a modifier into `Economy`, `Army` or other data at runtime: their hash covers only the data text (guide G9).
+3. **Keep it an exact no-op at 1.0:** multiply (`x * mult`) or divide by it, never add a rounded difference; integer results round only when there is a fraction, and stochastic rounding draws (from a new stream key) only then (see `yield_units` in `crates/sim_agents/src/act.rs`). The developed world must print the same `sim_headless --seed 42 --ticks 4801 --stats-every 600` before and after.
+4. **Give something the stat:** a `monuments.kinds` entry, or a `Stat(stat, value)` effect of a boon, trait or run modifier in `assets/data/progression.ron`; nothing else writes `FactionModifiers`. Document the stat's meaning in [DATA.md](DATA.md) (`monuments.kinds[].stat`) and test the consumer: run its system once with a modifier set by hand (as `the_loyalty_drift_modifier_speeds_drift` in `crates/sim_agents/src/loyalty.rs` does; in a full app the hourly rebuild would replace it), or give it through a boon or a held monument in a run.
 
 ## Tune behaviour
 
@@ -102,8 +164,17 @@ Copy `tests/tests/posture.rs`. Shared helpers (commands, positions, village list
 - **Why someone did something:** check the inspector in game, or `DecisionTrace` in code, before changing weights.
 - **After tuning,** re-run the scenario tests that guard the file ([DATA.md](DATA.md) lists them).
 
+## Tune run balance
+
+A run's balance (the rival's clock, the director's bands, boons, requests, forage) lives in `assets/data/progression.ron` and `assets/data/director.ron`. The scripted player in `crates/sim_headless/src/bot.rs` is the yardstick: it must win 3 of 5 fixed seeds within 40 days.
+
+1. **Watch one run:** `cargo run --release -p sim_headless -- --run --bot --seed 1 --ticks 96000` prints the outcome; stderr has the bot's notes (a status line every game day: army, food, captains, land held, the seat's estimated defence) and the chronicle by kind. Add `--difficulty harsh` for another row, `--chronicle` for the story.
+2. **Change data only** when the bot loses because the game is unbalanced (not because the bot plays badly: fix `bot.rs` then). Keep the developed and skirmish presets as they are.
+3. **Re-run** `cargo test --release -p integration_tests --test bot_run -- --ignored --nocapture` (`tests/tests/bot_run.rs`; about 5 minutes; per-seed outcome, day and numbers) and the tests CLAUDE.md names for the files you touched.
+4. **If the 3-of-5 bar turns flaky,** loosen the bar (`MIN_WINS` in `tests/tests/bot_run.rs`) rather than fudge the data, and note it with before/after numbers in a tuning log (step 11's is `docs/m4/PROGRESS_BOT.md`).
+
 ## Profile
 
 - **Per-stage tick cost:** `cargo run --release -p sim_headless -- --ticks 1500 --timings`. Add `--population 20000` or `--battle 7500` for heavy loads, and `--stats-every 250` to see the mean and worst tick and the costliest stages for each window of 250 ticks (spikes hide in a whole-run average).
 - **Per-system detail:** Tracy. `cargo run -p game_app --release --features tracy`, then connect the Tracy profiler; every system's span shows up.
-- **Benchmarks:** `cargo bench -p sim_headless` (`tick/agents/*`, `tick/army/2000`, `state_hash/*`). A nightly CI job fails on a slowdown over 10% (`scripts/check_bench_regression.py`).
+- **Benchmarks:** `cargo bench -p sim_headless` (`tick/agents/*`, `tick/army/2000`, `tick/run_island` (a run at day 10, the bot's commands replayed), `state_hash/*`). A nightly CI job fails on a slowdown over 10% (`scripts/check_bench_regression.py`).

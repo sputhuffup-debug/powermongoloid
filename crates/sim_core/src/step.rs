@@ -40,11 +40,15 @@ impl SimStepper for App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CommandKind, CommandsProcessed, FactionId, SimCommand, SimCorePlugin, SimTick};
+    use crate::{
+        Cause, Chronicle, CommandKind, CommandsProcessed, FactionId, RunConfig, RunOutcome,
+        RunState, SimCommand, SimCorePlugin, SimEventKind, SimTick, compute_state_hash,
+    };
 
     fn app() -> App {
         let mut app = App::new();
-        app.add_plugins(SimCorePlugin { seed: 1 }).prepare_sim();
+        app.add_plugins(SimCorePlugin { seed: 1, run: None })
+            .prepare_sim();
         app
     }
 
@@ -62,5 +66,70 @@ mod tests {
             .write_message(SimCommand::player(FactionId(0), CommandKind::Noop));
         app.step(5);
         assert_eq!(app.world().resource::<CommandsProcessed>().0, 1);
+    }
+
+    /// GP-21: the tick a run ends on completes; after it the clock and the
+    /// state hash freeze, and input is ignored.
+    #[test]
+    fn a_finished_run_stops_the_clock() {
+        let mut app = App::new();
+        app.add_plugins(SimCorePlugin {
+            seed: 1,
+            run: Some(RunConfig::default()),
+        })
+        .prepare_sim();
+        app.step(10);
+        let finished = app
+            .world_mut()
+            .resource_mut::<RunState>()
+            .finish(RunOutcome::Abandoned, Cause::Player);
+        assert!(finished);
+        app.step(1);
+
+        let state = *app.world().resource::<RunState>();
+        assert_eq!(state.outcome, Some(RunOutcome::Abandoned));
+        assert_eq!(state.cause, Cause::Player);
+        assert_eq!(state.ended_at, Some(10));
+        assert_eq!(state.pending, None);
+        assert_eq!(
+            app.world().resource::<SimTick>().0,
+            11,
+            "the ending tick completes"
+        );
+        let last = *app
+            .world()
+            .resource::<Chronicle>()
+            .entries()
+            .last()
+            .unwrap();
+        assert_eq!((last.tick, last.event.kind), (10, SimEventKind::RunEnded));
+        assert_eq!(last.event.subject, RunOutcome::Abandoned as u64);
+
+        let frozen = compute_state_hash(app.world_mut());
+        app.world_mut()
+            .write_message(SimCommand::player(FactionId::PLAYER, CommandKind::Noop));
+        app.step(50);
+        assert_eq!(app.world().resource::<SimTick>().0, 11);
+        assert_eq!(app.world().resource::<CommandsProcessed>().0, 0);
+        assert_eq!(compute_state_hash(app.world_mut()), frozen);
+        assert!(
+            !app.world_mut()
+                .resource_mut::<RunState>()
+                .finish(RunOutcome::Won, Cause::None),
+            "a finished run can't end again"
+        );
+    }
+
+    #[test]
+    fn outside_a_run_the_clock_never_stops() {
+        let mut app = app();
+        let finished = app
+            .world_mut()
+            .resource_mut::<RunState>()
+            .finish(RunOutcome::Lost, Cause::None);
+        assert!(!finished);
+        app.step(5);
+        assert_eq!(app.world().resource::<SimTick>().0, 5);
+        assert_eq!(app.world().resource::<RunState>().outcome, None);
     }
 }

@@ -16,6 +16,9 @@ pub struct Order {
     pub since: u64,
     /// Where the army was when the order started (scouting returns here).
     pub origin: IVec2,
+    /// `Attack`, once the defenders broke: the tick the army's current
+    /// uncontested hold of the centre began (`None` while contested).
+    pub held_since: Option<u64>,
 }
 
 impl Order {
@@ -26,6 +29,7 @@ impl Order {
             step: 0,
             since: 0,
             origin: IVec2::ZERO,
+            held_since: None,
         }
     }
 }
@@ -64,6 +68,18 @@ fn hash_spec(spec: &OrderSpec, h: &mut StateHasher) {
             h.i32(x);
             h.i32(y);
         }
+        OrderSpec::Garrison { settlement } => {
+            h.u8(8);
+            h.u64(settlement);
+        }
+        OrderSpec::Forage { radius } => {
+            h.u8(9);
+            h.u16(radius);
+        }
+        OrderSpec::Give { settlement } => {
+            h.u8(10);
+            h.u64(settlement);
+        }
     }
 }
 
@@ -78,6 +94,9 @@ pub fn describe(spec: &OrderSpec) -> String {
         OrderSpec::Attack { .. } => "attack".into(),
         OrderSpec::Trade { .. } => "trade".into(),
         OrderSpec::Scout { x, y } => format!("scout ({x}, {y})"),
+        OrderSpec::Garrison { .. } => "garrison".into(),
+        OrderSpec::Forage { radius } => format!("forage within {radius}"),
+        OrderSpec::Give { .. } => "give food".into(),
     }
 }
 
@@ -98,6 +117,23 @@ pub struct Captain {
     pub rally_window: (IVec2, IVec2),
     /// Last tick the army foraged from a settlement on its own.
     pub last_forage: u64,
+    /// SIM-36: the tick the army's current battle began (its first blow
+    /// struck or taken), `None` while it is not in one. A battle ends
+    /// (`veterans::end_battles`) once no blow has landed for army.ron
+    /// `veterans.quiet_hours`.
+    pub battle_since: Option<u64>,
+    /// SIM-36: the last tick a member of the army struck or was struck.
+    pub last_engaged: u64,
+    /// SIM-36: members of the army who died during its current battle.
+    pub battle_losses: u32,
+    /// UI-09: the factions the army has fought in its current battle, one
+    /// bit per faction id (`1 << id`), for its battle report.
+    pub battle_foes: u32,
+    /// UI-09: foes its people killed in its current battle.
+    pub battle_kills: u32,
+    /// UI-09: the tick the first of its men broke and ran in its current
+    /// battle (the report's turning point); `None` while it holds.
+    pub battle_rout: Option<u64>,
 }
 
 impl Captain {
@@ -112,6 +148,12 @@ impl Captain {
             rally: None,
             rally_window: (IVec2::ZERO, IVec2::ZERO),
             last_forage: 0,
+            battle_since: None,
+            last_engaged: 0,
+            battle_losses: 0,
+            battle_foes: 0,
+            battle_kills: 0,
+            battle_rout: None,
         }
     }
 }
@@ -126,6 +168,13 @@ impl StateHash for Captain {
             h.u8(o.step);
             h.u64(o.since);
             h.ivec2(o.origin);
+            match o.held_since {
+                Some(t) => {
+                    h.u8(1);
+                    h.u64(t);
+                }
+                None => h.u8(0),
+            }
         }
         match self.goal {
             Some(g) => {
@@ -146,6 +195,24 @@ impl StateHash for Captain {
         h.ivec2(self.rally_window.0);
         h.ivec2(self.rally_window.1);
         h.u64(self.last_forage);
+        match self.battle_since {
+            Some(t) => {
+                h.u8(1);
+                h.u64(t);
+            }
+            None => h.u8(0),
+        }
+        h.u64(self.last_engaged);
+        h.u32(self.battle_losses);
+        h.u32(self.battle_foes);
+        h.u32(self.battle_kills);
+        match self.battle_rout {
+            Some(t) => {
+                h.u8(1);
+                h.u64(t);
+            }
+            None => h.u8(0),
+        }
     }
 }
 
@@ -201,12 +268,23 @@ pub struct Raider {
     pub next_think: u64,
     /// The settlement (SpawnId) raided last.
     pub last_target: Option<u64>,
+    /// GP-16: the settlement (SpawnId) the pacing director sent the band
+    /// to raid first; cleared once it has been raided. `None` for bands
+    /// the director didn't aim.
+    pub target: Option<u64>,
 }
 
 impl StateHash for Raider {
     fn hash_state(&self, h: &mut StateHasher) {
         h.u64(self.next_think);
         h.u64(self.last_target.map_or(u64::MAX, |t| t));
+        match self.target {
+            Some(t) => {
+                h.u8(1);
+                h.u64(t);
+            }
+            None => h.u8(0),
+        }
     }
 }
 
@@ -268,6 +346,17 @@ pub struct FactionStats {
     pub first_desertion: Option<u64>,
     pub first_starvation: Option<u64>,
     pub rejected_commands: u32,
+    /// Settlements taken by force (GP-05, M4).
+    pub conquests: u32,
+    /// Food value drawn, unpaid and unprovoked, from settlements the
+    /// faction owns (garrison supply, M4). Not counted in `seized`,
+    /// `bought` or `given`.
+    pub supplied: f32,
+    /// Food value handed to settlements by `Give` orders (GP-22, M4): what
+    /// was actually delivered. Not `given`, which is village to army.
+    pub donated: f32,
+    /// Food value gathered from the wild by `Forage` orders (SIM-38, M4).
+    pub foraged: f32,
 }
 
 /// Totals for every faction, by faction id. Hashed.
@@ -309,6 +398,10 @@ impl StateHash for ArmyStats {
             h.u64(s.first_desertion.unwrap_or(u64::MAX));
             h.u64(s.first_starvation.unwrap_or(u64::MAX));
             h.u32(s.rejected_commands);
+            h.u32(s.conquests);
+            h.f32(s.supplied);
+            h.f32(s.donated);
+            h.f32(s.foraged);
         }
     }
 }
@@ -316,7 +409,12 @@ impl StateHash for ArmyStats {
 /// Recent military events for the UI (UI-01). History only.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct MilitaryLog {
+    /// `(tick, text)`, oldest first; the last 64.
     pub entries: VecDeque<(u64, String)>,
+    /// Entries ever pushed (UI-05): entry `i` of `entries` has sequence
+    /// number `seq - entries.len() + i`, so the event feed can read new
+    /// lines by cursor, like [`sim_core::EventFeed`].
+    pub seq: u64,
 }
 
 impl MilitaryLog {
@@ -328,5 +426,17 @@ impl MilitaryLog {
             self.entries.pop_front();
         }
         self.entries.push_back((tick, text.into()));
+        self.seq += 1;
+    }
+
+    /// Entries with sequence number `>= cursor`, oldest first, as
+    /// `(seq, tick, text)`. Pass the last seen `seq + 1`.
+    pub fn since(&self, cursor: u64) -> impl Iterator<Item = (u64, u64, &str)> + '_ {
+        let first = self.seq - self.entries.len() as u64;
+        self.entries
+            .iter()
+            .enumerate()
+            .map(move |(i, (tick, text))| (first + i as u64, *tick, text.as_str()))
+            .filter(move |(seq, ..)| *seq >= cursor)
     }
 }

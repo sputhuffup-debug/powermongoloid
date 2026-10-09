@@ -82,7 +82,7 @@ The request was random per settlement. Options are in decision 1. All options us
 
 ## Decisions (answered 2026-10-06)
 1. **Styles are random per settlement, among styles that suit its site.** Stilts go by water, terraces on hills, courtyards in dry land, and the draw is seeded.
-2. **Every settlement starts as a hamlet.** Consequences:
+2. **Every settlement starts as a hamlet.** *Amended 2026-10-07 for roguelite runs (`docs/PROGRESSION_DESIGN.md`): a run's island starts with a seeded mix of hamlets, villages and a few towns, so there are people to recruit by the final act, and growth is tuned to a 30-day run.* Consequences of the original decision:
    - **Faster pacing.** A good hamlet should reach village size in about half a game year and town size within two (tuned in `towns.ron`).
    - **Small start, whole island.** The starting island holds roughly 60 settlements of 20–40 people, about 2,000 agents. That is cheap enough to simulate **the whole island at full detail at first**, so simulation LOD (M5) becomes necessary only as towns grow.
    - **A developed start for tests.** Tests, benchmarks and `--stress` keep a "developed" start option (a worldgen setting that grows every plan to a chosen tier at creation), so the M2 and M3 scenarios keep their large villages.

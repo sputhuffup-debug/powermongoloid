@@ -11,11 +11,13 @@ publish.workspace = true
 bevy_app.workspace = true
 bevy_ecs.workspace = true
 bevy_math.workspace = true
+postcard.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
 ron.workspace = true
 serde.workspace = true
 tracing.workspace = true
+zstd.workspace = true
 
 [lints]
 workspace = true

@@ -16,6 +16,8 @@ pub struct FoodSecurity {
     pub food_value: f32,
 }
 
+sim_core::save_fields!(FoodSecurity { days, food_value });
+
 impl StateHash for FoodSecurity {
     fn hash_state(&self, h: &mut StateHasher) {
         h.f32(self.days);

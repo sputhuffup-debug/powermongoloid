@@ -15,15 +15,17 @@
 
     // Production chains. A worker of `worker` at a `workplace` takes the
     // inputs from the workplace's stock, works `duration` ticks, and puts
-    // the outputs back for carters to haul.
+    // the outputs back for carters to haul. `modifier` (optional, GP-23):
+    // the settlement owner's FoodYield scales the outputs, SmithSpeed
+    // shortens the duration (held monuments, boons, run modifiers).
     recipes: [
-        (name: "farming", workplace: Farm, worker: Farmer, inputs: [], outputs: [("grain", 8)], duration: 240),
-        (name: "fishing", workplace: FishingSpot, worker: Fisher, inputs: [], outputs: [("fish", 2)], duration: 200),
+        (name: "farming", workplace: Farm, worker: Farmer, inputs: [], outputs: [("grain", 8)], duration: 240, modifier: Some(FoodYield)),
+        (name: "fishing", workplace: FishingSpot, worker: Fisher, inputs: [], outputs: [("fish", 2)], duration: 200, modifier: Some(FoodYield)),
         (name: "herding", workplace: Pasture, worker: Shepherd, inputs: [], outputs: [("mutton", 2)], duration: 300),
         (name: "woodcutting", workplace: WoodcutterCamp, worker: Woodcutter, inputs: [], outputs: [("wood", 3)], duration: 200),
         (name: "mining", workplace: Mine, worker: Miner, inputs: [], outputs: [("ore", 2)], duration: 300),
-        (name: "toolmaking", workplace: Smithy, worker: Smith, inputs: [("ore", 2), ("wood", 1)], outputs: [("tools", 1)], duration: 400),
-        (name: "weaponsmithing", workplace: Smithy, worker: Smith, inputs: [("ore", 2), ("wood", 1)], outputs: [("weapons", 1)], duration: 450),
+        (name: "toolmaking", workplace: Smithy, worker: Smith, inputs: [("ore", 2), ("wood", 1)], outputs: [("tools", 1)], duration: 400, modifier: Some(SmithSpeed)),
+        (name: "weaponsmithing", workplace: Smithy, worker: Smith, inputs: [("ore", 2), ("wood", 1)], outputs: [("weapons", 1)], duration: 450, modifier: Some(SmithSpeed)),
         (name: "baking", workplace: Bakery, worker: Baker, inputs: [("grain", 3)], outputs: [("bread", 4)], duration: 150),
     ],
 
