@@ -169,6 +169,7 @@ pub fn rank_ups(world: &mut World) {
             .map_or(FactionId::INDEPENDENT, |a| a.0);
         let points = world.get::<ChampionRank>(e).map_or(0, |r| r.points);
         let from = world.get::<ChampionRank>(e).map_or(0, |r| r.rank);
+        let at = world.get::<Position>(e).map_or_else(Default::default, |p| p.0);
         // One stream per champion and tick; several ranks reached in the
         // same hour draw their offers from it in turn.
         let mut rng = seed.stream(rng_key("sim_military::progression::traits") ^ id.0, tick);
@@ -178,6 +179,7 @@ pub fn rank_ups(world: &mut World) {
                 SimEvent::new(SimEventKind::RankUp, faction)
                     .subject(id.0)
                     .other(points as u64)
+                    .at(at)
                     .amount(rank as i32),
             );
             let held = world

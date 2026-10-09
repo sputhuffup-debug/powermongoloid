@@ -73,7 +73,7 @@ pub enum SimEventKind {
     /// faction id (0); `at`: its centre; `amount`: residents.
     Revolt,
     /// The champion ranked up (SIM-35). `subject`: the champion; `other`:
-    /// its rank points; `amount`: the rank.
+    /// its rank points; `at`: its tile; `amount`: the rank.
     RankUp,
     /// Someone gained a trait (SIM-34). `subject`: the person; `amount`: the trait id.
     TraitGained,

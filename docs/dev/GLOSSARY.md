@@ -75,7 +75,7 @@
 | **Slot** | A follower's place in the loose sunflower formation around its captain |
 | **SpawnId** | A stable id given to every sim entity in spawn order and never reused. Everything order-dependent sorts by it |
 | **Spatial grid** (`SpatialGrid`) | Moving entities bucketed in 8-tile cells, for neighbour queries and picking |
-| **Stat** (`sim_core::Stat`) | A number a bonus can change: morale, defence, attack, food yield, march speed, smithing speed, trade value, loyalty drift, threat radius (flat tiles) captain slots (flat), veteran rate, desertion, forage yield and recruit chance. Append only: data files and saves name it |
+| **Stat** (`sim_core::Stat`) | A number a bonus can change: morale, defence, attack, food yield, march speed, smithing speed, trade value, loyalty drift, threat radius (flat tiles), captain slots (flat), veteran rate, desertion, forage yield and recruit chance. Append only: data files and saves name it |
 | **Start spot** | Where a run's band starts: a tile in a region far from the rival's seat, away from settlements, with two or three monuments nearby, of a seeded kind (coast, forest edge, hills). Drawn by `sim_military::draw_start` |
 | **State hash** | An FNV hash of every registered component and resource. Equal hashes mean equal state |
 | **Stream** (RNG stream) | `SimSeed::stream(key, tick)`: an independent random generator for a system, agent and tick |
