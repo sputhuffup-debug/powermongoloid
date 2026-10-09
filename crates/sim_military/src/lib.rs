@@ -22,8 +22,9 @@
 //!    [`conquest::revolts`], the daily [`wild::regrow`] and
 //!    [`drifters::draw`], [`requests::step`], [`invitations::step`], the
 //!    dominion tally ([`progression::dominion::tally`]), the champion's
-//!    rank-ups ([`progression::champion::rank_ups`]) and
-//!    [`progression::rebuild_modifiers`].
+//!    rank-ups ([`progression::champion::rank_ups`]),
+//!    [`progression::rebuild_modifiers`], the rival's clock
+//!    ([`rival::clock`]) and the pacing director ([`director::step`]).
 //!
 //! Settlements change hands through [`conquest::transfer`]: an `Attack`
 //! that breaks the militia and holds the centre, or a revolt (GP-05,
@@ -47,10 +48,18 @@
 //! threat radius here; yields, smithing and loyalty in sim_agents).
 //!
 //! Also here: army data ([`Army`], `army.ron`), [`spawn::spawn_army`] and
-//! the playtest setup, the scripted [`raiders`] (in `SimInputSet::Ai`), and
+//! the playtest setup, the scripted [`raiders`] and the rival's
+//! [`rival::think`] (in `SimInputSet::Ai`, in that order), and
 //! runs ([`progression`], `progression.ron`, GP-21/27): the start draws,
 //! [`setup_run`], offers and the champion, and dominion boons and captain
 //! slots from the land held ([`progression::dominion`], GP-24/25).
+//!
+//! In a run, the rival warlord ([`rival`], GP-28) holds the region around
+//! its seat, levies men into the seat's garrison and, from mid-run, sends
+//! raiding bands against the player; taking its seat wins the run. The
+//! pacing director ([`director`], GP-16, `director.ron`) watches the
+//! player's tension and brings raider bands so the run never goes quiet
+//! for long.
 //!
 //! Soldiers rank up by battles survived ([`veterans`], SIM-36); the
 //! champion ranks up by deeds, picks traits and, once a run, passes the
@@ -64,6 +73,7 @@ pub mod combat;
 pub mod components;
 pub mod conquest;
 pub mod data;
+pub mod director;
 pub mod drifters;
 pub mod index;
 pub mod invitations;
@@ -72,6 +82,7 @@ pub mod orders;
 pub mod progression;
 pub mod raiders;
 pub mod requests;
+pub mod rival;
 pub mod soldiers;
 pub mod spawn;
 pub mod threat;
@@ -92,6 +103,7 @@ pub use components::{
 };
 pub use conquest::{militia_or_foes_near, owner_of, transfer, transfer_seeded};
 pub use data::{Army, RankGain, VeteranData};
+pub use director::{DirectorData, Director, Personality, RaiderBandData, TensionWeights};
 pub use index::{ArmyIndex, ArmyInfo, FighterGrid, Side};
 pub use monuments::{Guard, Holder, NoUpkeep};
 pub use orders::{CommandInbox, arm_followers, enlist, enlist_into, find_settlement, provoke};
@@ -103,6 +115,7 @@ pub use progression::{
     setup_run,
 };
 pub use requests::{Request, RequestBoard, RequestKind, Reward};
+pub use rival::{RivalBand, RivalData, RivalState};
 pub use soldiers::slot_offset;
 pub use spawn::{ArmySpec, Skirmish, nearest_passable, setup_battle, setup_skirmish, spawn_army};
 pub use veterans::Veteran;
@@ -146,7 +159,10 @@ impl Plugin for MilitaryPlugin {
             .unwrap_or_else(Economy::default_data);
         app.insert_resource(Army::default_data(&calendar, &econ))
             .insert_resource(Progression::default_data())
+            .insert_resource(DirectorData::default_data())
             .init_resource::<RunProgress>()
+            .init_resource::<RivalState>()
+            .init_resource::<Director>()
             .init_resource::<WildFood>()
             .init_resource::<RequestBoard>()
             .init_resource::<Factions>()
@@ -185,7 +201,10 @@ impl Plugin for MilitaryPlugin {
             .add_systems(
                 FixedUpdate,
                 (
-                    raiders::think.in_set(SimInputSet::Ai),
+                    // GP-16, GP-28: the scripted factions, in a fixed order.
+                    (raiders::think, rival::think)
+                        .chain()
+                        .in_set(SimInputSet::Ai),
                     (
                         orders::collect_commands,
                         orders::apply_commands.run_if(orders::has_commands),
@@ -242,6 +261,10 @@ impl Plugin for MilitaryPlugin {
             .register_hashed::<NoUpkeep>()
             .register_hashed::<Veteran>()
             .register_hashed::<ChampionRank>()
+            .register_hashed_resource::<RivalState>()
+            .register_hashed::<RivalBand>()
+            .register_hashed_resource::<DirectorData>()
+            .register_hashed_resource::<Director>()
             .exempt_from_hash::<MilitaryLog>("UI history; its effects are in the hashed state")
             .exempt_from_hash::<CommandInbox>("always empty between ticks")
             .exempt_from_hash::<ArmyIndex>("rebuilt from hashed state every tick")

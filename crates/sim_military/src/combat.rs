@@ -20,6 +20,7 @@ use crate::components::{ArmyStats, Captain, Equipment, Follower, MilitaryLog};
 use crate::data::Army;
 use crate::index::FighterGrid;
 use crate::progression::Champion;
+use crate::rival::{RivalBand, RivalState};
 use crate::veterans::{Veteran, army_of, rank_gain};
 
 /// Who fell this tick and where, for morale (cleared every tick).
@@ -99,8 +100,14 @@ pub(crate) fn resolve_strikes(
     )>,
     mut captains: Query<&mut Captain>,
     followers: Query<&Follower>,
+    rival: Res<RivalState>,
+    positions: Query<&Position>,
 ) {
     let _span = tracing::info_span!("sim_military::resolve_strikes").entered();
+    // GP-28: the rival's seat stands in for walls: blows on the rival's
+    // people near it are divided by `Defence + bonus` (no bonus outside a
+    // run).
+    let seat_radius = (rival.defence_bonus > 0.0).then_some(rival.seat_radius);
     casualties.slain_by.clear();
     // Only fighters swing; blows land in SpawnId order.
     let mut order: Vec<(SpawnId, Entity)> = grid
@@ -155,8 +162,17 @@ pub(crate) fn resolve_strikes(
         }
         // GP-23: the striker's Attack and the victim's Defence modifiers
         // (exactly 1.0 without any).
+        let mut guard = mods.mult(victim_side.0, Stat::Defence);
+        if let Some(r) = seat_radius
+            && victim_side.0 == FactionId::RIVAL
+            && positions.get(target).is_ok_and(|p| {
+                (p.0 - rival.seat_center).as_vec2().length() <= r
+            })
+        {
+            guard += rival.defence_bonus;
+        }
         let damage = (attack * bonus * roll * mods.mult(faction, Stat::Attack) - defense).max(1.0)
-            / mods.mult(victim_side.0, Stat::Defence);
+            / guard;
         victim.health -= damage;
         victim.morale = (victim.morale - 0.01).max(0.0);
         let killed = !victim.alive();
@@ -310,6 +326,10 @@ fn succeed(world: &mut World, fallen: Entity, captain: Captain, loss: f32, tick:
         .entity_mut(heir)
         .remove::<Follower>()
         .insert((captain, baggage));
+    // GP-28: a rival raiding band goes on raiding under its heir.
+    if let Some(band) = world.get::<RivalBand>(fallen).copied() {
+        world.entity_mut(heir).insert(band);
+    }
     world.resource_mut::<MilitaryLog>().push(
         tick,
         format!("{who}: the captain fell; {} takes command", heir_id.0),

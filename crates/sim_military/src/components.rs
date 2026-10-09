@@ -248,12 +248,23 @@ pub struct Raider {
     pub next_think: u64,
     /// The settlement (SpawnId) raided last.
     pub last_target: Option<u64>,
+    /// GP-16: the settlement (SpawnId) the pacing director sent the band
+    /// to raid first; cleared once it has been raided. `None` for bands
+    /// the director didn't aim.
+    pub target: Option<u64>,
 }
 
 impl StateHash for Raider {
     fn hash_state(&self, h: &mut StateHasher) {
         h.u64(self.next_think);
         h.u64(self.last_target.map_or(u64::MAX, |t| t));
+        match self.target {
+            Some(t) => {
+                h.u8(1);
+                h.u64(t);
+            }
+            None => h.u8(0),
+        }
     }
 }
 

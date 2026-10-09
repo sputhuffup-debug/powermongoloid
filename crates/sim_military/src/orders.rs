@@ -240,7 +240,31 @@ fn appoint(world: &mut World, issuer: FactionId, follower: u64) -> Result<(), &'
     {
         return Err("no captain slot");
     }
-    // Split the army.
+    split_army(world, old, f, None, old_captain.posture);
+    let who = faction_name(world, issuer);
+    log(world, format!("{who}: {follower} appointed captain"));
+    Ok(())
+}
+
+/// GP-01, GP-28: splits a band off `old`'s army under `f`, one of its
+/// followers, who becomes a captain of the same faction with `posture`.
+/// The other followers, by SpawnId, are numbered from 0: `take: None`
+/// moves every odd-numbered one (half the army, as `AppointCaptain`
+/// does) and half of each baggage good (rounded down); `take: Some(n)`
+/// moves the first `n` odd-numbered ones, then even-numbered ones (the
+/// rival's raiding bands), with each baggage good shared by head count
+/// (rounded down). A band split off in the middle of a battle is still in
+/// it (SIM-36). Returns how many followers moved. Call from serial steps.
+pub(crate) fn split_army(
+    world: &mut World,
+    old: Entity,
+    f: Entity,
+    take: Option<u32>,
+    posture: Posture,
+) -> u32 {
+    let Some(old_captain) = world.get::<Captain>(old).cloned() else {
+        return 0;
+    };
     let mut q = world.query::<(Entity, &SpawnId, &Follower)>();
     let mut members: Vec<(SpawnId, Entity)> = q
         .iter(world)
@@ -248,32 +272,43 @@ fn appoint(world: &mut World, issuer: FactionId, follower: u64) -> Result<(), &'
         .map(|(e, id, _)| (*id, e))
         .collect();
     members.sort_unstable();
-    let mut moved = 0;
-    for (_, e) in members.iter().skip(1).step_by(2) {
-        world.get_mut::<Follower>(*e).expect("follower").captain = f;
-        moved += 1;
+    let odd = members.iter().skip(1).step_by(2);
+    let chosen: Vec<Entity> = match take {
+        None => odd.map(|m| m.1).collect(),
+        Some(n) => odd
+            .chain(members.iter().step_by(2))
+            .take(n as usize)
+            .map(|m| m.1)
+            .collect(),
+    };
+    for &e in &chosen {
+        world.get_mut::<Follower>(e).expect("follower").captain = f;
     }
+    let moved = chosen.len() as u32;
+    // The band's share of each good: half, or by head count.
+    let (num, den) = match take {
+        None => (1u64, 2u64),
+        Some(_) => (moved as u64 + 1, members.len() as u64 + 2),
+    };
     let capacity = world.resource::<Army>().baggage_capacity(moved + 1);
     let mut baggage = Stockpile::with_capacity(capacity);
     if let Some(mut old_bag) = world.get_mut::<Stockpile>(old) {
         let goods: Vec<(GoodId, u32)> = old_bag.goods.iter().map(|(g, q)| (*g, *q)).collect();
         for (g, q) in goods {
-            let half = old_bag.take(g, q / 2);
-            baggage.add(g, half);
+            let share = old_bag.take(g, (q as u64 * num / den) as u32);
+            baggage.add(g, share);
         }
     }
     // SIM-36: a band split off in the middle of a battle is still in it,
     // so the men who fought count it when it ends.
-    let mut captain = Captain::new(issuer, old_captain.posture);
+    let mut captain = Captain::new(old_captain.faction, posture);
     captain.battle_since = old_captain.battle_since;
     captain.last_engaged = old_captain.last_engaged;
     world
         .entity_mut(f)
         .remove::<Follower>()
         .insert((captain, baggage));
-    let who = faction_name(world, issuer);
-    log(world, format!("{who}: {follower} appointed captain"));
-    Ok(())
+    moved
 }
 
 /// Daily food value an army eats.

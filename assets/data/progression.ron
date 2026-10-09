@@ -256,4 +256,58 @@
         points: (battle: 1, monument: 2, settlement: 3, request: 1),
         ranks: [3, 7, 12, 18, 25],
     ),
+
+    // GP-28: the rival warlord's clock, one row per difficulty (the run's
+    // RunConfig picks it). The rival starts with every settlement of its
+    // seat's region (residents' loyalty `start_loyalty`) and `garrison`
+    // armed men at the seat. Every `levy_every_days` it enlists
+    // `levy_size` of its own villagers into the garrison. The seat's
+    // defence bonus steps up on the listed days: blows on the rival's
+    // people within `seat_radius` tiles of the seat are divided by
+    // (Defence + bonus), so +0.5 takes half again as many blows. From
+    // `raid_from_day`, every `raid_every_days`, a band of `raid_size`
+    // (at most half the garrison) leaves the seat to raid the player. The
+    // stronger and weaker rival run modifiers scale the garrison, levies
+    // and defence bonus. A day is 2,400 ticks (about 4 minutes at 1x).
+    rival: [
+        (
+            difficulty: Steady,
+            start_loyalty: 0.8,
+            garrison: 24,
+            garrison_food_days: 3.0,
+            seat_radius: 30.0,
+            levy_every_days: 2.0,
+            levy_size: 6,
+            defence_steps: [(0.0, 0.0), (5.0, 0.25), (10.0, 0.5), (20.0, 0.75), (30.0, 1.0)],
+            raid_from_day: 10.0,
+            raid_every_days: 3.0,
+            raid_size: 10,
+        ),
+        (
+            difficulty: Chaotic,
+            start_loyalty: 0.75,
+            garrison: 24,
+            garrison_food_days: 3.0,
+            seat_radius: 30.0,
+            levy_every_days: 2.0,
+            levy_size: 6,
+            defence_steps: [(0.0, 0.0), (5.0, 0.25), (10.0, 0.5), (20.0, 0.75), (30.0, 1.0)],
+            raid_from_day: 8.0,
+            raid_every_days: 2.0,
+            raid_size: 12,
+        ),
+        (
+            difficulty: Harsh,
+            start_loyalty: 0.85,
+            garrison: 32,
+            garrison_food_days: 3.0,
+            seat_radius: 30.0,
+            levy_every_days: 1.5,
+            levy_size: 8,
+            defence_steps: [(0.0, 0.25), (4.0, 0.5), (8.0, 0.75), (16.0, 1.0), (24.0, 1.5)],
+            raid_from_day: 8.0,
+            raid_every_days: 2.5,
+            raid_size: 14,
+        ),
+    ],
 )

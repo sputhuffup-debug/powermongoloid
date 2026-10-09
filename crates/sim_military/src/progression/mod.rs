@@ -30,7 +30,7 @@ use bevy_math::IVec2;
 use serde::{Deserialize, Serialize};
 use sim_agents::{CombatStats, Deed, Villagers};
 use sim_core::{
-    Allegiance, FactionId, FactionModifiers, ModifierSource, OfferKind, RunState, SimEvent,
+    Allegiance, Difficulty, FactionId, FactionModifiers, ModifierSource, OfferKind, RunState, SimEvent,
     SimEventKind, SimSeed, SpawnId, Stat, StateHash, StateHasher, post_offer,
 };
 use sim_economy::{Economy, SettlementEconomy, Stockpile};
@@ -38,6 +38,7 @@ use sim_world::{Monument, MonumentKind, RegionId};
 
 use crate::components::{Equipment, Factions, Follower};
 use crate::data::UnitStats;
+use crate::rival::RivalData;
 use crate::spawn::{ArmySpec, soldier_stats, spawn_army};
 
 pub use champion::{ChampionData, ChampionPoints, ChampionRank, Feat};
@@ -440,6 +441,8 @@ pub struct ProgressionData {
     pub dominion: DominionData,
     /// The champion's rank points and ranks (SIM-35).
     pub champion: ChampionData,
+    /// The rival's clock, one row per difficulty (GP-28).
+    pub rival: Vec<RivalData>,
 }
 
 /// Progression data (GP-21, GP-27, SIM-34). Hashed as its RON text.
@@ -662,6 +665,20 @@ impl Progression {
         if chance > 1.0 + 1e-6 {
             return Err("progression: monument guard chances add up to more than 1".into());
         }
+        for difficulty in Difficulty::ALL {
+            match d.rival.iter().filter(|r| r.difficulty == difficulty).count() {
+                1 => {}
+                n => {
+                    return Err(format!(
+                        "progression: rival needs one row for {}, found {n}",
+                        difficulty.name()
+                    ));
+                }
+            }
+        }
+        for r in &d.rival {
+            r.validate()?;
+        }
         Ok(())
     }
 
@@ -678,6 +695,11 @@ impl Progression {
     /// Run modifier card `card`.
     pub fn modifier(&self, card: u16) -> Option<&ModifierData> {
         self.data.modifiers.get(card as usize)
+    }
+
+    /// The rival's clock for `difficulty` (GP-28).
+    pub fn rival(&self, difficulty: Difficulty) -> Option<&RivalData> {
+        self.data.rival.iter().find(|r| r.difficulty == difficulty)
     }
 }
 
@@ -886,6 +908,10 @@ pub fn setup_run(world: &mut World) -> Option<RunStart> {
     crate::monuments::setup(world, draws.start);
     // SIM-38: the island's wild food, full at the start.
     crate::wild::ensure_built(world);
+    // GP-28: the rival's lands, its seat's garrison and its clock.
+    crate::rival::setup(world, draws.seat, draws.seat_center, draws.rival_region);
+    // GP-16: the pacing director's first low-tension band waits its spacing.
+    crate::director::setup(world);
     let offer = post_offer(
         world,
         FactionId::PLAYER,
@@ -992,8 +1018,8 @@ fn spoil_stores(world: &mut World, fraction: f32) {
 /// 9. [`champion::rank_ups`] (run)
 /// 10. [`rebuild_modifiers`], then [`dominion::refresh_slots`] (run), which
 ///     reads the rebuilt modifiers
-/// 11. `rival::clock` (run; step 7)
-/// 12. `director::step` (run; step 7)
+/// 11. [`crate::rival::clock`] (run)
+/// 12. [`crate::director::step`] (run)
 pub fn progress(world: &mut World) {
     let _span = tracing::info_span!("sim_military::progress").entered();
     crate::veterans::end_battles(world);
@@ -1007,6 +1033,8 @@ pub fn progress(world: &mut World) {
     champion::rank_ups(world);
     rebuild_modifiers(world);
     dominion::refresh_slots(world);
+    crate::rival::clock(world);
+    crate::director::step(world);
 }
 
 /// GP-23, GP-24, SIM-34: rebuilds [`FactionModifiers`] from scratch, once a

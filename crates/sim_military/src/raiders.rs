@@ -7,6 +7,7 @@ use bevy_ecs::prelude::*;
 use sim_core::{
     CommandKind, FactionId, OrderSpec, Position, RunState, SimCommand, SimTick, SpawnId,
 };
+use sim_agents::Owner;
 use sim_economy::SettlementEconomy;
 use sim_world::Settlement;
 
@@ -21,9 +22,12 @@ const THINK_EVERY: u64 = 300;
 const RAID_BELOW_DAYS: f32 = 2.0;
 
 /// Runs in `SimInputSet::Ai`, after scripted and player input, so its
-/// commands always arrive in the same order (guide G2). In a run, raiders
-/// hunt only the player's armies (guide D2), and never a monument's guard
-/// camp (GP-23).
+/// commands always arrive in the same order (guide G2). Raiders never hunt
+/// a monument's guard camp (GP-23). In a run, their prey is the player's
+/// alone (guide D2): they hunt only the player's armies and raid only the
+/// player's settlements, and when hungry with none of the player's
+/// settlements to raid they hunt anyway. A band the pacing director aimed
+/// (`Raider::target`, GP-16) first raids its target, then hunts.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // Bevy system parameters.
 pub(crate) fn think(
     tick: Res<SimTick>,
@@ -33,7 +37,7 @@ pub(crate) fn think(
     villagers: Res<sim_agents::Villagers>,
     mut raiders: Query<(Entity, &SpawnId, &Captain, &Position, &mut Raider)>,
     captains: Query<(&SpawnId, &Captain, &Position), (Without<Raider>, Without<Guard>)>,
-    settlements: Query<(&SpawnId, &Settlement, &SettlementEconomy)>,
+    settlements: Query<(&SpawnId, &Settlement, &SettlementEconomy, Option<&Owner>)>,
     mut out: MessageWriter<SimCommand>,
 ) {
     let _span = tracing::info_span!("sim_military::raiders").entered();
@@ -56,6 +60,26 @@ pub(crate) fn think(
         if raiding {
             continue;
         }
+        // GP-16: the director's target first, once.
+        if let Some(t) = raider.target {
+            if raider.last_target != Some(t)
+                && settlements
+                    .iter()
+                    .any(|(sid, _, se, _)| sid.0 == t && se.population > 0)
+            {
+                raider.last_target = Some(t);
+                out.write(SimCommand::ai(
+                    captain.faction,
+                    CommandKind::IssueOrder {
+                        captain: id.0,
+                        order: OrderSpec::GatherFood { settlement: t },
+                        queue: false,
+                    },
+                ));
+                continue;
+            }
+            raider.target = None;
+        }
         let prey = captains
             .iter()
             .filter(|(_, c, _)| {
@@ -67,17 +91,26 @@ pub(crate) fn think(
         let order = if let Some((_, _, at)) = prey.filter(|_| days >= RAID_BELOW_DAYS) {
             OrderSpec::MoveTo { x: at.x, y: at.y }
         } else {
-            // Otherwise raid the nearest village not raided last.
-            let Some((_, sid)) = settlements
+            // Otherwise raid the nearest village not raided last (in a
+            // run, the player's).
+            let village = settlements
                 .iter()
-                .filter(|(sid, _, se)| se.population > 0 && Some(sid.0) != raider.last_target)
-                .map(|(sid, s, _)| (s.center.as_vec2().distance(here), sid.0))
-                .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
-            else {
-                continue;
-            };
-            raider.last_target = Some(sid);
-            OrderSpec::GatherFood { settlement: sid }
+                .filter(|(sid, _, se, owner)| {
+                    se.population > 0
+                        && Some(sid.0) != raider.last_target
+                        && (!run.in_run()
+                            || owner.is_some_and(|o| o.faction == FactionId::PLAYER))
+                })
+                .map(|(sid, s, ..)| (s.center.as_vec2().distance(here), sid.0))
+                .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            match (village, prey) {
+                (Some((_, sid)), _) => {
+                    raider.last_target = Some(sid);
+                    OrderSpec::GatherFood { settlement: sid }
+                }
+                (None, Some((_, _, at))) if run.in_run() => OrderSpec::MoveTo { x: at.x, y: at.y },
+                _ => continue,
+            }
         };
         out.write(SimCommand::ai(
             captain.faction,
