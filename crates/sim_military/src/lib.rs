@@ -96,10 +96,11 @@ pub use index::{ArmyIndex, ArmyInfo, FighterGrid, Side};
 pub use monuments::{Guard, Holder, NoUpkeep};
 pub use orders::{CommandInbox, arm_followers, enlist, enlist_into, find_settlement, provoke};
 pub use progression::{
-    Champion, ChampionData, ChampionPoints, ChampionRank, DominionData, DriftersData, ForageData, GoodwillDeeds, GuardData, GuardKind, Holding,
-    Holdings, InvitationData, MonumentBonus, MonumentData, Progression, RegionTally, RequestData,
-    RunProgress, RunStart, RunWorld, StartDraws, StartTerrain, Traits, captain_slots, champion_of,
-    draw_start, rebuild_modifiers, setup_run,
+    Champion, ChampionData, ChampionPoints, ChampionRank, DominionData, DriftersData, ForageData,
+    GoodwillDeeds, GuardData, GuardKind, Holding, Holdings, InvitationData, MonumentBonus,
+    MonumentData, Progression, RegionTally, RequestData, RunProgress, RunStart, RunWorld,
+    StartDraws, StartTerrain, Traits, captain_slots, champion_of, draw_start, rebuild_modifiers,
+    setup_run,
 };
 pub use requests::{Request, RequestBoard, RequestKind, Reward};
 pub use soldiers::slot_offset;

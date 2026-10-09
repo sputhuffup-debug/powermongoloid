@@ -542,10 +542,19 @@ fn dominion_boons_come_once_per_threshold() {
     );
     assert!(s >= low && s < high, "25% re-crossed: {s}");
     assert!(dominion_offers(&app).is_empty(), "no second offer for 25%");
+    // SIM-35 (step 6): the accepted invitation earned the champion rank
+    // points, so a trait offer may have come with it; nothing else did.
+    let trait_offers = app
+        .world()
+        .resource::<Offers>()
+        .pending
+        .iter()
+        .filter(|o| o.id >= ids_before && matches!(o.kind, OfferKind::Trait { .. }))
+        .count() as u64;
     assert_eq!(
         next_offer_id(&app),
-        ids_before + 1,
-        "only the invitation was posted"
+        ids_before + 1 + trait_offers,
+        "only the invitation (and the champion's trait offers) were posted"
     );
     assert_eq!(slots(&mut app), expected_slots(&mut app));
     assert_slots_stored(&mut app);

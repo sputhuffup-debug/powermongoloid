@@ -174,6 +174,9 @@ fn state_hash_covers_every_sim_component() {
 /// a 4-man band spawned before the first tick at a quiet unguarded
 /// monument takes it by holding it, so a `Holder` changes hands and
 /// `FactionModifiers` carries a monument bonus.
+/// Step 6 (SIM-35, SIM-36): the warband's assault is a battle that ends
+/// within the run, so soldiers count battles and rank up, and the champion
+/// carries points from the conquest and the monument.
 #[test]
 fn run_state_hash_covers_every_sim_component() {
     let mut app = headless_app(HeadlessConfig::run(42, RunConfig::default()));
@@ -321,6 +324,47 @@ fn run_state_hash_covers_every_sim_component() {
     assert_eq!(
         Some(progress.captain_slots),
         sim_military::captain_slots(app.world_mut(), FactionId::PLAYER)
+    );
+    // Step 6 (SIM-35, SIM-36): the assault on the hamlet was a battle,
+    // which ended an hour after its last blow; its fighters count it and
+    // rank up, and the conquest and the monument earned the champion
+    // points.
+    let battle = app
+        .world()
+        .resource::<sim_core::Chronicle>()
+        .entries()
+        .iter()
+        .find(|e| e.event.kind == sim_core::SimEventKind::Battle && e.event.subject == warband_id)
+        .map(|e| (e.tick, e.event.faction, e.event.other, e.event.amount));
+    let veterans = {
+        let world = app.world_mut();
+        let mut q = world.query::<&sim_military::Veteran>();
+        q.iter(world)
+            .filter(|v| v.battles > 0 && v.rank > 0)
+            .count()
+    };
+    let rank = *app
+        .world()
+        .get::<sim_military::ChampionRank>(champion)
+        .unwrap();
+    println!(
+        "warband battle (tick, faction, fought, lost) {battle:?}; {veterans} ranked; {rank:?}"
+    );
+    assert_eq!(
+        battle.map(|b| b.1),
+        Some(FactionId::PLAYER),
+        "no battle ended"
+    );
+    assert!(veterans > 0, "no soldier ranked up");
+    let points = app
+        .world()
+        .resource::<sim_military::Progression>()
+        .data
+        .champion
+        .points;
+    assert!(
+        rank.points >= points.settlement + points.monument,
+        "{rank:?}"
     );
     let missing = unhashed_state(app.world_mut());
     assert!(

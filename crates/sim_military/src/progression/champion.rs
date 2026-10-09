@@ -180,7 +180,10 @@ pub fn rank_ups(world: &mut World) {
                     .other(points as u64)
                     .amount(rank as i32),
             );
-            let held = world.get::<Traits>(e).map(|t| t.0.clone()).unwrap_or_default();
+            let held = world
+                .get::<Traits>(e)
+                .map(|t| t.0.clone())
+                .unwrap_or_default();
             let choices = draw_traits(&mut rng, &data.data.champion_traits, &held);
             if !choices.is_empty() {
                 post_offer(
@@ -230,7 +233,9 @@ pub fn fallen(world: &mut World, dead: Entity, faction: FactionId) {
         return;
     }
     let dead_id = world.get::<SpawnId>(dead).map_or(0, |s| s.0);
-    let at = world.get::<Position>(dead).map_or_else(Default::default, |p| p.0);
+    let at = world
+        .get::<Position>(dead)
+        .map_or_else(Default::default, |p| p.0);
     let cause = cause_of_death(world, dead);
     world.write_message(
         SimEvent::new(SimEventKind::ChampionFell, faction)
@@ -246,7 +251,12 @@ pub fn fallen(world: &mut World, dead: Entity, faction: FactionId) {
         Option<&ChampionRank>,
         Option<&Veteran>,
     )>();
-    let mut candidates: Vec<(std::cmp::Reverse<u8>, std::cmp::Reverse<u8>, SpawnId, Entity)> = q
+    let mut candidates: Vec<(
+        std::cmp::Reverse<u8>,
+        std::cmp::Reverse<u8>,
+        SpawnId,
+        Entity,
+    )> = q
         .iter(world)
         .filter(|(e, _, c, cs, ..)| *e != dead && c.faction == faction && cs.alive())
         .map(|(e, id, _, _, r, v)| {
@@ -266,25 +276,34 @@ pub fn fallen(world: &mut World, dead: Entity, faction: FactionId) {
         world
             .resource_mut::<RunState>()
             .finish(RunOutcome::Lost, cause);
-        log(world, format!("{who}: the champion fell, and no one is left to follow"));
+        let why = if used {
+            "the one succession is spent"
+        } else {
+            "no captain is left to follow"
+        };
+        log(world, format!("{who}: the champion fell, and {why}"));
         return;
     };
     let rank = world.get::<ChampionRank>(dead).copied().unwrap_or_default();
-    let traits = world.get::<Traits>(dead).map(|t| t.0.clone()).unwrap_or_default();
+    let traits = world
+        .get::<Traits>(dead)
+        .map(|t| t.0.clone())
+        .unwrap_or_default();
     let kept: Vec<u16> = traits[..traits.len() / 2].to_vec();
     world
         .entity_mut(dead)
         .remove::<(Champion, ChampionRank, Traits)>();
-    let mut own = world.get::<Traits>(heir).map(|t| t.0.clone()).unwrap_or_default();
+    let mut own = world
+        .get::<Traits>(heir)
+        .map(|t| t.0.clone())
+        .unwrap_or_default();
     own.extend(kept.iter().copied());
     world.entity_mut(heir).insert((Champion, rank, Traits(own)));
     world.resource_mut::<RunProgress>().succession_used = true;
     // Trait offers waiting for the fallen go to the heir.
     for o in &mut world.resource_mut::<Offers>().pending {
         if o.kind == (OfferKind::Trait { person: dead_id }) {
-            o.kind = OfferKind::Trait {
-                person: heir_id.0,
-            };
+            o.kind = OfferKind::Trait { person: heir_id.0 };
         }
     }
     let heir_at = world.get::<Position>(heir).map_or(at, |p| p.0);
@@ -298,7 +317,10 @@ pub fn fallen(world: &mut World, dead: Entity, faction: FactionId) {
     );
     log(
         world,
-        format!("{who}: the champion fell; captain {} takes up the banner", heir_id.0),
+        format!(
+            "{who}: the champion fell; captain {} takes up the banner",
+            heir_id.0
+        ),
     );
 }
 
@@ -315,7 +337,10 @@ fn cause_of_death(world: &World, dead: Entity) -> Cause {
         return Cause::Death { faction: by };
     }
     let starving = world.resource::<Army>().data.upkeep.starving;
-    if world.get::<Needs>(dead).is_some_and(|n| n.hunger >= starving) {
+    if world
+        .get::<Needs>(dead)
+        .is_some_and(|n| n.hunger >= starving)
+    {
         return Cause::Starvation;
     }
     Cause::Death {
@@ -351,15 +376,11 @@ mod tests {
         }
         let mut rng = seed.stream(rng_key("test"), 0);
         assert_eq!(draw_traits(&mut rng, &[2, 2], &[]), vec![2], "pool of one");
-        let mut rng = sim_core::SimSeed(42).stream(rng_key("sim_military::progression::traits") ^ 99, 100);
-        for _ in 0..6 {
-            println!("{:?}", draw_traits(&mut rng, &pool, &[0]));
-        }
     }
 
     /// SIM-35: points past two ranks at once give two `RankUp`s and two
     /// offers of three traits for the champion, drawn in turn from one
-    /// stream (so they differ), at the hourly step; nothing in between.
+    /// stream, at the hourly step; nothing in between.
     #[test]
     fn points_past_two_ranks_post_two_trait_offers() {
         let (mut app, start) = run_app(42);
@@ -368,7 +389,10 @@ mod tests {
         let id = world.get::<SpawnId>(start.champion).unwrap().0;
         app.step(1);
         let world = app.world_mut();
-        world.get_mut::<ChampionRank>(start.champion).unwrap().points = ranks[1];
+        world
+            .get_mut::<ChampionRank>(start.champion)
+            .unwrap()
+            .points = ranks[1];
         app.step(98); // ticks 1..=98
         app.step(1); // tick 99
         assert_eq!(
@@ -403,12 +427,14 @@ mod tests {
             assert_eq!(o.choices.len(), 3);
             assert!(o.choices.iter().all(|c| !held.contains(c)));
         }
-        let mut rng = sim_core::SimSeed(42).stream(rng_key("sim_military::progression::traits") ^ id, 100);
+        // Both from `traits ^ champion` at the posting tick, in turn.
+        let seed = *world.resource::<SimSeed>();
+        let mut rng = seed.stream(rng_key("sim_military::progression::traits") ^ id, 100);
         let pool = world.resource::<Progression>().data.champion_traits.clone();
-        let a = draw_traits(&mut rng, &pool, held);
-        let b = draw_traits(&mut rng, &pool, held);
-        println!("id {id} held {held:?} {a:?} {b:?} offers {:?} {:?}", offers[0].choices, offers[1].choices);
-        assert_ne!(offers[0].choices, offers[1].choices, "drawn in turn");
+        let first = draw_traits(&mut rng, &pool, held);
+        let second = draw_traits(&mut rng, &pool, held);
+        println!("offers {:?} and {:?}", offers[0].choices, offers[1].choices);
+        assert_eq!((&offers[0].choices, &offers[1].choices), (&first, &second));
         let ups: Vec<i32> = world
             .resource::<Chronicle>()
             .entries()

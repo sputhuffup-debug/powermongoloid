@@ -118,6 +118,14 @@ Monuments (GP-23, [ADR 0015](../adr/0015-monuments-and-faction-modifiers.md)) ar
 3. **Give it a bonus:** add a `monuments.kinds` entry in `assets/data/progression.ron` (`stat`, `bonus`, `cap`, `set_bonus`). If its stat has no consumer yet, add one (see "Add a modifier"). `shipped_monument_data_fits_the_island` in `crates/sim_military/src/progression/mod.rs` checks every kind has an entry.
 4. **Document it** in [DATA.md](DATA.md) and the glossary's Monument row, and test the bonus with `monument_modifiers` like `caps_and_set_bonus`.
 
+## Add a trait or boon
+
+Traits (SIM-34) and boons (GP-24, GP-27) are cards in `assets/data/progression.ron`, read by `crates/sim_military/src/progression/mod.rs`. Example: the "Quartermaster" trait, whose `(Desertion, -0.1)` makes the champion's soldiers 10% less likely to desert.
+1. **Append the card:** a `traits` entry (`id`, `name`, `phrase`, `effects`) or a `boons` entry (`id`, `name`, `text`, `when: Start` or `Dominion`, `weight`, `effects`, and for a Dominion boon optionally `favour`). The `id` is the card's index: append only, never reorder (offers, `RunProgress` and saves store it).
+2. **Use effects something reads.** A `Stat(stat, value)` effect is folded into `FactionModifiers` at the next hourly rebuild (`rebuild_modifiers`): the trait's for its champion's faction, the boon's for the player. Pick a stat with a consumer (DATA.md's `traits[].effects` row lists them); a new kind of effect needs a consumer first (see "Add a modifier"). Boons also have one-off effects applied at the pick in `crates/sim_military/src/progression/offers.rs` (`FoodDays`, `ArmBand`, `Goodwill`, `CaptainSlots`); a new one is an appended `Effect` variant handled there.
+3. **Let the champion be offered a trait** by adding its id to `champion_traits`: its starting trait and each rank's offer of three come from that pool (`crates/sim_military/src/progression/champion.rs`). Leave negative traits (Shaken) out of it.
+4. **Check it:** `shipped_data_is_valid` and `rejects_bad_data` in `crates/sim_military/src/progression/mod.rs` must pass; re-run `--test champion` (traits) or `--test run_start` and `--test dominion` (boons), whose draws change with a new card. Document the card's effect in [DATA.md](DATA.md) if it needs more than its `text`.
+
 ## Add a modifier
 
 A modifier is a `Stat` in `crates/sim_core/src/modifiers.rs` that monuments, boons, traits and run modifiers can raise, summed per faction into `FactionModifiers` by `rebuild_modifiers` (`crates/sim_military/src/progression/mod.rs`). Example: `MarchSpeed`, read by both `move_captains` and `move_soldiers` in `crates/sim_military/src/soldiers.rs`.

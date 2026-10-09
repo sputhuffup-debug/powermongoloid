@@ -110,7 +110,7 @@ pub fn abandon(world: &mut World, issuer: FactionId) -> Result<(), &'static str>
 ///   it is applied, and spreads to its neighbours, later this tick (GP-22).
 /// - `Stat`: nothing now; [`super::rebuild_modifiers`] folds the picked
 ///   boons into `FactionModifiers` at the next game hour (a `VeteranRate`
-///   boon waits there for the veterans of M4 step 6).
+///   boon then speeds veteran ranks, `crate::veterans`).
 /// - `CaptainSlots`: nothing now; [`super::captain_slots`] counts the picked
 ///   boons' slots, so they count from this pick on (GP-25).
 ///

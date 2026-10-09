@@ -90,7 +90,8 @@ pub enum Holding {
     /// SpawnId) is the player's (1 or 0).
     LargestSettlement,
     /// Battles the player has fought in the run: `SimEventKind::Battle`
-    /// chronicle entries of the player's faction (M4 step 6 writes them).
+    /// chronicle entries of the player's faction (`veterans::end_battles`
+    /// writes them).
     Battles,
     /// Enemies the player's soldiers have killed (`FactionStats.kills`).
     Kills,

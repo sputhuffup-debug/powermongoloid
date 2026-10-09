@@ -262,10 +262,15 @@ fn appoint(world: &mut World, issuer: FactionId, follower: u64) -> Result<(), &'
             baggage.add(g, half);
         }
     }
+    // SIM-36: a band split off in the middle of a battle is still in it,
+    // so the men who fought count it when it ends.
+    let mut captain = Captain::new(issuer, old_captain.posture);
+    captain.battle_since = old_captain.battle_since;
+    captain.last_engaged = old_captain.last_engaged;
     world
         .entity_mut(f)
         .remove::<Follower>()
-        .insert((Captain::new(issuer, old_captain.posture), baggage));
+        .insert((captain, baggage));
     let who = faction_name(world, issuer);
     log(world, format!("{who}: {follower} appointed captain"));
     Ok(())

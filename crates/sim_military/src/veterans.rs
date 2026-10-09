@@ -23,8 +23,8 @@
 use bevy_ecs::prelude::*;
 use sim_agents::CombatStats;
 use sim_core::{
-    Calendar, FactionModifiers, Position, RunState, SimEvent, SimEventKind, SimTick,
-    SpawnId, Stat, StateHash, StateHasher,
+    Calendar, FactionModifiers, Position, RunState, SimEvent, SimEventKind, SimTick, SpawnId, Stat,
+    StateHash, StateHasher,
 };
 
 use crate::components::{Captain, Follower};
@@ -110,7 +110,9 @@ pub fn end_battles(world: &mut World) {
                 }
             }
         }
-        let at = world.get::<Position>(captain).map_or_else(Default::default, |p| p.0);
+        let at = world
+            .get::<Position>(captain)
+            .map_or_else(Default::default, |p| p.0);
         world.write_message(
             SimEvent::new(SimEventKind::Battle, faction)
                 .subject(id.0)
@@ -258,7 +260,10 @@ mod tests {
         let d_attack = blow(world, elite, 0, 100.0);
         let d_defence = blow(world, 0, elite, 100.0);
         println!("damage {d0:.3}, elite striker {d_attack:.3}, elite victim {d_defence:.3}");
-        assert!((d_attack - d0 - g.attack * roll).abs() < 1e-3, "attack gain");
+        assert!(
+            (d_attack - d0 - g.attack * roll).abs() < 1e-3,
+            "attack gain"
+        );
         assert!((d0 - d_defence - g.defense).abs() < 1e-3, "defence gain");
         assert!(world.resource::<Casualties>().slain_by.is_empty());
         blow(world, 0, 0, 1.0);
@@ -302,7 +307,11 @@ mod tests {
             app.step(100);
             let world = app.world_mut();
             assert!(
-                world.get::<Captain>(champion).unwrap().battle_since.is_some(),
+                world
+                    .get::<Captain>(champion)
+                    .unwrap()
+                    .battle_since
+                    .is_some(),
                 "not over before an hour"
             );
             app.step(1);
@@ -369,7 +378,9 @@ mod tests {
         let d = crate::data::VeteranData {
             quiet_hours: 1.0,
             thresholds: vec![1, 3, 6],
-            names: ["Recruit", "Soldier", "Veteran", "Elite"].map(String::from).to_vec(),
+            names: ["Recruit", "Soldier", "Veteran", "Elite"]
+                .map(String::from)
+                .to_vec(),
             gains: vec![
                 crate::data::RankGain {
                     attack: 1.0,

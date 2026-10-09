@@ -1226,10 +1226,16 @@ pub(crate) mod tests {
         assert!(check(&|d| d.dominion.per_captain = 0).is_err());
         assert!(check(&|d| d.dominion.first_village_slots = d.dominion.cap + 1).is_err());
         assert!(check(&|d| d.boons[6].favour = vec![(Holding::Farms, -1.0)]).is_err());
-        assert!(check(&|d| d.champion_traits = vec![0, 1, 1]).is_err(), "3 distinct");
+        assert!(
+            check(&|d| d.champion_traits = vec![0, 1, 1]).is_err(),
+            "3 distinct"
+        );
         assert!(check(&|d| d.champion.ranks = vec![0, 5]).is_err());
         assert!(check(&|d| d.champion.ranks = vec![5, 5]).is_err());
-        assert!(check(&|d| d.champion.ranks.clear()).is_ok(), "no ranks, no offers");
+        assert!(
+            check(&|d| d.champion.ranks.clear()).is_ok(),
+            "no ranks, no offers"
+        );
         assert!(
             check(&|d| d.boons.retain(|b| b.when == BoonWhen::Start)).is_err(),
             "thresholds need Dominion boons"

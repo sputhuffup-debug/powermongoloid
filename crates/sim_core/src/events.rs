@@ -72,16 +72,20 @@ pub enum SimEventKind {
     /// again (GP-06). `subject`: the settlement; `other`: the new owner's
     /// faction id (0); `at`: its centre; `amount`: residents.
     Revolt,
-    /// The champion ranked up (SIM-35). `subject`: the champion; `amount`: the rank.
+    /// The champion ranked up (SIM-35). `subject`: the champion; `other`:
+    /// its rank points; `amount`: the rank.
     RankUp,
     /// Someone gained a trait (SIM-34). `subject`: the person; `amount`: the trait id.
     TraitGained,
     /// A soldier reached a veteran rank (SIM-36). `subject`: the soldier;
-    /// `amount`: the rank.
+    /// `at`: its army's captain's tile; `amount`: the rank.
     VeteranRank,
-    /// The champion died. `subject`: the champion.
+    /// The champion died (SIM-35). `subject`: the champion; `at`: where;
+    /// `cause`: `Death` (the striker's faction) or `Starvation`.
     ChampionFell,
-    /// A captain became champion (SIM-35). `subject`: the new champion.
+    /// A captain became champion (SIM-35). `subject`: the new champion;
+    /// `other`: the fallen one; `at`: the new champion's tile; `amount`:
+    /// traits kept; `cause`: the fallen's.
     Succession,
     /// The rival enlisted men at its seat (GP-28). `amount`: how many.
     RivalLevy,
@@ -89,7 +93,9 @@ pub enum SimEventKind {
     RivalRaid,
     /// The pacing director brought raiders (GP-16). `subject`: their captain.
     RaidersArrived,
-    /// A battle ended. `subject`: the captain; `amount`: losses.
+    /// An army's battle ended (SIM-36). `faction`: the army's; `subject`:
+    /// its captain; `other`: the survivors who fought; `at`: the captain's
+    /// tile; `amount`: the army's dead.
     Battle,
     /// Volunteers joined a band (GP-22). `subject`: the captain; `other`:
     /// the settlement they came from; `at`: the captain's tile; `amount`:

@@ -41,13 +41,15 @@ pub enum Stat {
     ThreatRadius,
     /// Flat captain slots.
     CaptainSlots,
-    /// How fast soldiers become veterans.
+    /// How fast soldiers become veterans: battles count this much more
+    /// toward a veteran rank (SIM-36).
     VeteranRate,
-    /// Desertion chance.
+    /// Soldiers' chance to desert (scaled by the multiplier).
     Desertion,
     /// Wild foraging yield.
     ForageYield,
-    /// Recruiting success.
+    /// Recruiting success: each villager's chance to join a `Recruit`
+    /// (scaled by the multiplier).
     RecruitChance,
 }
 

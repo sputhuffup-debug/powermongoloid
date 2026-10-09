@@ -190,8 +190,7 @@ impl VeteranData {
 
     /// What rank `rank` gives; `None` for rank 0 (a recruit).
     pub fn gain(&self, rank: u8) -> Option<&RankGain> {
-        rank.checked_sub(1)
-            .and_then(|i| self.gains.get(i as usize))
+        rank.checked_sub(1).and_then(|i| self.gains.get(i as usize))
     }
 
     /// The rank's name ("?" past the last).
@@ -222,12 +221,12 @@ impl VeteranData {
             );
         }
         for g in &self.gains {
-            if [g.attack, g.defense, g.morale].iter().any(|v| !v.is_finite())
+            if [g.attack, g.defense, g.morale]
+                .iter()
+                .any(|v| !v.is_finite())
                 || !(0.0..=1.0).contains(&g.desertion)
             {
-                return Err(
-                    "army: veterans.gains must be finite, with desertion in 0..=1".into(),
-                );
+                return Err("army: veterans.gains must be finite, with desertion in 0..=1".into());
             }
         }
         Ok(())
