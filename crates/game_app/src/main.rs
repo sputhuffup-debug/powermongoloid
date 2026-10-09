@@ -1,5 +1,5 @@
 //! `cargo run -p game_app [-- --seed <u64>] [--difficulty <steady|chaotic|harsh>]
-//! [--skirmish | --villages | --stress <agents>]`
+//! [--skirmish | --villages | --stress <agents>] [--save-dir <dir>]`
 //!
 //! By default the game opens a run on the run island (GP-21): the new-game
 //! screen shows the seed (from the clock unless `--seed` is given), the
@@ -13,22 +13,22 @@
 //! (RND-04 measurement on the reference machine). `--run` is accepted and
 //! means the default.
 //!
-//! A new run (the new-game screen with another seed or difficulty, or the
-//! end screen's "New run" and "Same seed again") restarts the process with
-//! the new arguments: winit can't build a second event loop in one process,
-//! and resetting every sim resource in place is fragile.
-//! TODO(M4 step 8): once `sim_core::save` exists, do it in-process instead:
-//! build the new run headless, `load_world` it into this app, and bump
-//! `game_render::WorldEpoch` (render and UI caches already clear on it).
-//! Step 8 also adds F5/F9 quicksave/quickload and save-on-exit here.
+//! Saves (GP-12, [`saves`]): one slot per run in the save directory
+//! (`--save-dir`, else `saves/` next to the binary), F5 quicksave and F9
+//! quickload, a save when the game closes, and "Resume" on the new-game
+//! screen. A new run (the new-game screen with another seed or difficulty,
+//! or the end screen's "New run" and "Same seed again") is built on a
+//! worker thread and loaded into this app in place; only if that fails
+//! does the game restart itself with the new arguments.
+
+mod saves;
 
 use std::time::Duration;
 
-use bevy::app::AppExit;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
-use game_render::CameraRig;
-use game_ui::NewRunRequest;
+use game_render::{CameraRig, RenderSet};
+use game_ui::{SavedRuns, UiSet};
 use sim_core::{Difficulty, Position, RunConfig, SIM_TICK_HZ, SimTimings};
 use sim_headless::{Scenario, ScenarioSetup, SimPlugins, set_up_scenario};
 use sim_world::Mobile;
@@ -57,7 +57,11 @@ fn flag(name: &str) -> bool {
 /// Systems of the game binary.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum AppSet {
-    /// New runs, the opening shot and the stress log.
+    /// Saves, loads and new runs, between ticks: `saves::handle_saves` in
+    /// `Update` (before the render and UI sets, so they see a replaced
+    /// world the same frame) and `saves::save_on_exit` in `Last`.
+    Saves,
+    /// The opening shot and the stress log.
     Game,
 }
 
@@ -80,6 +84,8 @@ fn main() {
             Start::Run(_) => game_ui::screens::random_seed(),
             _ => 42,
         });
+    let save_dir = saves::SaveDir::from_arg(arg("--save-dir"));
+    let saved = SavedRuns(saves::scan(&save_dir.0));
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
@@ -96,12 +102,27 @@ fn main() {
         _ => SimPlugins::new(seed),
     })
     .add_plugins((game_render::RenderPlugin, game_ui::UiPlugin))
+    .insert_resource(save_dir)
+    .insert_resource(saved)
+    .init_resource::<saves::Building>()
     // Scenario setup happens before the first tick, like population.
     .add_systems(Startup, set_up_start)
+    .configure_sets(
+        Update,
+        AppSet::Saves
+            .before(RenderSet::Epoch)
+            .before(UiSet::Screens),
+    )
+    .add_systems(Update, saves::handle_saves.in_set(AppSet::Saves))
+    .add_systems(
+        Last,
+        saves::save_on_exit
+            .after(bevy::window::ExitSystems)
+            .in_set(AppSet::Saves),
+    )
     .add_systems(
         Update,
         (
-            new_run,
             frame_start.run_if(resource_exists_and_changed::<OpeningShot>),
             stress_log.run_if(resource_equals(StressOn(true))),
         )
@@ -118,7 +139,8 @@ fn main() {
 #[derive(Resource, PartialEq)]
 struct StressOn(bool);
 
-/// Where the camera should open.
+/// Where the camera should open: set at startup and again after every
+/// load (focus tile, distance).
 #[derive(Resource)]
 struct OpeningShot(Vec2, f32);
 
@@ -160,30 +182,6 @@ fn frame_start(shot: Option<Res<OpeningShot>>, mut rigs: Query<&mut CameraRig>) 
     };
     rig.target_focus = shot.0;
     rig.target_distance = shot.1;
-}
-
-/// A new run was asked for: restart the game with its seed and difficulty
-/// (see the crate docs for why not in-process).
-fn new_run(mut requests: MessageReader<NewRunRequest>, mut exit: MessageWriter<AppExit>) {
-    let _span = info_span!("game_app::new_run").entered();
-    let Some(r) = requests.read().last().copied() else {
-        return;
-    };
-    let args = [
-        "--seed".to_string(),
-        r.seed.to_string(),
-        "--difficulty".to_string(),
-        r.difficulty.name().to_string(),
-    ];
-    let spawned =
-        std::env::current_exe().and_then(|exe| std::process::Command::new(exe).args(&args).spawn());
-    match spawned {
-        Ok(_) => {
-            info!("new run: seed {}, {}", r.seed, r.difficulty.name());
-            exit.write(AppExit::Success);
-        }
-        Err(e) => error!("new run: could not restart the game: {e}"),
-    }
 }
 
 /// RND-04: frame time and sim tick time, every 5 seconds.

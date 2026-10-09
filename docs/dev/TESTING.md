@@ -170,7 +170,8 @@ These run in seconds and sit next to the code they test.
   - texture determinism
   - monument models: every kind has parts standing on the ground (`every_kind_has_a_model_above_ground`)
   - overlays: modes cycle, tints cover only their discs and chunk signatures follow them, quantising ignores small changes
-- **game_ui:** the picking ray, action descriptions, text bars, the catch-up cap on ticks per frame; offer cards (stat wording, every shipped boon and trait has a card); run-bar time spans; random seeds from the clock.
+- **game_ui:** the picking ray, action descriptions, text bars, the catch-up cap on ticks per frame; offer cards (stat wording, every shipped boon and trait has a card); run-bar time spans; random seeds from the clock; the feed (UI-05: `log_lines_about_your_warband_join_the_feed_once`, the military log's lines about your warband minus those an event tells; `other_factions_offers_and_ranks_get_no_line`); the end screen (UI-09: `the_timeline_keeps_your_story`, `the_timeline_scrolls_in_a_window`).
+- **game_app:** saves in the game (GP-12): `a_save_loads_over_another_run` (a run's save loaded with `load_world` into an app already holding another run, as F9, "Resume" and in-place new runs do, hashes the same and stays equal for 60 ticks; ~10 s), `one_slot_per_run` (slot file names), `the_resume_list_holds_run_saves_only` (the resume list reads run saves' headers from a directory and skips other saves, junk and other files).
 
 ## Writing tests
 

@@ -6,7 +6,15 @@
 //! captain panel, right-click orders and village menu ([`army`], UI-01);
 //! settlement labels; and, in dev builds, the egui debug panel (UI-07).
 //! For M4 runs: the new-game and end screens ([`screens`], [`UiScreen`]),
-//! the run bar with its offer cards, the event feed, and monument tooltips.
+//! the run bar with its offer cards, the event feed (the chronicle's
+//! sentences and the military log), and monument tooltips; saves
+//! ([`SaveRequest`]: F5, F9, "Resume") and the [`Notice`] line.
+//!
+//! When `game_app` replaces the sim world (a load or a new run) it bumps
+//! [`game_render::WorldEpoch`]; the UI then forgets the old world: the
+//! selection, labels, answered offers (`SentOffers`), the open
+//! card popup, the feed (it re-reads the loaded feed's last lines without
+//! pausing on them), the new-game draft, and which screen is up.
 
 use bevy::prelude::*;
 use sim_core::Difficulty;
@@ -19,12 +27,14 @@ mod feed;
 mod labels;
 mod panels;
 mod run_bar;
+mod saves;
 pub mod screens;
 pub mod selection;
 mod style;
 mod time_bar;
 mod tooltip;
 
+pub use saves::{Notice, SaveRequest, SavedRun, SavedRuns};
 pub use selection::Selection;
 
 /// Which screen owns the window (M4 runs). Outside a run the game is always
@@ -50,7 +60,8 @@ pub enum UiSet {
 }
 
 /// Asked for by the new-game and end screens: start a fresh run. The game
-/// binary handles it (it rebuilds the app; see `game_app`).
+/// binary handles it (it builds the island in the background and loads it
+/// into the running game; see `game_app`).
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NewRunRequest {
     /// The new run's seed.
@@ -83,6 +94,7 @@ impl Plugin for UiPlugin {
                 run_bar::RunBarPlugin,
                 feed::FeedPlugin,
                 tooltip::TooltipPlugin,
+                saves::SavesUiPlugin,
             ));
         #[cfg(feature = "debug_ui")]
         app.add_plugins(debug_panel::DebugPanelPlugin);

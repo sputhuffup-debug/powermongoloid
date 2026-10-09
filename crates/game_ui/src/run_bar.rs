@@ -25,6 +25,12 @@ impl Plugin for RunBarPlugin {
             .add_systems(Startup, spawn_run_bar)
             .add_systems(
                 Update,
+                close_offer
+                    .run_if(game_render::epoch_changed)
+                    .in_set(UiSet::Screens),
+            )
+            .add_systems(
+                Update,
                 (
                     update_run_bar,
                     offer_buttons,
@@ -35,6 +41,13 @@ impl Plugin for RunBarPlugin {
                     .in_set(UiSet::Hud),
             );
     }
+}
+
+/// A new world (`WorldEpoch`): its offers are not the old world's.
+fn close_offer(mut open: ResMut<OpenOffer>) {
+    let _span = info_span!("game_ui::run_bar::close_offer").entered();
+    open.offer = None;
+    open.set_changed();
 }
 
 /// The offer whose cards are open, if any.
@@ -233,9 +246,14 @@ fn offer_buttons(
     names: Option<Res<NameTable>>,
     settlements: Query<(&SpawnId, &Settlement)>,
     row: Query<Entity, With<OfferRow>>,
-    mut shown: Local<Vec<u64>>,
+    epoch: Res<game_render::WorldEpoch>,
+    mut shown: Local<Option<Vec<u64>>>,
 ) {
     let _span = info_span!("game_ui::run_bar::offer_buttons").entered();
+    if epoch.is_changed() {
+        // Offer ids restart per run: redraw the buttons.
+        *shown = None;
+    }
     let (Some(offers), Some(names), Ok(row)) = (offers, names, row.single()) else {
         return;
     };
@@ -244,10 +262,10 @@ fn offer_buttons(
         .filter(|o| !sent.0.contains(&o.id))
         .collect();
     let ids: Vec<u64> = waiting.iter().map(|o| o.id).collect();
-    if *shown == ids {
+    if shown.as_ref() == Some(&ids) {
         return;
     }
-    *shown = ids;
+    *shown = Some(ids);
     let place = |id: u64| {
         settlements
             .iter()

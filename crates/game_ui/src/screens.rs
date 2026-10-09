@@ -1,53 +1,68 @@
-//! M4 run screens (GP-21, GP-27, UI-09): the new-game screen (seed,
-//! difficulty, the run modifiers drawn, the band, and the three start-boon
-//! cards) and the end screen (outcome, cause, day and the run's numbers,
-//! with "New run" and "Same seed again").
+//! M4 run screens (GP-21, GP-27, GP-12, UI-09): the new-game screen (seed,
+//! difficulty, the run modifiers drawn, the band, the three start-boon
+//! cards, and "Resume" for saved runs) and the end screen (outcome, cause
+//! and day; the run summary, its timeline from the chronicle and your
+//! battle reports; "New run" and "Same seed again").
 //!
 //! Both are full-screen nodes above everything else; while one is up the
 //! game is not [`crate::playing`], so hotkeys, world clicks and camera
 //! input are ignored ([`game_render::InputGate`]).
 //!
 //! A different seed or difficulty needs a different world: the screen
-//! sends [`NewRunRequest`] and `game_app` rebuilds the app.
+//! sends [`NewRunRequest`] and `game_app` builds it and loads it in place.
+//! After any load (`WorldEpoch`) the screens are decided afresh: the
+//! new-game screen for a run whose start boon still waits, the end screen
+//! for a finished run, the island otherwise.
+
+use std::path::PathBuf;
 
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput};
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
-use game_render::InputGate;
-use sim_agents::Owner;
+use game_render::{InputGate, WorldEpoch};
 use sim_core::{
-    Calendar, Chronicle, Difficulty, FactionId, NameTable, OfferKind, Offers, RunState,
-    SimEventKind, SimSeed, SimTick,
+    Calendar, Cause, Chronicle, ChronicleEntry, Difficulty, FactionId, NameTable, OfferKind,
+    Offers, RunState, SimEvent, SimEventKind, SimSeed, SimTick,
 };
-use sim_military::{Army, ArmyStats, Holder, Progression, RequestBoard, RunProgress, Veteran};
+use sim_military::{Army, Progression, RunProgress};
 use sim_world::Settlement;
 
 use crate::style;
-use crate::{NewRunRequest, UiScreen, UiSet};
+use crate::{NewRunRequest, SaveRequest, SavedRuns, UiScreen, UiSet};
 
 pub struct ScreensPlugin;
 
 impl Plugin for ScreensPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Draft>()
+            .init_resource::<EndReport>()
             .add_systems(
                 Update,
                 (choose_screen, gate_input).chain().in_set(UiSet::Screens),
             )
             .add_systems(OnEnter(UiScreen::NewGame), spawn_new_game)
             .add_systems(OnExit(UiScreen::NewGame), despawn::<NewGameRoot>)
-            .add_systems(OnEnter(UiScreen::Ended), spawn_end)
+            .add_systems(
+                OnEnter(UiScreen::Ended),
+                (write_end_report, spawn_end).chain(),
+            )
             .add_systems(OnExit(UiScreen::Ended), despawn::<EndRoot>)
             .add_systems(
                 Update,
-                (seed_typing, new_game_buttons, refresh_new_game)
+                (
+                    seed_typing,
+                    new_game_buttons,
+                    resume_buttons,
+                    refresh_new_game,
+                )
                     .chain()
                     .run_if(in_state(UiScreen::NewGame))
                     .in_set(UiSet::Hud),
             )
             .add_systems(
                 Update,
-                end_buttons
+                (end_buttons, scroll_timeline)
                     .run_if(in_state(UiScreen::Ended))
                     .in_set(UiSet::Hud),
             );
@@ -101,6 +116,14 @@ enum NewGameButton {
     Build,
 }
 
+/// Resumes the saved run in this file (GP-12).
+#[derive(Component, Clone, PartialEq)]
+struct ResumeButton(PathBuf);
+
+/// The end screen's timeline text (scrolled with the wheel).
+#[derive(Component)]
+struct TimelineText;
+
 #[derive(Component, Clone, Copy, PartialEq)]
 enum EndButton {
     NewRun,
@@ -116,15 +139,28 @@ fn despawn<T: Component>(mut commands: Commands, roots: Query<Entity, With<T>>) 
 /// Opens the new-game screen on a run's first frame (the start boon still
 /// waiting, normally at tick 0; the clock paused) and the end screen once
 /// the run is over.
+#[allow(clippy::too_many_arguments)] // Bevy system parameters.
 fn choose_screen(
     run: Option<Res<RunState>>,
     offers: Option<Res<Offers>>,
     screen: Res<State<UiScreen>>,
+    epoch: Res<WorldEpoch>,
     mut next: ResMut<NextState<UiScreen>>,
     mut time: ResMut<Time<Virtual>>,
+    mut draft: ResMut<Draft>,
     mut opened: Local<bool>,
 ) {
     let _span = info_span!("game_ui::screens::choose_screen").entered();
+    if epoch.is_changed() && !epoch.is_added() {
+        // A new world (a load or a new run): decide afresh. A screen that
+        // is up closes first, so the one chosen next frame is rebuilt.
+        *opened = false;
+        draft.ready = false;
+        if *screen.get() != UiScreen::Playing {
+            next.set(UiScreen::Playing);
+            return;
+        }
+    }
     let (Some(run), Some(offers)) = (run, offers) else {
         return;
     };
@@ -189,6 +225,7 @@ fn spawn_new_game(
     progression: Res<Progression>,
     progress: Res<RunProgress>,
     names: Res<NameTable>,
+    (saved, calendar): (Res<SavedRuns>, Res<Calendar>),
     settlements: Query<(&sim_core::SpawnId, &Settlement)>,
     mut draft: ResMut<Draft>,
 ) {
@@ -228,6 +265,28 @@ fn spawn_new_game(
                 14.0,
                 style::DIM,
             ));
+            // GP-12: saved runs, newest first.
+            if !saved.0.is_empty() {
+                p.spawn(Node {
+                    column_gap: Val::Px(8.0),
+                    align_items: AlignItems::Center,
+                    ..default()
+                })
+                .with_children(|r| {
+                    r.spawn(line("Resume:", 16.0, style::GOLD));
+                    for run in saved.0.iter().take(3) {
+                        let h = &run.header;
+                        let at = calendar.at(h.tick);
+                        let label = format!(
+                            "seed {}, {}, day {}",
+                            h.seed,
+                            h.run.unwrap_or_default().difficulty.name(),
+                            at.day + 1
+                        );
+                        style::button(r, ResumeButton(run.path.clone()), label, 14.0);
+                    }
+                });
+            }
             // Seed and difficulty.
             p.spawn(Node {
                 column_gap: Val::Px(8.0),
@@ -337,6 +396,19 @@ fn new_game_buttons(
     }
 }
 
+fn resume_buttons(
+    buttons: Query<(&Interaction, &ResumeButton), Changed<Interaction>>,
+    mut out: MessageWriter<SaveRequest>,
+) {
+    let _span = info_span!("game_ui::screens::resume_buttons").entered();
+    for (interaction, b) in &buttons {
+        if *interaction == Interaction::Pressed {
+            info!("resume: {}", b.0.display());
+            out.write(SaveRequest::Resume(b.0.clone()));
+        }
+    }
+}
+
 #[allow(clippy::type_complexity)] // Queries.
 fn refresh_new_game(
     draft: Res<Draft>,
@@ -384,104 +456,195 @@ fn capitalise(s: &str) -> String {
     }
 }
 
-/// The numbers on the end screen.
-#[derive(Debug, Default, PartialEq)]
-pub struct RunNumbers {
-    pub day: u64,
-    pub settlements: u32,
-    pub monuments: u32,
-    pub conquests: u32,
-    pub battles: u32,
-    pub kills: u32,
-    pub lost: u32,
-    pub veterans: u32,
-    pub requests: u32,
-    pub drifters: u32,
+/// Plain words for why a run ended.
+pub fn cause_text(c: Cause, army: &Army) -> String {
+    match c {
+        Cause::None => "no cause".into(),
+        Cause::Player => "by your choice".into(),
+        Cause::Request { .. } => "a request".into(),
+        Cause::Conquest { .. } => "conquest".into(),
+        Cause::Invitation => "an invitation".into(),
+        Cause::Starvation => "starvation".into(),
+        Cause::Plunder => "plunder".into(),
+        Cause::Revolt => "a revolt".into(),
+        Cause::Raid { .. } => "a raid".into(),
+        Cause::Hold => "held long enough".into(),
+        Cause::Boon { .. } => "a boon".into(),
+        Cause::Death { faction } => {
+            format!("killed by {}", army.faction_name(faction).to_lowercase())
+        }
+        Cause::Lapsed => "left unanswered".into(),
+        Cause::Neglect => "neglect".into(),
+        Cause::Fight { faction } => {
+            format!("fighting {}", army.faction_name(faction).to_lowercase())
+        }
+    }
 }
 
-#[allow(clippy::too_many_arguments)] // Bevy system parameters.
-fn spawn_end(
-    mut commands: Commands,
-    run: Res<RunState>,
-    calendar: Res<Calendar>,
-    tick: Res<SimTick>,
-    army: Res<Army>,
-    stats: Res<ArmyStats>,
-    chronicle: Res<Chronicle>,
-    board: Res<RequestBoard>,
-    progress: Res<RunProgress>,
-    seed: Res<SimSeed>,
-    owners: Query<&Owner>,
-    holders: Query<&Holder>,
-    veterans: Query<(&Veteran, &sim_core::Allegiance)>,
-) {
-    let _span = info_span!("game_ui::screens::spawn_end").entered();
+/// Whether a chronicle entry is on the end screen's timeline (UI-09): what
+/// you did and what was done to you, the run's start and end, and anyone's
+/// conquests and the rival's raids. Battles have their own list.
+pub fn on_timeline(e: &SimEvent) -> bool {
     let player = FactionId::PLAYER;
-    let mine = stats.get(player);
-    let n = RunNumbers {
-        day: calendar.at(run.ended_at.unwrap_or(tick.0)).day + 1,
-        settlements: owners.iter().filter(|o| o.faction == player).count() as u32,
-        monuments: holders.iter().filter(|h| h.faction == player).count() as u32,
-        conquests: mine.conquests,
-        battles: chronicle
-            .entries()
-            .iter()
-            .filter(|e| e.event.kind == SimEventKind::Battle && e.event.faction == player)
-            .count() as u32,
-        kills: mine.kills,
-        lost: mine.lost,
-        veterans: veterans
-            .iter()
-            .filter(|(v, a)| v.rank > 0 && a.0 == player)
-            .count() as u32,
-        requests: board.done,
-        drifters: progress.drifters,
-    };
-    let outcome = run.outcome.map_or("over", |o| o.name());
-    let headline = match outcome {
+    let from_me = matches!(e.kind, SimEventKind::MonumentTaken | SimEventKind::Conquest)
+        && e.other == player.0 as u64;
+    match e.kind {
+        SimEventKind::Battle => false,
+        SimEventKind::RunStarted
+        | SimEventKind::RunEnded
+        | SimEventKind::Conquest
+        | SimEventKind::RivalRaid => true,
+        _ => e.faction == player || from_me,
+    }
+}
+
+/// Timeline lines shown at once; the wheel scrolls.
+const TIMELINE_LINES: usize = 12;
+/// Your battles reported at most (the latest).
+const BATTLES_SHOWN: usize = 3;
+
+/// The end screen's text, written when it opens (UI-09).
+#[derive(Resource, Default)]
+struct EndReport {
+    headline: String,
+    subline: String,
+    /// `RunSummary::lines()` and a few more numbers.
+    summary: Vec<String>,
+    /// The timeline's sentences, oldest first.
+    timeline: Vec<String>,
+    /// The first timeline line shown.
+    scroll: usize,
+    /// Your latest battles, told with their reports.
+    battles: Vec<String>,
+    /// How many battles you fought.
+    battle_count: usize,
+}
+
+impl EndReport {
+    fn timeline_text(&self) -> String {
+        if self.timeline.is_empty() {
+            return "Nothing of note happened.".into();
+        }
+        let end = (self.scroll + TIMELINE_LINES).min(self.timeline.len());
+        let mut out = Vec::new();
+        if self.scroll > 0 {
+            out.push(format!("({} earlier: scroll up)", self.scroll));
+        }
+        out.extend(self.timeline[self.scroll..end].iter().cloned());
+        if end < self.timeline.len() {
+            out.push(format!(
+                "({} later: scroll down)",
+                self.timeline.len() - end
+            ));
+        }
+        out.join("\n")
+    }
+}
+
+/// Fills [`EndReport`] from the world: the outcome, `run_summary`, and the
+/// chronicle's entries told by `describe_entries` (exclusive: the sentences
+/// read names from the world).
+fn write_end_report(world: &mut World) {
+    let _span = info_span!("game_ui::screens::write_end_report").entered();
+    let run = *world.resource::<RunState>();
+    let tick = world.resource::<SimTick>().0;
+    let day = world
+        .resource::<Calendar>()
+        .at(run.ended_at.unwrap_or(tick))
+        .day
+        + 1;
+    let headline = match run.outcome.map_or("over", |o| o.name()) {
         "won" => "Victory: the island is yours".to_string(),
         "lost" => "Defeat".to_string(),
         "abandoned" => "Run abandoned".to_string(),
         o => format!("The run is {o}"),
     };
-    let difficulty = run.config.unwrap_or_default().difficulty.name();
+    let subline = format!(
+        "Day {day} | {} | seed {} | {}",
+        cause_text(run.cause, world.resource::<Army>()),
+        world.resource::<SimSeed>().0,
+        run.config.unwrap_or_default().difficulty.name()
+    );
+    let mut summary: Vec<String> = sim_military::run_summary(world)
+        .lines()
+        .iter()
+        .map(|l| capitalise(l))
+        .collect();
+    summary.push(format!(
+        "Drifters joined: {}",
+        world.resource::<RunProgress>().drifters
+    ));
+    let entries: Vec<ChronicleEntry> = world.resource::<Chronicle>().entries().to_vec();
+    let story: Vec<ChronicleEntry> = entries
+        .iter()
+        .filter(|e| on_timeline(&e.event))
+        .copied()
+        .collect();
+    let mine: Vec<ChronicleEntry> = entries
+        .iter()
+        .filter(|e| e.event.kind == SimEventKind::Battle && e.event.faction == FactionId::PLAYER)
+        .copied()
+        .collect();
+    let latest = &mine[mine.len().saturating_sub(BATTLES_SHOWN)..];
+    let timeline = sim_military::describe_entries(world, &story);
+    let battles = sim_military::describe_entries(world, latest);
+    let scroll = timeline.len().saturating_sub(TIMELINE_LINES);
+    world.insert_resource(EndReport {
+        headline,
+        subline,
+        summary,
+        timeline,
+        scroll,
+        battles,
+        battle_count: mine.len(),
+    });
+}
+
+fn heading(text: impl Into<String>) -> impl Bundle {
+    line(text, 18.0, style::GOLD)
+}
+
+fn spawn_end(mut commands: Commands, report: Res<EndReport>) {
+    let _span = info_span!("game_ui::screens::spawn_end").entered();
+    let column = |width: f32| Node {
+        width: Val::Percent(width),
+        flex_direction: FlexDirection::Column,
+        row_gap: Val::Px(6.0),
+        ..default()
+    };
     commands.spawn((EndRoot, backdrop())).with_children(|p| {
-        p.spawn(line(headline, 32.0, style::GOLD));
-        p.spawn(line(
-            format!(
-                "Day {} | {} | seed {} | {difficulty}",
-                n.day,
-                crate::feed::cause_text(run.cause, &army),
-                seed.0
-            ),
-            16.0,
-            style::TEXT,
-        ));
-        p.spawn(line(
-            format!(
-                "Settlements held: {}   Monuments held: {}   Conquests: {}\n\
-                 Battles: {}   Foes slain: {}   Men lost: {}   Veterans alive: {}\n\
-                 Requests answered: {}   Drifters joined: {}",
-                n.settlements,
-                n.monuments,
-                n.conquests,
-                n.battles,
-                n.kills,
-                n.lost,
-                n.veterans,
-                n.requests,
-                n.drifters
-            ),
-            15.0,
-            style::TEXT,
-        ));
-        // TODO(M4 step 9): the chronicle timeline (`sim_military::chronicle::
-        // describe`) and `RunSummary` go here, under the numbers.
-        p.spawn(line(
-            "(The chronicle of this run arrives with M4 step 9.)",
-            12.0,
-            style::DIM,
-        ));
+        p.spawn(line(report.headline.clone(), 32.0, style::GOLD));
+        p.spawn(line(report.subline.clone(), 16.0, style::TEXT));
+        p.spawn(Node {
+            width: Val::Percent(94.0),
+            column_gap: Val::Px(28.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        })
+        .with_children(|row| {
+            row.spawn(column(40.0)).with_children(|c| {
+                c.spawn(heading("Summary"));
+                c.spawn(line(report.summary.join("\n"), 14.0, style::TEXT));
+                c.spawn(heading(format!("Your battles ({})", report.battle_count)));
+                let battles = if report.battles.is_empty() {
+                    "None fought.".to_string()
+                } else {
+                    let mut b = report.battles.clone();
+                    if report.battle_count > b.len() {
+                        b.insert(0, format!("(the last {} of them)", b.len()));
+                    }
+                    b.join("\n")
+                };
+                c.spawn(line(battles, 13.0, style::DIM));
+            });
+            row.spawn(column(54.0)).with_children(|c| {
+                c.spawn(heading(format!("Timeline ({})", report.timeline.len())));
+                c.spawn((
+                    TimelineText,
+                    line(report.timeline_text(), 13.0, style::TEXT),
+                ));
+            });
+        });
         p.spawn(Node {
             column_gap: Val::Px(12.0),
             ..default()
@@ -491,6 +654,35 @@ fn spawn_end(
             style::button(r, EndButton::SameSeed, "Same seed again", 18.0);
         });
     });
+}
+
+/// The mouse wheel scrolls the end screen's timeline.
+fn scroll_timeline(
+    mut wheel: MessageReader<MouseWheel>,
+    mut report: ResMut<EndReport>,
+    mut text: Query<&mut Text, With<TimelineText>>,
+) {
+    let _span = info_span!("game_ui::screens::scroll_timeline").entered();
+    let mut lines = 0.0;
+    for w in wheel.read() {
+        lines += match w.unit {
+            MouseScrollUnit::Line => w.y,
+            MouseScrollUnit::Pixel => w.y / 20.0,
+        };
+    }
+    let step = lines.round() as i64;
+    if step == 0 {
+        return;
+    }
+    let max = report.timeline.len().saturating_sub(TIMELINE_LINES) as i64;
+    let scroll = (report.scroll as i64 - step).clamp(0, max) as usize;
+    if scroll == report.scroll {
+        return;
+    }
+    report.scroll = scroll;
+    if let Ok(mut t) = text.single_mut() {
+        t.0 = report.timeline_text();
+    }
 }
 
 fn end_buttons(
@@ -516,6 +708,53 @@ fn end_buttons(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// UI-09: the timeline tells your story and the island's big turns;
+    /// battles have their own list.
+    #[test]
+    fn the_timeline_keeps_your_story() {
+        let ev = |kind, f: FactionId| SimEvent::new(kind, f);
+        assert!(on_timeline(&ev(
+            SimEventKind::RunStarted,
+            FactionId::PLAYER
+        )));
+        assert!(on_timeline(&ev(
+            SimEventKind::MonumentTaken,
+            FactionId::PLAYER
+        )));
+        assert!(on_timeline(&ev(SimEventKind::Conquest, FactionId::RIVAL)));
+        assert!(on_timeline(&ev(SimEventKind::RivalRaid, FactionId::RIVAL)));
+        // Something taken from you.
+        assert!(on_timeline(
+            &ev(SimEventKind::MonumentTaken, FactionId::BEASTS).other(FactionId::PLAYER.0 as u64)
+        ));
+        assert!(!on_timeline(&ev(
+            SimEventKind::MonumentTaken,
+            FactionId::BEASTS
+        )));
+        assert!(!on_timeline(&ev(
+            SimEventKind::RaidersArrived,
+            FactionId::RAIDERS
+        )));
+        assert!(!on_timeline(&ev(SimEventKind::Battle, FactionId::PLAYER)));
+    }
+
+    #[test]
+    fn the_timeline_scrolls_in_a_window() {
+        let mut r = EndReport {
+            timeline: (0..20).map(|i| format!("line {i}")).collect(),
+            ..default()
+        };
+        let text = r.timeline_text();
+        assert!(text.starts_with("line 0\n") && text.ends_with("(8 later: scroll down)"));
+        r.scroll = 8;
+        let text = r.timeline_text();
+        assert!(text.starts_with("(8 earlier: scroll up)\nline 8") && text.ends_with("line 19"));
+        assert_eq!(
+            EndReport::default().timeline_text(),
+            "Nothing of note happened."
+        );
+    }
 
     #[test]
     fn random_seeds_are_short_and_vary() {

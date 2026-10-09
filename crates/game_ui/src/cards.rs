@@ -17,8 +17,21 @@ pub struct CardsPlugin;
 impl Plugin for CardsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SentOffers>()
+            .add_systems(
+                Update,
+                forget_sent
+                    .run_if(game_render::epoch_changed)
+                    .in_set(UiSet::Screens),
+            )
             .add_systems(Update, choice_buttons.in_set(UiSet::Hud));
     }
+}
+
+/// A new world (`WorldEpoch`): offer ids restart per run, so the answered
+/// ones are forgotten.
+fn forget_sent(mut sent: ResMut<SentOffers>) {
+    let _span = info_span!("game_ui::cards::forget_sent").entered();
+    sent.0.clear();
 }
 
 /// Offers the player has answered this session, so the UI hides them until

@@ -1,3 +1,7 @@
 /target
 **/*.rs.bk
 *.profraw
+# Game saves (one slot per run, written next to the binary or in --save-dir)
+saves/
+*.sav
+*.sav.tmp

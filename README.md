@@ -28,13 +28,14 @@ cargo run -p game_app -- --villages         # villages only
 | Posture | Panel buttons, or P to cycle passive / neutral / aggressive |
 | Return to camp / cancel orders | R / Backspace |
 | Appoint a captain | Select one of your followers, then *Appoint captain* in the panel (in a run it greys out when your captain slots are full) |
-| New run (M4) | On the new-game screen: type a seed (digits, Backspace) or *Random*, pick a difficulty, *Build it* if either changed, then click one of the three start-boon cards to begin |
+| New run (M4) | On the new-game screen: type a seed (digits, Backspace) or *Random*, pick a difficulty, *Build it* if either changed (the island is built in a few seconds, in place), then click one of the three start-boon cards to begin |
+| Save and resume | A run is saved when you close the game (one slot per run, in `saves/` next to the game binary, or `--save-dir <dir>`); the new-game screen lists saved runs under *Resume*. F5 quicksaves and F9 quickloads this run's slot (the game pauses after a load). A finished run's slot is deleted |
 | Offers | Waiting offers (dominion boons, traits, invitations) are buttons in the run bar under the clock: click one to see its cards, click a card to choose, *Later* to close |
 | Fast-forward | *>> Next event* in the run bar: 8x until the next notable event, then pause. The game also pauses on the events the difficulty's director lists (raiders, rival raids, a fallen champion) |
-| Event feed | Bottom left; click a line to move the camera there |
+| Event feed | Bottom left: the chronicle's sentences (why things happened, battle reports) and your warband's log (dimmer); click a line to move the camera there |
 | Overlays | O cycles ownership, goodwill / loyalty, food security, monuments, off |
 | Monuments | Hover one for its kind, bonus and holder |
-| Abandon a run | *Abandon run* in the run bar, twice. The end screen offers *New run* and *Same seed again* |
+| Abandon a run | *Abandon run* in the run bar, twice. The end screen shows the run summary, the timeline (mouse wheel scrolls) and your battle reports, and offers *New run* and *Same seed again* |
 
 ## Developing
 

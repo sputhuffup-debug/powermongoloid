@@ -1,25 +1,31 @@
 //! The event feed (UI-05, bottom-left): the latest `EventFeed` entries,
-//! read by `seq` cursor and written as plain sentences. Clicking a line
-//! moves the camera there.
+//! read by `seq` cursor and told in the chronicle's words
+//! (`sim_military::describe_entries`: the day, who did what, why, and a
+//! battle's report), merged by tick with the military log's lines about
+//! your warband (`MilitaryLog::since`, M3's log folded in). Each entry is
+//! described once, when it arrives, and the line is kept. Clicking a line
+//! moves the camera to the event.
 //!
 //! In a run the feed also pauses the game: on the kinds the director's
 //! personality lists in `auto_pause` (director.ron), and on the next
 //! notable event while fast-forwarding ([`FastForward`], the run bar's
 //! ">>" button; GP-16).
 //!
-//! TODO(M4 step 9): swap [`describe`] for `sim_military::chronicle::describe`
-//! and merge `MilitaryLog` lines by their `seq` once step 9 adds it.
+//! When the world is replaced (`WorldEpoch`: a load or a new run) the
+//! feed starts again from the loaded feed's last lines, without pausing
+//! on them, and fast-forward stops.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 
 use bevy::prelude::*;
-use game_render::CameraRig;
+use game_render::{CameraRig, WorldEpoch};
 use sim_core::{
-    Calendar, Cause, EventFeed, FactionId, NameTable, RunState, SimEvent, SimEventKind, SpawnId,
+    Calendar, ChronicleEntry, EventFeed, FactionId, FeedEntry, Offers, RunState, SimEvent,
+    SimEventKind,
 };
-use sim_military::{Army, DirectorData, Progression};
-use sim_world::{Monument, MonumentKind, Settlement};
+use sim_military::{Army, DirectorData, MilitaryLog, Progression};
 
+use crate::cards::SentOffers;
 use crate::style;
 use crate::{UiSet, playing};
 
@@ -29,10 +35,15 @@ impl Plugin for FeedPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FastForward>()
             .init_resource::<FeedTargets>()
+            .init_resource::<FeedLines>()
             .add_systems(Startup, spawn_feed)
             .add_systems(
                 Update,
-                (read_feed, (click_feed).run_if(playing))
+                (
+                    read_feed,
+                    show_feed.run_if(resource_changed::<FeedLines>),
+                    click_feed.run_if(playing),
+                )
                     .chain()
                     .in_set(UiSet::Hud),
             );
@@ -54,10 +65,28 @@ struct FeedRoot;
 #[derive(Component)]
 struct FeedLine(usize);
 
+/// One feed line: its text, where clicking it goes, and whether it came
+/// from the military log (drawn dimmer).
+#[derive(Debug, Clone, PartialEq)]
+struct Line {
+    text: String,
+    at: Option<IVec2>,
+    log: bool,
+}
+
+/// The feed's lines, oldest first (UI-side only).
+#[derive(Resource, Default)]
+struct FeedLines(VecDeque<Line>);
+
+/// Where `read_feed` has read up to.
 #[derive(Default)]
-struct FeedState {
-    cursor: u64,
-    lines: VecDeque<(String, IVec2)>,
+struct Cursors {
+    /// The `WorldEpoch` read from (`None` before the first frame).
+    epoch: Option<u32>,
+    /// The next `EventFeed` seq to read.
+    events: u64,
+    /// The next `MilitaryLog` seq to read.
+    log: u64,
 }
 
 fn spawn_feed(mut commands: Commands) {
@@ -68,7 +97,7 @@ fn spawn_feed(mut commands: Commands) {
                 position_type: PositionType::Absolute,
                 left: Val::Px(10.0),
                 bottom: Val::Px(10.0),
-                width: Val::Px(420.0),
+                width: Val::Px(520.0),
                 padding: UiRect::all(Val::Px(6.0)),
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(2.0),
@@ -92,244 +121,228 @@ fn spawn_feed(mut commands: Commands) {
         });
 }
 
-/// Who a faction is, from the player's side.
-fn who(f: FactionId, army: &Army) -> String {
-    if f == FactionId::PLAYER {
-        "You".into()
-    } else {
-        format!("The {}", army.faction_name(f).to_lowercase())
+/// Whether an event gets a line (it may still pause the game): offers only
+/// while they wait for you, and only your own offers answered and soldiers
+/// ranked up (a big battle elsewhere ranks up whole armies).
+fn worth_a_line(e: &SimEvent, waiting_offer: bool) -> bool {
+    match e.kind {
+        SimEventKind::OfferPosted => waiting_offer,
+        SimEventKind::OfferChosen | SimEventKind::VeteranRank => e.faction == FactionId::PLAYER,
+        _ => true,
     }
 }
 
-/// Whose: "Your" or "The rival's".
-fn whose(f: FactionId, army: &Army) -> String {
-    if f == FactionId::PLAYER {
-        "Your".into()
-    } else {
-        format!("{}'s", who(f, army))
+/// Military log lines the feed shows: those naming your warband
+/// (`player`, army.ron's faction name), except the ones an event already
+/// tells (offers chosen, the run abandoned, the champion's rank or fall,
+/// requests answered, invitations, revolts, drifters joining, and `took
+/// <place>`: conquests and monuments). Logistics (`took food from ...`,
+/// `took 5 arms from ...`), refused orders, recruits, desertions, risings
+/// and attacks stay.
+fn log_line_shown(text: &str, player: &str) -> bool {
+    const TOLD: [&str; 8] = [
+        " chose ",
+        " abandoned the run",
+        ": the champion ",
+        " answered ",
+        " invites ",
+        " invited ",
+        " threw off ",
+        " drifted in to join ",
+    ];
+    if player.is_empty() || !text.contains(player) || TOLD.iter().any(|t| text.contains(t)) {
+        return false;
+    }
+    match text
+        .strip_prefix(player)
+        .and_then(|r| r.strip_prefix(" took "))
+    {
+        Some(rest) => rest.contains(" from "),
+        None => true,
     }
 }
 
-/// Plain words for a cause.
-pub fn cause_text(c: Cause, army: &Army) -> String {
-    match c {
-        Cause::None => "no cause".into(),
-        Cause::Player => "by your choice".into(),
-        Cause::Request { .. } => "a request".into(),
-        Cause::Conquest { .. } => "conquest".into(),
-        Cause::Invitation => "an invitation".into(),
-        Cause::Starvation => "starvation".into(),
-        Cause::Plunder => "plunder".into(),
-        Cause::Revolt => "a revolt".into(),
-        Cause::Raid { .. } => "a raid".into(),
-        Cause::Hold => "held long enough".into(),
-        Cause::Boon { .. } => "a boon".into(),
-        Cause::Death { faction } => {
-            format!("killed by {}", army.faction_name(faction).to_lowercase())
-        }
-        Cause::Lapsed => "left unanswered".into(),
-        Cause::Neglect => "neglect".into(),
-        Cause::Fight { faction } => {
-            format!("fighting {}", army.faction_name(faction).to_lowercase())
-        }
-    }
+fn upper_first(s: &str) -> String {
+    let mut c = s.chars();
+    c.next()
+        .map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
 }
 
-/// One feed line for an event. `name` names a settlement or monument by
-/// SpawnId.
-pub fn describe(
-    e: &SimEvent,
-    army: &Army,
-    progression: &Progression,
-    name: &dyn Fn(u64) -> String,
-) -> Option<String> {
-    let f = who(e.faction, army);
-    let request = |tag: i32| match tag {
-        0 => "drive off raiders",
-        1 => "bring food",
-        _ => "clear the camp",
-    };
-    let kind = |k: i32| {
-        MonumentKind::ALL
-            .get(k as usize)
-            .map_or("monument", |k| k.name())
-    };
-    Some(match e.kind {
-        SimEventKind::RunStarted => "The run begins.".into(),
-        SimEventKind::OfferPosted if e.faction == FactionId::PLAYER => {
-            "A new offer awaits you (run bar).".into()
-        }
-        SimEventKind::OfferPosted | SimEventKind::OfferChosen => return None,
-        SimEventKind::MonumentTaken => {
-            format!("{f} took the {} {}.", kind(e.amount), name(e.subject))
-        }
-        SimEventKind::MonumentLost => format!("{f} lost {}.", name(e.subject)),
-        SimEventKind::RequestPosted => {
-            format!("{} asks you to {}.", name(e.other), request(e.amount))
-        }
-        SimEventKind::RequestDone => format!("You answered {}'s request.", name(e.other)),
-        SimEventKind::RequestFailed => format!("{}'s request went unanswered.", name(e.other)),
-        SimEventKind::Conquest => format!("{f} took {} ({} people).", name(e.subject), e.amount),
-        SimEventKind::Invited => format!("{} invited {} in.", name(e.subject), f.to_lowercase()),
-        SimEventKind::Revolt => format!("{} rose against {}.", name(e.subject), f.to_lowercase()),
-        SimEventKind::RankUp => format!(
-            "{} champion reached rank {}.",
-            whose(e.faction, army),
-            e.amount
-        ),
-        SimEventKind::TraitGained => format!(
-            "{f} gained a trait: {}.",
-            progression
-                .trait_data(e.amount as u16)
-                .map_or("?", |t| t.name.as_str())
-        ),
-        SimEventKind::VeteranRank => format!(
-            "A soldier became {}.",
-            army.data.veterans.name(e.amount as u8).to_lowercase()
-        ),
-        SimEventKind::ChampionFell => format!(
-            "{} champion fell ({}).",
-            whose(e.faction, army),
-            cause_text(e.cause, army)
-        ),
-        SimEventKind::Succession => format!("{f} raised a new champion."),
-        SimEventKind::RivalLevy => format!("The rival levied {} men.", e.amount),
-        SimEventKind::RivalRaid => format!("The rival sent {} raiders out.", e.amount),
-        SimEventKind::RaidersArrived => {
-            if e.other == 0 {
-                format!("{} raiders appeared.", e.amount)
-            } else {
-                format!(
-                    "{} raiders appeared, bound for {}.",
-                    e.amount,
-                    name(e.other)
-                )
-            }
-        }
-        SimEventKind::Battle => format!("{f} fought a battle: {} dead.", e.amount),
-        SimEventKind::DriftersJoined => {
-            format!("{} drifters from {} joined you.", e.amount, name(e.other))
-        }
-        SimEventKind::RunEnded => "The run is over.".into(),
-    })
-}
-
-#[allow(clippy::too_many_arguments)] // Bevy system parameters.
-fn read_feed(
-    feed: Option<Res<EventFeed>>,
-    army: Option<Res<Army>>,
-    progression: Option<Res<Progression>>,
-    director: Option<Res<DirectorData>>,
-    run: Option<Res<RunState>>,
-    calendar: Option<Res<Calendar>>,
-    names: Option<Res<NameTable>>,
-    places: Query<(&SpawnId, Option<&Settlement>, Option<&Monument>)>,
-    mut ff: ResMut<FastForward>,
-    mut time: ResMut<Time<Virtual>>,
-    mut state: Local<FeedState>,
-    mut root: Query<&mut Visibility, With<FeedRoot>>,
-    mut lines: Query<(&FeedLine, &mut Text)>,
-    (mut targets, offers, sent): (
-        ResMut<FeedTargets>,
-        Option<Res<sim_core::Offers>>,
-        Res<crate::cards::SentOffers>,
-    ),
-) {
+/// Reads new `EventFeed` entries and `MilitaryLog` lines, describes them
+/// once and merges them by tick into [`FeedLines`]; pauses the game on
+/// the director's `auto_pause` kinds and ends fast-forward on a notable
+/// event. Exclusive: the chronicle's sentences read names from the world.
+fn read_feed(world: &mut World, mut cur: Local<Cursors>) {
     let _span = info_span!("game_ui::feed::read_feed").entered();
-    let (
-        Some(feed),
-        Some(army),
-        Some(progression),
-        Some(director),
-        Some(run),
-        Some(cal),
-        Some(names),
-    ) = (feed, army, progression, director, run, calendar, names)
-    else {
-        return;
-    };
-    if feed.next_seq() <= state.cursor {
+    let ready = world.contains_resource::<EventFeed>()
+        && world.contains_resource::<MilitaryLog>()
+        && world.contains_resource::<Army>()
+        && world.contains_resource::<Progression>()
+        && world.contains_resource::<Calendar>()
+        && world.contains_resource::<sim_core::NameTable>()
+        && world.contains_resource::<sim_core::Chronicle>();
+    if !ready {
         return;
     }
-    let mut by_id: BTreeMap<u64, String> = BTreeMap::new();
-    for (id, s, m) in &places {
-        if let Some(s) = s {
-            by_id.insert(id.0, names.get(s.name).to_string());
-        } else if let Some(m) = m {
-            by_id.insert(id.0, names.get(m.name).to_string());
+    let epoch = world.get_resource::<WorldEpoch>().map_or(0, |e| e.0);
+    let next_event = world.resource::<EventFeed>().next_seq();
+    let next_log = world.resource::<MilitaryLog>().seq;
+    let mut quiet = false;
+    if cur.epoch != Some(epoch) {
+        if cur.epoch.is_some() {
+            // A new world: show its last lines, but don't pause on them.
+            quiet = true;
+            cur.events = next_event.saturating_sub(LINES as u64);
+            cur.log = next_log.saturating_sub(LINES as u64);
+            world.resource_mut::<FeedLines>().0.clear();
+            world.resource_mut::<FastForward>().0 = false;
         }
+        cur.epoch = Some(epoch);
     }
-    let name = |id: u64| {
-        by_id
-            .get(&id)
-            .cloned()
-            .unwrap_or_else(|| "somewhere".into())
-    };
+    if next_event <= cur.events && next_log <= cur.log {
+        return;
+    }
+    let entries: Vec<FeedEntry> = world
+        .resource::<EventFeed>()
+        .since(cur.events)
+        .copied()
+        .collect();
+    let player = world
+        .resource::<Army>()
+        .faction_name(FactionId::PLAYER)
+        .to_string();
+    let logged: Vec<(u64, String)> = world
+        .resource::<MilitaryLog>()
+        .since(cur.log)
+        .filter(|(_, _, text)| log_line_shown(text, &player))
+        .map(|(_, tick, text)| (tick, text.to_string()))
+        .collect();
+    cur.events = next_event;
+    cur.log = next_log;
+
+    let run = world
+        .get_resource::<RunState>()
+        .copied()
+        .unwrap_or_default();
     let pause_on: Vec<SimEventKind> = run
         .config
-        .and_then(|c| director.personality(c.difficulty))
-        .map(|p| p.auto_pause.clone())
+        .and_then(|c| {
+            world
+                .get_resource::<DirectorData>()?
+                .personality(c.difficulty)
+                .map(|p| p.auto_pause.clone())
+        })
         .unwrap_or_default();
-    let mut veterans = 0;
+    let ff = world.resource::<FastForward>().0;
     let mut pause = false;
-    for entry in feed.since(state.cursor) {
-        let e = &entry.event;
-        // Pause on an offer only while it still waits for you (the start
-        // boon is posted before tick 0 and answered on the new-game screen).
-        let mine = e.kind != SimEventKind::OfferPosted
-            || (e.faction == FactionId::PLAYER
-                && !sent.0.contains(&e.subject)
-                && offers.as_ref().is_some_and(|o| o.get(e.subject).is_some()));
-        if run.in_run() && mine && pause_on.contains(&e.kind) {
-            pause = true;
-        }
-        if ff.0 && e.kind.notable() {
-            pause = true;
-        }
-        // A big battle ranks up dozens at once: one line for them all.
-        if e.kind == SimEventKind::VeteranRank {
-            veterans += 1;
-            continue;
-        }
-        if e.kind == SimEventKind::OfferPosted && !mine {
-            continue;
-        }
-        if let Some(text) = describe(e, &army, &progression, &name) {
-            let day = cal.at(entry.tick).day + 1;
-            state.lines.push_back((format!("Day {day}: {text}"), e.at));
+    let mut told: Vec<ChronicleEntry> = Vec::new();
+    {
+        let sent = &world.resource::<SentOffers>().0;
+        let offers = world.get_resource::<Offers>();
+        for entry in &entries {
+            let e = &entry.event;
+            // Pause on an offer only while it still waits for you (the start
+            // boon is posted before tick 0 and answered on the new-game screen).
+            let waiting = e.kind == SimEventKind::OfferPosted
+                && e.faction == FactionId::PLAYER
+                && !sent.contains(&e.subject)
+                && offers.is_some_and(|o| o.get(e.subject).is_some());
+            let counts = e.kind != SimEventKind::OfferPosted || waiting;
+            if !quiet && run.in_run() && counts && pause_on.contains(&e.kind) {
+                pause = true;
+            }
+            if !quiet && ff && e.kind.notable() {
+                pause = true;
+            }
+            if worth_a_line(e, waiting) {
+                told.push(ChronicleEntry {
+                    tick: entry.tick,
+                    event: *e,
+                });
+            }
         }
     }
-    if veterans > 0 {
-        state
-            .lines
-            .push_back((format!("{veterans} soldiers rose in rank."), IVec2::ZERO));
+    let texts = sim_military::describe_entries(world, &told);
+    // Merge by tick; within a tick, events before the log's lines.
+    let mut new: Vec<(u64, u8, Line)> = told
+        .iter()
+        .zip(texts)
+        .map(|(e, text)| {
+            let at = (e.event.at != IVec2::ZERO).then_some(e.event.at);
+            (
+                e.tick,
+                0,
+                Line {
+                    text,
+                    at,
+                    log: false,
+                },
+            )
+        })
+        .collect();
+    let cal = world.resource::<Calendar>();
+    new.extend(logged.into_iter().map(|(tick, text)| {
+        let day = cal.at(tick).day + 1;
+        let text = format!("Day {day}: {}.", upper_first(&text));
+        (
+            tick,
+            1,
+            Line {
+                text,
+                at: None,
+                log: true,
+            },
+        )
+    }));
+    new.sort_by_key(|(tick, order, _)| (*tick, *order));
+    if !new.is_empty() {
+        let mut lines = world.resource_mut::<FeedLines>();
+        lines.0.extend(new.into_iter().map(|(.., l)| l));
+        while lines.0.len() > LINES {
+            lines.0.pop_front();
+        }
     }
-    while state.lines.len() > LINES {
-        state.lines.pop_front();
+    if pause {
+        let mut time = world.resource_mut::<Time<Virtual>>();
+        if !time.is_paused() {
+            info!("feed: paused on an event");
+            time.pause();
+        }
+        world.resource_mut::<FastForward>().0 = false;
     }
-    state.cursor = feed.next_seq();
-    if pause && !time.is_paused() {
-        info!("feed: paused on an event");
-        time.pause();
-        ff.0 = false;
-    }
+}
+
+/// Draws [`FeedLines`], newest first.
+fn show_feed(
+    lines: Res<FeedLines>,
+    mut targets: ResMut<FeedTargets>,
+    mut root: Query<&mut Visibility, With<FeedRoot>>,
+    mut texts: Query<(&FeedLine, &mut Text, &mut TextColor)>,
+) {
+    let _span = info_span!("game_ui::feed::show_feed").entered();
     if let Ok(mut v) = root.single_mut() {
-        v.set_if_neq(if state.lines.is_empty() {
+        v.set_if_neq(if lines.0.is_empty() {
             Visibility::Hidden
         } else {
             Visibility::Inherited
         });
     }
-    let shown: Vec<&(String, IVec2)> = state.lines.iter().rev().collect();
-    for (line, mut text) in &mut lines {
-        text.0 = shown.get(line.0).map_or(String::new(), |l| l.0.clone());
+    let shown: Vec<&Line> = lines.0.iter().rev().collect();
+    for (line, mut text, mut color) in &mut texts {
+        let l = shown.get(line.0);
+        text.0 = l.map_or(String::new(), |l| l.text.clone());
+        color.0 = if l.is_some_and(|l| l.log) {
+            style::DIM
+        } else {
+            style::TEXT
+        };
     }
-    targets.0 = shown.iter().map(|l| l.1).collect();
+    targets.0 = shown.iter().map(|l| l.at).collect();
 }
 
 /// Where each shown line points, newest first (UI-side only).
 #[derive(Resource, Default)]
-struct FeedTargets(Vec<IVec2>);
+struct FeedTargets(Vec<Option<IVec2>>);
 
 fn click_feed(
     lines: Query<(&Interaction, &FeedLine), Changed<Interaction>>,
@@ -341,12 +354,63 @@ fn click_feed(
         if *interaction != Interaction::Pressed {
             continue;
         }
-        let at = targets.0.get(line.0).copied();
-        if let (Some(at), Ok(mut rig)) = (at, rigs.single_mut())
-            && at != IVec2::ZERO
-        {
+        let at = targets.0.get(line.0).copied().flatten();
+        if let (Some(at), Ok(mut rig)) = (at, rigs.single_mut()) {
             rig.target_focus = at.as_vec2() + 0.5;
             rig.target_distance = rig.target_distance.min(140.0);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ME: &str = "Your warband";
+
+    /// UI-05: the military log's lines about your armies join the feed,
+    /// except those an event already tells.
+    #[test]
+    fn log_lines_about_your_warband_join_the_feed_once() {
+        for shown in [
+            "Your warband bought food from Ashford",
+            "Your warband took food from Ashford",
+            "Your warband took 5 arms from Ashford",
+            "Your warband: order refused (no such settlement)",
+            "Your warband: 3 deserted",
+            "Ashford takes up arms against Your warband",
+            "Ashford rises against Your warband",
+            "Your warband broke the defenders of Ashford",
+        ] {
+            assert!(log_line_shown(shown, ME), "{shown}");
+        }
+        for hidden in [
+            "Your warband took Ashford",
+            "Your warband took Pellcombe Well",
+            "Your warband chose Well fed",
+            "Your warband: the champion reached rank 2",
+            "Your warband answered Ashford: bring food",
+            "Ashford invites Your warband to rule it",
+            "Ashford threw off Your warband and is free",
+            "2 of Ashford drifted in to join Your warband",
+            "Rival bought food from Ashford",
+            "The rival levied 12 men at its seat",
+        ] {
+            assert!(!log_line_shown(hidden, ME), "{hidden}");
+        }
+        assert!(!log_line_shown("anything", ""));
+    }
+
+    #[test]
+    fn other_factions_offers_and_ranks_get_no_line() {
+        let mine = SimEvent::new(SimEventKind::VeteranRank, FactionId::PLAYER);
+        let theirs = SimEvent::new(SimEventKind::VeteranRank, FactionId::RIVAL);
+        assert!(worth_a_line(&mine, false));
+        assert!(!worth_a_line(&theirs, false));
+        let offer = SimEvent::new(SimEventKind::OfferPosted, FactionId::PLAYER);
+        assert!(worth_a_line(&offer, true));
+        assert!(!worth_a_line(&offer, false));
+        let battle = SimEvent::new(SimEventKind::Battle, FactionId::RIVAL);
+        assert!(worth_a_line(&battle, false));
     }
 }

@@ -79,3 +79,48 @@ Keyboard input under Xvfb needs `xdotool windowfocus` first (mouse clicks don't)
 - **Captain slots in the panel** read `RunProgress.captain_slots` (hourly), so the grey-out can lag a boon pick by up to an hour; the sim checks the live value.
 - **The end screen's numbers** are computed when it opens from live state (settlements and monuments held at the end, living veterans); step 9's `RunSummary` should replace them.
 - **No test drives the screens headlessly** (they need a window); coverage is the unit tests listed in TESTING.md plus the Xvfb check above.
+
+## Step 10b: saves, resume and the chronicle in the game
+
+Built on `3a8baa0` (steps 8-9 merged). Only `game_ui` and `game_app` changed; no sim crate, no data file, no accessor added.
+
+### Saves (GP-12), `game_app/src/saves.rs`
+- **One slot per run** in the save directory: `--save-dir <dir>`, else `saves/` next to the game binary (`target/debug/saves` under `cargo run`). A run's slot is `run-<seed>-<difficulty>.sav`; the developed starts quicksave to `world-<seed>.sav` but are never saved on exit or offered for resuming.
+- **F5** saves this run's slot (refused once the run is over), **F9** loads it. **Closing the game** saves a run that has started (tick > 0) and isn't over, and deletes a finished run's slot; so does starting another run in place. Files are written through a `.sav.tmp` and renamed.
+- **Resume**: the new-game screen lists up to three saved runs, newest first ("seed 42, steady, day 2", from `read_header` plus the calendar); a click loads one.
+- **Loading** is `sim_core::load_world` into the running world, between ticks (`saves::handle_saves`, exclusive, in `AppSet::Saves` before `RenderSet::Epoch` and `UiSet::Screens`). A save of another format is refused before anything changes; otherwise the world is first saved to memory and restored if the load fails part-way. After a load: `WorldEpoch` += 1, the clock pauses, `OpeningShot` is set again (the champion, else the run's start, else your first captain), the resume list is re-read, and a notice says what happened.
+- **New runs are in-process now.** A `NewRunRequest` (*Build it*, *New run*, *Same seed again*) leaves the current run, builds the new island on a worker thread with `sim_headless::headless_app(HeadlessConfig::run(..))` + `save_app` (exactly what a fresh process builds), then loads those bytes like any save. The window stays open; the new-game screen comes back with the new seed's cards. If the worker panics or the load fails, the game falls back to restarting itself with `--seed --difficulty --save-dir` (step 10's path).
+- `game_ui::saves`: `SaveRequest {Save, Load, Resume(path)}` (F5/F9 in `quick_keys`, "Resume" buttons), `SavedRuns`/`SavedRun` (filled by game_app), and `Notice`, a one-line message under the run bar ("Saved day 1 21:34 (F9 loads it)", "Building the island for seed ...", "Loaded the saved run: day 2 23:48 (paused)").
+- **After a new `WorldEpoch` the UI forgets the old world**: `SentOffers` (`cards::forget_sent`), the card popup (`run_bar::close_offer`) and the offer buttons, the feed (restarts from the loaded feed's last 8 lines without pausing on them; fast-forward stops), the new-game draft, and the screen (`choose_screen` closes any screen and decides again next frame: new game for a waiting start boon, end screen for a finished run, else the island). Terrain, models, labels and the selection already cleared on it.
+
+### Chronicle in the UI (UI-05, UI-09)
+- **Feed** (`feed.rs`): `read_feed` is exclusive now. New `EventFeed` entries are told by `sim_military::describe_entries` (one batch per frame, each entry described once and its line kept), merged by tick with `MilitaryLog::since` lines that name your warband (dimmer), minus those an event already tells (offers chosen, the run abandoned, the champion's rank or fall, requests answered, invitations, revolts, drifters, "took <place>"). Other factions' veteran ranks and answered offers get no line. Auto-pause and fast-forward work as before. The feed is 520 px wide (the sentences are longer). Its own `describe` and `who`/`whose` are gone; `cause_text` moved to `screens.rs`.
+- **End screen**: `write_end_report` (exclusive, `OnEnter(Ended)`) fills `EndReport`, then `spawn_end` draws: the headline and "Day N | cause | seed | difficulty"; *Summary* (`run_summary(world).lines()` plus drifters); *Your battles (n)*: your last three `Battle` entries told with their reports; *Timeline (n)*: the chronicle's entries on your story (`on_timeline`: what you did and what was done to you, the run's start and end, anyone's conquests, rival raids; battles excluded), 12 lines at a time, the mouse wheel scrolls (it opens on the latest). `RunNumbers` is gone.
+
+### Visual check (Xvfb, lavapipe, about 4 fps)
+- New game, seed 42: no *Resume* row (empty save dir). Picked *Well fed*; at 8x the feed read "Day 1: Your warband chose the boon Well fed.", requests ("Ashmere asked your warband to bring food.") and "5 Raiders came down on the roads near Emberhaven, in a raid led by Briony Woolley." (it auto-paused on that).
+- **F5** at day 1 21:34: notice "Saved day 1 21:34 (F9 loads it)", 350 KB written in 0.06 s. Played on to day 2 08:52, **F9**: back to day 1 21:34, paused, the feed showing the loaded feed's last lines, notice "Loaded the quicksave"; load took 0.71 s. Unpaused: the same raid ("led by Briony Woolley") came again at the same hour, and the game auto-paused on it again.
+- Played to day 2 evening; closed the window (WM_DELETE_WINDOW): "saved ... run-42-steady.sav" on exit.
+- Restarted with `--seed 7`: the new-game screen showed **"Resume: seed 42, steady, day 2"** above the seed row. Clicking it loaded seed 42 at day 2 23:48 in 0.79 s: terrain rebuilt (256 chunks), seed 7's labels and models gone, the camera on the champion, paused, the feed with the run's last lines.
+- **Abandon** (twice): end screen "Run abandoned", "Day 2 | by your choice | seed 42 | steady", Summary ("Run abandoned (Player) after 1.8 days", settlements, monuments, battles, drifters), "Your battles (0): None fought.", "Timeline (9)": "Day 1: Fenna Jessop set out with a band of outlaws, far from the rival's seat at Dunmoor.", "Day 1: Your warband chose the boon Well fed.", six "asked in vain ..., for no help came in time.", "Day 2: The run was abandoned, by your warband's choice."
+- **New run** from the end screen: run-42-steady.sav removed (run over), "Building the island for seed 503836236 (steady)...", built on the worker in 0.90 s, loaded in 0.69 s; the new-game screen came back with seed 503836236, band "Hunters and farmhands", modifiers and cards, in the same window. Picked *Known* and played: Yarrowley and the band drawn, the feed with the new run's lines. Closing saved run-503836236-steady.sav.
+- Found in the check and fixed: the drifters' log line repeated the `DriftersJoined` sentence in the feed.
+- Keyboard input under Xvfb still needs `xdotool windowfocus`; closing the window needs a WM_DELETE_WINDOW client message (no window manager), sent with a 20-line Xlib helper.
+
+### Tests
+- game_app: `a_save_loads_over_another_run` (a run's save loaded with `load_world` into an app already holding another run hashes the same and stays equal for 60 ticks: the in-game load path), `one_slot_per_run`, `the_resume_list_holds_run_saves_only`.
+- game_ui: `log_lines_about_your_warband_join_the_feed_once`, `other_factions_offers_and_ranks_get_no_line`, `the_timeline_keeps_your_story`, `the_timeline_scrolls_in_a_window`.
+
+### Checks run
+- `cargo fmt --check`, `cargo clippy -j 2 --workspace --all-targets -- -D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc -j 2 --workspace --no-deps`: clean.
+- `CARGO_INCREMENTAL=0 cargo test -j 2 --workspace --no-fail-fast -- --test-threads=2`: exit 0, 250 passed, 0 failed, 1 ignored.
+- Release replay smoke (`--run --seed 42 --ticks 3000 --commands 50`, replayed multi- and single-threaded): "replay ok", `0x004905ef0f268f72`, unchanged (no sim crate changed). Developed and skirmish stats output byte-identical to step 5's.
+
+### Open issues
+- **No ironman**: F9 after a defeat reloads the last quicksave of that run until you leave it (its slot is deleted only when you leave a finished run).
+- **Loads block the window** for 0.7-0.8 s (the map is regenerated on load); a new island also builds in the background for about a second.
+- The summary's first line comes from `RunSummary::lines()` and reads "Run abandoned (Player) after 1.8 days" (the cause in `Debug` form); a worded cause belongs in sim_military.
+- The timeline lists every request that lapsed; a long run will have many. It scrolls, but a filter (or grouping lapsed requests per day) may read better.
+- The feed's duplicate filter for military log lines is a list of phrases in `feed.rs` (`log_line_shown`); a new log line that repeats an event needs adding there.
+- Saves of the developed starts (`world-<seed>.sav`) are never cleaned up.
+- The end screen's battle reports show only your last three; there is no per-battle drill-down.
