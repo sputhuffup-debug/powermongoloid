@@ -12,13 +12,25 @@ use crate::art::ArtTextures;
 use crate::bands::{Band, RenderSettings};
 use crate::camera::CameraRig;
 use crate::terrain::surface_point;
+use crate::{RenderSet, epoch_changed};
 
 pub struct BuildingVisualsPlugin;
 
 impl Plugin for BuildingVisualsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BuildingVisuals>()
-            .add_systems(Update, (spawn_buildings, swap_building_materials).chain());
+            .add_systems(
+                Update,
+                clear_buildings
+                    .run_if(epoch_changed)
+                    .in_set(RenderSet::Epoch),
+            )
+            .add_systems(
+                Update,
+                (spawn_buildings, swap_building_materials)
+                    .chain()
+                    .in_set(RenderSet::World),
+            );
     }
 }
 
@@ -32,9 +44,10 @@ pub enum Finish {
 }
 
 impl Finish {
-    const ALL: [Finish; 4] = [Finish::Plaster, Finish::Roof, Finish::Wood, Finish::Stone];
+    pub(crate) const ALL: [Finish; 4] =
+        [Finish::Plaster, Finish::Roof, Finish::Wood, Finish::Stone];
 
-    fn color(self) -> Color {
+    pub(crate) fn color(self) -> Color {
         match self {
             Finish::Plaster => Color::srgb(0.88, 0.82, 0.68),
             Finish::Roof => Color::srgb(0.58, 0.25, 0.18),
@@ -117,6 +130,15 @@ fn parts(kind: BuildingKind) -> Vec<(Finish, Vec3, Vec3)> {
             ],
         },
     }
+}
+
+/// A new world (`WorldEpoch`): drop every model.
+fn clear_buildings(mut commands: Commands, mut visuals: ResMut<BuildingVisuals>) {
+    let _span = info_span!("game_render::buildings::clear").entered();
+    for (_, (root, _)) in visuals.by_sim.drain() {
+        commands.entity(root).despawn();
+    }
+    visuals.total = 0;
 }
 
 fn spawn_buildings(

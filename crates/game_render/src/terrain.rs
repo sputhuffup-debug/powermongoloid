@@ -1,6 +1,8 @@
 //! RND-01: terrain as one mesh per 64 x 64 chunk, built from the height map
 //! with vertex colours by terrain type. A chunk is (re)built only when its
 //! revision in `WorldMap` changes, spread over frames, nearest first.
+//! The M4 overlay ([`Overlay`]) tints vertex colours; a chunk also rebuilds
+//! when the overlay discs touching it change.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -10,6 +12,8 @@ use sim_world::{Terrain, WorldMap};
 use crate::art::ArtTextures;
 use crate::bands::{Band, RenderSettings};
 use crate::camera::CameraRig;
+use crate::overlay::Overlay;
+use crate::{RenderSet, epoch_changed};
 
 /// World units per unit of normalised height above sea level.
 pub const HEIGHT_SCALE: f32 = 160.0;
@@ -22,7 +26,19 @@ impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TerrainChunks>()
             .add_systems(Startup, setup_ocean)
-            .add_systems(Update, (sync_chunks, swap_chunk_materials).chain());
+            .add_systems(
+                Update,
+                (clear_chunks, setup_ocean)
+                    .chain()
+                    .run_if(epoch_changed)
+                    .in_set(RenderSet::Epoch),
+            )
+            .add_systems(
+                Update,
+                (sync_chunks, swap_chunk_materials)
+                    .chain()
+                    .in_set(RenderSet::World),
+            );
     }
 }
 
@@ -70,8 +86,13 @@ pub fn terrain_color(t: Terrain) -> Color {
 /// Build state of every chunk, plus counters for the debug panel.
 #[derive(Resource, Default)]
 pub struct TerrainChunks {
-    /// Per chunk: the entity and the map revision it was built from.
-    built: Vec<Option<(Entity, u32)>>,
+    /// Per chunk: the entity, the map revision and the overlay signature
+    /// it was built from.
+    built: Vec<Option<(Entity, u32, u64)>>,
+    /// Per chunk: the overlay signature now, and the overlay generation it
+    /// was computed for.
+    signatures: Vec<u64>,
+    signature_generation: Option<u32>,
     /// Flat material (low-poly band) and textured material (detail band).
     flat: Option<Handle<StandardMaterial>>,
     textured: Option<Handle<StandardMaterial>>,
@@ -85,6 +106,30 @@ pub struct TerrainChunks {
     pub builds: u64,
 }
 
+/// The sea plane under the island.
+#[derive(Component)]
+struct Ocean;
+
+/// A new world (`WorldEpoch`): forget every chunk and the ocean.
+fn clear_chunks(
+    mut commands: Commands,
+    mut chunks: ResMut<TerrainChunks>,
+    ocean: Query<Entity, With<Ocean>>,
+) {
+    let _span = info_span!("game_render::terrain::clear").entered();
+    for (e, ..) in chunks.built.drain(..).flatten() {
+        commands.entity(e).despawn();
+    }
+    chunks.bands.clear();
+    chunks.signatures.clear();
+    chunks.signature_generation = None;
+    chunks.built_count = 0;
+    chunks.textured_count = 0;
+    for e in &ocean {
+        commands.entity(e).despawn();
+    }
+}
+
 fn setup_ocean(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -95,6 +140,7 @@ fn setup_ocean(
     let size = map.size() as f32;
     // Extends past the map edge so the island sits in open sea.
     commands.spawn((
+        Ocean,
         Mesh3d(meshes.add(Plane3d::default().mesh().size(size * 4.0, size * 4.0))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: terrain_color(Terrain::Water).darker(0.05),
@@ -111,11 +157,13 @@ fn sync_chunks(
     map: Option<Res<WorldMap>>,
     settings: Res<RenderSettings>,
     art: Option<Res<ArtTextures>>,
+    overlay: Res<Overlay>,
     mut chunks: ResMut<TerrainChunks>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     rig: Query<&CameraRig>,
 ) {
+    let _span = info_span!("game_render::terrain::sync_chunks").entered();
     let (Some(map), Some(art)) = (map, art) else {
         return;
     };
@@ -123,7 +171,17 @@ fn sync_chunks(
     if chunks.built.len() != total {
         chunks.built = vec![None; total];
         chunks.bands = vec![None; total];
+        chunks.signatures = vec![0; total];
+        chunks.signature_generation = None;
         chunks.total = total;
+    }
+    if chunks.signature_generation != Some(overlay.generation) {
+        let side = map.chunk_size() as f32;
+        for c in 0..total {
+            chunks.signatures[c] =
+                overlay.chunk_signature(map.chunk_origin(c as u32).as_vec2(), side);
+        }
+        chunks.signature_generation = Some(overlay.generation);
     }
     if chunks.flat.is_none() {
         // Vertex colours carry the terrain colour. The flat base colour
@@ -146,7 +204,11 @@ fn sync_chunks(
     let material = chunks.flat.clone().expect("set above");
 
     let mut stale: Vec<u32> = (0..total as u32)
-        .filter(|&c| chunks.built[c as usize].is_none_or(|(_, rev)| rev != map.chunk_revision(c)))
+        .filter(|&c| {
+            chunks.built[c as usize].is_none_or(|(_, rev, sig)| {
+                rev != map.chunk_revision(c) || sig != chunks.signatures[c as usize]
+            })
+        })
         .collect();
     if stale.is_empty() {
         return;
@@ -164,13 +226,19 @@ fn sync_chunks(
     });
 
     for c in stale.into_iter().take(CHUNKS_PER_FRAME) {
-        let mesh = meshes.add(build_chunk_mesh(&map, c, settings.terrain_texture_tiles));
+        let mesh = meshes.add(build_chunk_mesh_tinted(
+            &map,
+            c,
+            settings.terrain_texture_tiles,
+            Some(&overlay),
+        ));
         let origin = map.chunk_origin(c);
         let transform =
             Transform::from_translation(tile_to_world(origin.x as f32, origin.y as f32, 0.0));
         let revision = map.chunk_revision(c);
+        let signature = chunks.signatures[c as usize];
         match chunks.built[c as usize] {
-            Some((entity, _)) => {
+            Some((entity, ..)) => {
                 commands.entity(entity).insert(Mesh3d(mesh));
             }
             None => {
@@ -178,12 +246,13 @@ fn sync_chunks(
                     .spawn((Mesh3d(mesh), MeshMaterial3d(material.clone()), transform))
                     .id();
                 chunks.built_count += 1;
-                chunks.built[c as usize] = Some((entity, revision));
+                chunks.built[c as usize] = Some((entity, revision, signature));
                 chunks.bands[c as usize] = Some(Band::LowPoly);
             }
         }
         if let Some(slot) = chunks.built[c as usize].as_mut() {
             slot.1 = revision;
+            slot.2 = signature;
         }
         chunks.builds += 1;
     }
@@ -208,7 +277,7 @@ fn swap_chunk_materials(
     let cs = map.chunk_size() as f32;
     let mut textured_count = 0;
     for c in 0..chunks.built.len() {
-        let Some((entity, _)) = chunks.built[c] else {
+        let Some((entity, ..)) = chunks.built[c] else {
             continue;
         };
         let origin = map.chunk_origin(c as u32).as_vec2();
@@ -238,7 +307,7 @@ fn swap_chunk_materials(
 
 /// Height and colour at a tile corner, averaged over the up-to-four tiles
 /// that share it.
-fn corner(map: &WorldMap, x: i32, y: i32) -> (f32, LinearRgba) {
+fn corner(map: &WorldMap, x: i32, y: i32, overlay: Option<&Overlay>) -> (f32, LinearRgba) {
     let mut h = 0.0;
     let mut color = Vec4::ZERO;
     let mut n = 0.0;
@@ -262,11 +331,24 @@ fn corner(map: &WorldMap, x: i32, y: i32) -> (f32, LinearRgba) {
     if n == 0.0 {
         return (0.0, terrain_color(Terrain::Water).to_linear());
     }
-    let c = color / n;
+    let mut c = color / n;
+    if let Some(o) = overlay {
+        c = o.tint(x as f32, y as f32, c);
+    }
     (h / n, LinearRgba::new(c.x, c.y, c.z, 1.0))
 }
 
 pub fn build_chunk_mesh(map: &WorldMap, chunk: u32, uv_tiles: f32) -> Mesh {
+    build_chunk_mesh_tinted(map, chunk, uv_tiles, None)
+}
+
+/// [`build_chunk_mesh`] with vertex colours tinted by an overlay.
+pub fn build_chunk_mesh_tinted(
+    map: &WorldMap,
+    chunk: u32,
+    uv_tiles: f32,
+    overlay: Option<&Overlay>,
+) -> Mesh {
     let cs = map.chunk_size() as i32;
     let origin = map.chunk_origin(chunk);
     let side = (cs + 1) as usize;
@@ -274,11 +356,11 @@ pub fn build_chunk_mesh(map: &WorldMap, chunk: u32, uv_tiles: f32) -> Mesh {
     let mut normals = Vec::with_capacity(side * side);
     let mut colors = Vec::with_capacity(side * side);
     let mut uvs = Vec::with_capacity(side * side);
-    let height_at = |x: i32, y: i32| corner(map, x, y).0;
+    let height_at = |x: i32, y: i32| corner(map, x, y, None).0;
     for ly in 0..=cs {
         for lx in 0..=cs {
             let (x, y) = (origin.x + lx, origin.y + ly);
-            let (h, color) = corner(map, x, y);
+            let (h, color) = corner(map, x, y, overlay);
             positions.push(tile_to_world(lx as f32, ly as f32, h).to_array());
             // Global tile coordinates, so the detail texture tiles
             // seamlessly across chunk borders.

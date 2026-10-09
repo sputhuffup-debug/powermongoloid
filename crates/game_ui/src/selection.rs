@@ -15,9 +15,22 @@ pub struct SelectionPlugin;
 
 impl Plugin for SelectionPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Selection>()
-            .add_systems(Update, (pick, highlight).chain());
+        app.init_resource::<Selection>().add_systems(
+            Update,
+            (
+                clear_selection.run_if(game_render::epoch_changed),
+                pick.run_if(crate::playing),
+                highlight,
+            )
+                .chain()
+                .in_set(crate::UiSet::Hud),
+        );
     }
+}
+
+/// A new world (`WorldEpoch`): its entities are gone.
+fn clear_selection(mut selection: ResMut<Selection>) {
+    *selection = Selection::default();
 }
 
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]

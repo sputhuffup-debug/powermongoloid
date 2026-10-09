@@ -29,8 +29,15 @@ pub struct CameraRigPlugin;
 
 impl Plugin for CameraRigPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_camera)
-            .add_systems(Update, (rig_input, jump_to_settlement, apply_rig).chain());
+        app.add_systems(Startup, spawn_camera).add_systems(
+            Update,
+            (
+                (rig_input, jump_to_settlement).run_if(|g: Res<crate::InputGate>| !g.blocked),
+                apply_rig,
+            )
+                .chain()
+                .in_set(crate::RenderSet::World),
+        );
     }
 }
 
