@@ -49,6 +49,9 @@ impl StateHash for NameTable {
     }
 }
 
+crate::save_newtype!(NameId);
+crate::save_fields!(NameTable { names });
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -58,6 +58,16 @@ pub struct SettlementLoyalty {
     pub revolt_since: Option<u64>,
 }
 
+// GP-12: saved field by field.
+sim_core::save_newtype!(Loyalty);
+sim_core::save_fields!(SettlementLoyalty {
+    mean,
+    min,
+    residents,
+    below_since,
+    revolt_since
+});
+
 fn hash_tick(h: &mut StateHasher, t: Option<u64>) {
     match t {
         Some(t) => {

@@ -21,7 +21,8 @@
 //!   monument (`MonumentTaken`, and `MonumentLost` for a previous holder,
 //!   cause `Cause::Hold`). A holder whose men have not stood there for
 //!   `monuments.drift_days`, and that owns no settlement within
-//!   `monuments.drift_distance`, loses it to nobody (`MonumentLost`).
+//!   `monuments.drift_distance`, loses it to nobody (`MonumentLost`, cause
+//!   `Cause::Neglect`).
 
 use bevy_ecs::prelude::*;
 use bevy_math::IVec2;
@@ -267,7 +268,7 @@ pub fn hold(world: &mut World) {
                 &m,
                 FactionId::INDEPENDENT,
                 previous,
-                Cause::None,
+                Cause::Neglect,
             );
         }
         if h != before {

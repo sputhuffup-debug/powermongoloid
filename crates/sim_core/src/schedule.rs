@@ -75,6 +75,8 @@ impl StateHash for SimTick {
     }
 }
 
+crate::save_newtype!(SimTick);
+
 /// Run condition: the first tick of a game hour (an hour is a 24th of a day,
 /// [`Calendar::ticks_per_hour`]). Tick 0 counts. For hourly serial steps.
 pub fn on_hour(tick: Res<SimTick>, cal: Res<Calendar>) -> bool {

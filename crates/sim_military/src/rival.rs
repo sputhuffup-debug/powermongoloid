@@ -458,7 +458,8 @@ fn raid(world: &mut World, size: u32) {
         SimEvent::new(SimEventKind::RivalRaid, FactionId::RIVAL)
             .subject(lead_id.0)
             .at(at)
-            .amount(size as i32),
+            .amount(size as i32)
+            .cause(sim_core::Cause::Raid { captain: lead_id.0 }),
     );
     log(world, format!("The rival sent {size} men raiding"));
 }

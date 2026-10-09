@@ -310,4 +310,25 @@
             raid_size: 14,
         ),
     ],
+    // UI-09: how the chronicle words why something happened, one phrase
+    // per cause. A phrase follows the sentence after a comma; {faction},
+    // {settlement}, {captain}, {boon} and {foe} are filled in.
+    chronicle: (
+        causes: (
+            player: "by {faction}'s choice",
+            request: "answering the call of {settlement}",
+            conquest: "taken by force under {captain}",
+            invitation: "at the village's own invitation",
+            starvation: "of hunger",
+            plunder: "after plunder",
+            revolt: "in open revolt",
+            raid: "in a raid led by {captain}",
+            hold: "by holding the ground",
+            boon: "by the boon {boon}",
+            death: "at the hands of {foe}",
+            lapsed: "for no help came in time",
+            neglect: "left unwatched too long",
+            fight: "against {foe}",
+        ),
+    ),
 )

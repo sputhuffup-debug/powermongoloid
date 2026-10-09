@@ -69,6 +69,7 @@
 //! Systems go in [`sim_core::SimSet`]s. This crate never depends on
 //! rendering, windowing, audio or asset crates.
 
+pub mod chronicle;
 pub mod combat;
 pub mod components;
 pub mod conquest;
@@ -83,6 +84,7 @@ pub mod progression;
 pub mod raiders;
 pub mod requests;
 pub mod rival;
+mod save;
 pub mod soldiers;
 pub mod spawn;
 pub mod threat;
@@ -97,6 +99,8 @@ use sim_core::{AppHashExt, Calendar, SimInputSet, SimSet, on_hour};
 use sim_economy::{Economy, EconomySet};
 
 pub use combat::Casualties;
+// `chronicle::describe` stays in its module: the root's `describe` words orders.
+pub use chronicle::{CausePhrases, ChronicleData, RunSummary, describe_entries, run_summary};
 pub use components::{
     ArmyStats, Captain, Equipment, FactionStats, Factions, Follower, MilitaryLog, Order, Raider,
     Soldier, describe,
@@ -273,5 +277,6 @@ impl Plugin for MilitaryPlugin {
             .exempt_from_hash::<upkeep::Deserters>(
                 "this tick's deserters; derived from hashed state",
             );
+        save::register(app);
     }
 }

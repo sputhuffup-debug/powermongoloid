@@ -326,6 +326,12 @@ pub fn step(bot: &mut Bot, app: &mut App) {
 /// ordinary recorded player commands: replaying [`BotRun::log`] (e.g. with
 /// [`crate::record_replay`]) reproduces the run and its checkpoints.
 pub fn run_bot(config: HeadlessConfig, max_ticks: u64, checkpoint_every: u64) -> BotRun {
+    play_bot(config, max_ticks, checkpoint_every).1
+}
+
+/// [`run_bot`], also handing back the app as the run left it (for its
+/// chronicle and summary, UI-09).
+pub fn play_bot(config: HeadlessConfig, max_ticks: u64, checkpoint_every: u64) -> (App, BotRun) {
     let mut app = headless_app(config);
     let mut bot = Bot::new(config.seed);
     let mut checkpoints = Vec::new();
@@ -346,7 +352,7 @@ pub fn run_bot(config: HeadlessConfig, max_ticks: u64, checkpoint_every: u64) ->
         }
     }
     let final_hash = compute_state_hash(app.world_mut());
-    BotRun {
+    let run = BotRun {
         outcome: app.world().resource::<RunState>().outcome,
         cause: app.world().resource::<RunState>().cause,
         end_tick: app.world().resource::<SimTick>().0,
@@ -355,5 +361,6 @@ pub fn run_bot(config: HeadlessConfig, max_ticks: u64, checkpoint_every: u64) ->
         final_hash,
         chronicle: app.world().resource::<Chronicle>().entries().to_vec(),
         notes: bot.notes,
-    }
+    };
+    (app, run)
 }

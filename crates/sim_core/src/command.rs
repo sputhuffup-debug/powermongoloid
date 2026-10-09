@@ -229,6 +229,10 @@ impl StateHash for CommandsProcessed {
     }
 }
 
+crate::save_newtype!(CommandsProcessed);
+// Saved by variant index (append only, guide D4).
+crate::save_serde!(OrderSpec, Posture);
+
 pub(crate) fn inject_scripted(
     tick: Res<SimTick>,
     mut script: ResMut<CommandScript>,

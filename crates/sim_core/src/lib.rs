@@ -24,6 +24,8 @@
 //!   [`events::record_events`] into the [`EventFeed`] and the [`Chronicle`]
 //!   (UI-05, UI-09).
 //! - [`FactionModifiers`]: per-faction [`Stat`] bonuses, read by every crate.
+//! - [`save_world`] and [`load_world`] (GP-12): every hashed type is also
+//!   registered with [`AppSaveExt`] and written as [`SaveState`].
 //!
 //! Depends only on `bevy_ecs`, `bevy_app` and `bevy_math` (ADR 0002). See
 //! `docs/dev/ARCHITECTURE.md` and `docs/dev/DETERMINISM.md`.
@@ -40,6 +42,7 @@ pub mod replay;
 /// Seeded randomness: the shared `SimRng` and per-system streams.
 pub mod rng;
 pub mod run;
+pub mod save;
 /// The ordered tick phases (`SimSet`) and the tick counter.
 pub mod schedule;
 /// Stepping the simulation outside the game loop (headless, tests).
@@ -55,7 +58,10 @@ pub use command::{
     OrderSpec, Posture, SimCommand, SimInputSet,
 };
 pub use components::{Allegiance, DetailLevel, FactionId, Motion, NextSpawnId, Position, SpawnId};
-pub use events::{Cause, Chronicle, ChronicleEntry, EventFeed, FeedEntry, SimEvent, SimEventKind};
+pub use events::{
+    BattleReport, Cause, Chronicle, ChronicleEntry, EventFeed, FeedEntry, Promotion, SimEvent,
+    SimEventKind,
+};
 pub use hash::{AppHashExt, StateHash, StateHasher, compute_state_hash, unhashed_state};
 pub use modifiers::{FactionModifiers, ModifierEntry, ModifierSource, Stat};
 pub use names::{NameId, NameTable};
@@ -64,6 +70,10 @@ pub use rng::{SimRng, SimSeed};
 pub use run::{
     Difficulty, Offer, OfferKind, Offers, RunConfig, RunOutcome, RunState, in_run, post_offer,
     run_in_progress,
+};
+pub use save::{
+    AppSaveExt, SAVE_FORMAT, SAVE_MAGIC, SaveError, SaveHeader, SaveReader, SaveRegistry,
+    SaveState, SaveWriter, load_world, read_header, save_world,
 };
 pub use schedule::{BookkeepingSet, SIM_TICK_HZ, SimSet, SimTick, on_day, on_hour};
 pub use step::{SimStepper, run_sim_tick};
@@ -148,6 +158,26 @@ impl Plugin for SimCorePlugin {
             .exempt_from_hash::<CommandLog>("history; its effects are in the hashed state")
             .exempt_from_hash::<CommandScript>("pending replay input, not yet applied")
             .exempt_from_hash::<EventFeed>("UI feed, derived from SimEvents");
+
+        // GP-12: every hashed type is saved too; the feed is saved so the
+        // UI's cursor carries on after a load.
+        app.register_saved_resource::<SimSeed>()
+            .register_saved_resource::<Calendar>()
+            .register_saved_resource::<SimTick>()
+            .register_saved_resource::<SimRng>()
+            .register_saved_resource::<NextSpawnId>()
+            .register_saved_resource::<CommandsProcessed>()
+            .register_saved_resource::<NameTable>()
+            .register_saved_resource::<RunState>()
+            .register_saved_resource::<Offers>()
+            .register_saved_resource::<Chronicle>()
+            .register_saved_resource::<FactionModifiers>()
+            .register_saved_resource::<EventFeed>()
+            .register_saved::<SpawnId>()
+            .register_saved::<Position>()
+            .register_saved::<Motion>()
+            .register_saved::<Allegiance>()
+            .register_saved::<DetailLevel>();
     }
 }
 

@@ -36,7 +36,7 @@ pub mod standing;
 
 use bevy_app::{App, FixedUpdate, Plugin};
 use bevy_ecs::prelude::*;
-use sim_core::{AppHashExt, Calendar, SimSet, on_day};
+use sim_core::{AppHashExt, AppSaveExt, Calendar, SimSet, on_day};
 use sim_economy::EconomySet;
 
 pub use act::eat_from;
@@ -136,7 +136,27 @@ impl Plugin for AgentsPlugin {
             .exempt_from_hash::<DecisionTrace>(
                 "explains the last decision; derived, never read by the sim",
             )
-            .exempt_from_hash::<PopulationReport>("setup diagnostics");
+            .exempt_from_hash::<PopulationReport>("setup diagnostics")
+            // GP-12: every hashed type is saved, and DecisionTrace's
+            // presence (the deciding systems query it).
+            .register_saved_resource_with::<Villagers>(data::save_villagers, data::load_villagers)
+            .register_saved::<Villager>()
+            .register_saved::<Employment>()
+            .register_saved::<Needs>()
+            .register_saved::<Activity>()
+            .register_saved::<Travel>()
+            .register_saved::<NextDecision>()
+            .register_saved::<FoodSecurity>()
+            .register_saved::<Enlisted>()
+            .register_saved::<CombatStats>()
+            .register_saved::<Threat>()
+            .register_saved::<Strike>()
+            .register_saved::<Owner>()
+            .register_saved::<Goodwill>()
+            .register_saved::<Loyalty>()
+            .register_saved::<SettlementLoyalty>()
+            .register_saved_resource::<GoodwillLedger>()
+            .register_saved::<DecisionTrace>();
     }
 
     fn finish(&self, app: &mut App) {

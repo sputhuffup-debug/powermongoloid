@@ -11,9 +11,10 @@ The definition of done for any change is in [CONTRIBUTING.md](../../CONTRIBUTING
    - Hash `Entity` fields with `h.entity(e)`, which writes the target's SpawnId.
    - Hash an `Option` as a tag byte, then the value.
    - Iterate collections in a stable order: `Vec` in order, `BTreeMap` in key order.
-3. **Register it** in the crate's plugin with `.register_hashed::<T>()` or `.register_hashed_resource::<T>()` (see `crates/sim_agents/src/lib.rs`). If it is derived, a cache or diagnostics, use `.exempt_from_hash::<T>("why")` instead (see `crates/sim_military/src/lib.rs`).
-4. **Add it to every spawn site** that should have it: villagers in `crates/sim_agents/src/population.rs`, soldiers in `crates/sim_military/src/spawn.rs`.
-5. **Run the coverage test:** `cargo test -p integration_tests --test determinism state_hash_covers`.
+3. **Implement `SaveState`** (GP-12, [ADR 0016](../adr/0016-save-format.md)), writing the same fields in a fixed order. For a plain struct use `sim_core::save_fields!(T { a, b, c })` where its fields are visible (see `crates/sim_military/src/save.rs`); `save_newtype!` for `struct T(U)`, `save_unit!` for a marker, `save_serde!` for a serde enum with no entities. `Entity` fields save as SpawnIds by themselves; an enum holding entities or vectors gets a hand-written `save`/`load` with a tag byte (see `TravelState` in `crates/sim_agents/src/components.rs`). Saved enums are append only.
+4. **Register it hashed and saved** in the crate's plugin: `.register_hashed::<T>()` and `.register_saved::<T>()` (or the `_resource` forms), in the same order as the other types (see `crates/sim_agents/src/lib.rs`). A data resource is saved as its RON text with `register_saved_resource_with` (see `crates/sim_agents/src/data.rs`). If it is derived, a cache or diagnostics, use `.exempt_from_hash::<T>("why")` instead (see `crates/sim_military/src/lib.rs`), and if it must be rebuilt after a load, add an `.on_load(hook)` (see `crates/sim_world/src/lib.rs`). An exempt type the next tick reads before rebuilding it must be saved anyway (the army index in `crates/sim_military/src/index.rs`).
+5. **Add it to every spawn site** that should have it: villagers in `crates/sim_agents/src/population.rs`, soldiers in `crates/sim_military/src/spawn.rs`.
+6. **Run the coverage tests:** `cargo test -p integration_tests --test determinism state_hash_covers` and `cargo test -p integration_tests --test save_load` (`every_hashed_type_is_saved`, and a run saved, loaded and played on).
 
 ## Add a simulation system
 

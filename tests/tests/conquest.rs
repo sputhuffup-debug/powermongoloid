@@ -13,10 +13,10 @@
 //!   (loyalty drift and aggregation, the revolt) don't depend on the
 //!   executor.
 //!
-//! Until saves arrive (M4 step 8) each branch replays the prefix in its
-//! own app. A branch's scenario edit (a raiding band arriving, the stores
-//! spoiling) happens between ticks right after the prefix, as a setup edit
-//! after loading a save would. Each test prints the numbers it checks.
+//! The prefix is played once and saved; each branch loads that save into
+//! its own app (GP-12). A branch's scenario edit (a raiding band arriving,
+//! the stores spoiling) happens between ticks right after the load. Each
+//! test prints the numbers it checks.
 
 mod common;
 
@@ -151,7 +151,23 @@ fn days(app: &mut App, s: Entity, n: u32) -> Vec<Day> {
 /// changed hands, the Conquest in the chronicle, and that every resident
 /// now follows the player. Returns the app and the hamlet.
 fn conquered(seed: u64) -> (App, Entity) {
-    conquered_with(seed, Threading::Multi)
+    static PREFIX: std::sync::OnceLock<(Vec<u8>, u64)> = std::sync::OnceLock::new();
+    assert_eq!(seed, SEED, "the prefix is saved for SEED");
+    let (bytes, id) = PREFIX.get_or_init(|| {
+        let (mut app, hamlet) = conquered_with(seed, Threading::Multi);
+        let id = spawn_id(&app, hamlet);
+        (sim_headless::save_app(&mut app), id)
+    });
+    // GP-12: every branch starts from the one save.
+    let mut app = sim_headless::load_app(bytes, Threading::Multi).expect("the prefix loads");
+    let world = app.world_mut();
+    let hamlet = world
+        .query::<(Entity, &SpawnId)>()
+        .iter(world)
+        .find(|(_, s)| s.0 == *id)
+        .map(|(e, _)| e)
+        .expect("the hamlet after the load");
+    (app, hamlet)
 }
 
 /// [`conquered`], on the executor `threading` picks.

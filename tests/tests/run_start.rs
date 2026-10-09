@@ -687,9 +687,10 @@ fn pick_once(data: &Progression, card: u16) {
             FactionId::PLAYER,
             offer,
             card as u64,
-            choice as i32,
+            sim_core::OfferKind::StartBoon.tag() as i32,
             Cause::Player
-        )
+        ),
+        "OfferChosen names the offer, the card, the deck (the kind's tag) and the cause"
     );
 }
 

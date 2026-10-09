@@ -9,7 +9,10 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use bevy_math::{IVec2, Vec2};
 use sim_agents::{ActionKind, Activity, CombatStats, Stance};
-use sim_core::{Allegiance, FactionId, Motion, Position, Posture, SpawnId};
+use sim_core::{
+    Allegiance, FactionId, Motion, Position, Posture, SaveError, SaveReader, SaveState, SaveWriter,
+    SpawnId,
+};
 use sim_economy::{Economy, Stockpile};
 use sim_world::{FlowCache, FlowField, WorldMap, world_pos};
 
@@ -328,6 +331,141 @@ pub struct Nearby {
     pub friends: u32,
 }
 
+// GP-12: the index and the grid are saved, although they are exempt from
+// the hash: the next tick's input step (raiders, the rival, an attack's
+// hold) reads them before `build_index` refreshes them, so a resumed game
+// must see exactly what the saved one would have.
+sim_core::save_fields!(Side { faction, against });
+sim_core::save_fields!(FighterEntry {
+    id,
+    entity,
+    pos,
+    side,
+    routed
+});
+
+/// GP-12: writes the index's armies (their flow fields are not saved: the
+/// next `build_index` looks them up again) and slot signatures, by SpawnId.
+pub(crate) fn save_index(world: &World, w: &mut SaveWriter) {
+    let index = world.resource::<ArmyIndex>();
+    w.count(index.armies.len());
+    for a in &index.armies {
+        w.entity(a.entity);
+        a.id.save(w);
+        a.faction.save(w);
+        w.serde(&a.posture);
+        w.vec2(a.pos);
+        a.goal.save(w);
+        w.u32(a.followers);
+        w.u32(a.fighting);
+        w.u32(a.stragglers);
+        w.f32(a.food);
+    }
+    let mut signatures: Vec<(SpawnId, Entity, (u32, u64, u64))> = index
+        .signatures
+        .iter()
+        .filter_map(|(e, s)| world.get::<SpawnId>(*e).map(|id| (*id, *e, *s)))
+        .collect();
+    signatures.sort_unstable_by_key(|(id, ..)| *id);
+    w.count(signatures.len());
+    for (_, e, s) in signatures {
+        w.entity(e);
+        s.save(w);
+    }
+}
+
+/// GP-12: restores what [`save_index`] wrote.
+pub(crate) fn load_index(world: &mut World, r: &mut SaveReader) -> Result<(), SaveError> {
+    let n = r.count()?;
+    let mut armies = Vec::with_capacity(n);
+    for _ in 0..n {
+        armies.push(ArmyInfo {
+            entity: r.entity()?,
+            id: SpawnId::load(r)?,
+            faction: FactionId::load(r)?,
+            posture: r.serde()?,
+            pos: r.vec2()?,
+            goal: Option::<IVec2>::load(r)?,
+            field: None,
+            rally: None,
+            followers: r.u32()?,
+            fighting: r.u32()?,
+            stragglers: r.u32()?,
+            food: r.f32()?,
+        });
+    }
+    let n = r.count()?;
+    let mut signatures = HashMap::with_capacity(n);
+    for _ in 0..n {
+        let e = r.entity()?;
+        signatures.insert(e, <(u32, u64, u64)>::load(r)?);
+    }
+    let by_entity = armies
+        .iter()
+        .enumerate()
+        .map(|(i, a)| (a.entity, i))
+        .collect();
+    world.insert_resource(ArmyIndex {
+        armies,
+        by_entity,
+        signatures,
+    });
+    Ok(())
+}
+
+/// GP-12: writes the grid's fighters, cell by cell in the order the cells
+/// were filled, and its fighter and militia lists.
+pub(crate) fn save_grid(world: &World, w: &mut SaveWriter) {
+    let grid = world.resource::<FighterGrid>();
+    w.i32(grid.per_side);
+    w.save(&grid.count);
+    w.save(&grid.used);
+    for &c in &grid.used {
+        w.save(&grid.cells[c as usize]);
+    }
+    w.save(&grid.fighters);
+    w.save(&grid.militia);
+}
+
+/// GP-12: restores what [`save_grid`] wrote; the cells' side masks and the
+/// per-tile counts are recomputed from the fighters.
+pub(crate) fn load_grid(world: &mut World, r: &mut SaveReader) -> Result<(), SaveError> {
+    let per_side = r.i32()?;
+    if !(0..=1 << 14).contains(&per_side) {
+        return Err(SaveError::Corrupt(format!("fighter grid of {per_side}")));
+    }
+    let n = (per_side * per_side) as usize;
+    let count = usize::load(r)?;
+    let used = Vec::<u32>::load(r)?;
+    let mut cells = vec![Vec::new(); n];
+    let mut masks = vec![0u64; n];
+    let mut occupancy: HashMap<IVec2, u16> = HashMap::new();
+    for &c in &used {
+        let entries = Vec::<FighterEntry>::load(r)?;
+        let slot = cells
+            .get_mut(c as usize)
+            .ok_or_else(|| SaveError::Corrupt(format!("fighter cell {c}")))?;
+        for e in &entries {
+            masks[c as usize] |= e.side.bit();
+            *occupancy.entry(e.pos.floor().as_ivec2()).or_default() += 1;
+        }
+        *slot = entries;
+    }
+    let fighters = Vec::load(r)?;
+    let militia = Vec::load(r)?;
+    world.insert_resource(FighterGrid {
+        per_side,
+        cells,
+        masks,
+        used,
+        count,
+        fighters,
+        militia,
+        occupancy,
+    });
+    Ok(())
+}
+
 /// Knowledge set: formation slots, then the army index and fighter grid.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // Bevy system parameters.
 pub(crate) fn build_index(
@@ -338,10 +476,10 @@ pub(crate) fn build_index(
     flows: Res<FlowCache>,
     mut index: ResMut<ArmyIndex>,
     mut grid: ResMut<FighterGrid>,
-    captains: Query<(
+    mut captains: Query<(
         Entity,
         &SpawnId,
-        &Captain,
+        &mut Captain,
         &Position,
         &Motion,
         Option<&Stockpile>,
@@ -393,6 +531,7 @@ pub(crate) fn build_index(
 
     // Head counts, and a membership signature per army.
     let mut signature = vec![(0u64, 0u64); armies.len()];
+    let mut routing = vec![false; armies.len()];
     for (id, f, _, _, act) in &followers {
         let Some(&i) = index.by_entity.get(&f.captain) else {
             continue;
@@ -402,9 +541,20 @@ pub(crate) fn build_index(
         if act.kind == ActionKind::Fight {
             a.fighting += 1;
         }
+        routing[i] |= act.kind == ActionKind::Rout;
         let s = &mut signature[i];
         s.0 = s.0.wrapping_add(id.0);
         s.1 ^= id.0.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+    // UI-09: the turning point of an army's battle is the first tick one
+    // of its men is seen running.
+    for (a, _) in armies.iter().zip(&routing).filter(|(_, r)| **r) {
+        if let Ok((.., mut c, _, _, _)) = captains.get_mut(a.entity)
+            && c.battle_since.is_some()
+            && c.battle_rout.is_none()
+        {
+            c.battle_rout = Some(tick.0);
+        }
     }
     // Formation slots: followers of each army in SpawnId order, renumbered
     // every 50 ticks (5 s) so a battle's losses don't reshuffle the ranks

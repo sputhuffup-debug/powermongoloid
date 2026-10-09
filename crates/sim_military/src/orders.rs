@@ -304,6 +304,7 @@ pub(crate) fn split_army(
     let mut captain = Captain::new(old_captain.faction, posture);
     captain.battle_since = old_captain.battle_since;
     captain.last_engaged = old_captain.last_engaged;
+    captain.battle_foes = old_captain.battle_foes;
     world
         .entity_mut(f)
         .remove::<Follower>()

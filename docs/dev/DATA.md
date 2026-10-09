@@ -303,6 +303,22 @@ Runs: GP-21, GP-27 and SIM-34 (M4, see [M4_PLAN.md](../M4_PLAN.md)). The start, 
 | `rival[].raid_from_day` | The first raid leaves on this day (about day 10, minute 40 at 1x, on steady) |
 | `rival[].raid_every_days` | Days between raids after the first. Greater than 0 |
 | `rival[].raid_size` | People in a raiding band, its captain included (at least 2), but at most half the garrison's followers: the band is split off the garrison (`orders::split_army`, its share of the baggage by head count), so raids weaken the seat. A garrison of fewer than four followers sends nobody. The band (`RivalBand`, aggressive) goes for the nearest of the player's settlements (`Attack`) and monuments (stands at it), else hunts the player's nearest army, else goes home; it reports `RivalRaid` |
+| `chronicle` | How the chronicle words its entries (UI-09, [ADR 0017](../adr/0017-events-and-chronicle.md)): read only by `sim_military::chronicle::describe`, never by the simulation, so changing a phrase changes no outcome (only the hashed RON text). Guarded by `chronicle` ([tests/tests/chronicle.rs](../../tests/tests/chronicle.rs)), the chronicle.rs unit tests and `rejects_bad_data` |
+| `chronicle.causes` | One phrase per `Cause`, added after the sentence and a comma ("Day 3: Your warband took Saltholt Stones, by holding the ground."). Each must be non-empty, and may use only the placeholders `{faction}` (the event's faction), `{settlement}` (the settlement concerned: the asking village for a request), `{captain}` (who led a conquest or raid), `{boon}` (the boon's name) and `{foe}` (the killer's faction, or every faction a battle fought) |
+| `chronicle.causes.player` | The player chose it (a trait picked, the run abandoned) |
+| `chronicle.causes.request` | A request answered (`RequestDone`) |
+| `chronicle.causes.conquest` | A settlement taken by force (`Conquest`, the run won) |
+| `chronicle.causes.invitation` | A settlement's invitation accepted (`Invited`) |
+| `chronicle.causes.starvation` | Death by hunger (the champion's fall) |
+| `chronicle.causes.plunder` | Plunder |
+| `chronicle.causes.revolt` | A rising (`Revolt`) |
+| `chronicle.causes.raid` | A raid: the rival's raiding bands and the director's raiders |
+| `chronicle.causes.hold` | Holding the ground: a monument taken |
+| `chronicle.causes.boon` | A boon's effect |
+| `chronicle.causes.death` | Death in battle (the champion's fall, a succession, the run lost) |
+| `chronicle.causes.lapsed` | A request nobody answered in time (`RequestFailed`) |
+| `chronicle.causes.neglect` | A monument left unwatched until it drifted back to nobody (`MonumentLost`) |
+| `chronicle.causes.fight` | A battle (`Battle`), against every faction it fought |
 
 ## director.ron (`sim_military::DirectorData`)
 The pacing director (GP-16, `sim_military::director`, run only). Once a game hour (100 ticks; slot 12 of the progress driver) it measures the player's tension: `threat x weights.threat + hunger x weights.hunger + fights x weights.fights - quiet x weights.quiet`, where threat is 1 with an army at war with the player within army.ron `threat.radius` of one of the player's armies (else the highest `Threat` level of the player's settlements), hunger is 1 with no food in the player's baggage and 0 at two days or more, fights is 1 while one of the player's armies is in battle, and quiet is the time since the last notable event (`Chronicle::last_notable`: every chronicled event and a posted request) as a share of `quiet_limit_hours`, each 0..1. It brings a band of raiders (faction `RAIDERS`, a `Raider` with `target`, aggressive) when the next hourly check would pass `quiet_limit_hours` without a notable event, when no request, raid or fight has come by `first_event_within_hours`, or when tension is below 0, `spacing_hours` have passed since its last band and fewer than `max_bands` raider bands roam. The band appears `spawn_distance` tiles from the populated settlement nearest the champion that the player or nobody owns (the player's first; outside the rival's region; stream `sim_military::director` at the tick), raids it first (on arrival the village asks the player to drive it off), then hunts only the player's armies no bigger than itself and raids only the player's settlements. Each band reports `RaidersArrived`. The run's `RunConfig.difficulty` picks the personality. Guarded by `director` ([tests/tests/director.rs](../../tests/tests/director.rs)) and the director.rs unit tests.

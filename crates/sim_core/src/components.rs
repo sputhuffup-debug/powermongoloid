@@ -100,3 +100,8 @@ impl StateHash for DetailLevel {
         h.bool(self.full);
     }
 }
+
+// GP-12: saved field by field (sim_core::save).
+crate::save_newtype!(SpawnId, NextSpawnId, FactionId, Position, Allegiance);
+crate::save_fields!(Motion { offset, velocity });
+crate::save_fields!(DetailLevel { full });

@@ -47,7 +47,7 @@
 //!   `requests.cooldown_hours` before asking again.
 //!
 //! Events: `RequestPosted`, `RequestDone` (cause `Cause::Request`) and
-//! `RequestFailed`, each with `subject` = the request id, `other` = the
+//! `RequestFailed` (cause `Cause::Lapsed`), each with `subject` = the request id, `other` = the
 //! settlement, `at` = its centre and `amount` = the kind's tag.
 
 use bevy_ecs::prelude::*;
@@ -633,7 +633,7 @@ fn post(world: &mut World, r: &Request, p: &Place) {
 }
 
 fn fail(world: &mut World, r: &Request, p: &Place) {
-    world.write_message(event(SimEventKind::RequestFailed, r, p));
+    world.write_message(event(SimEventKind::RequestFailed, r, p).cause(Cause::Lapsed));
     let name = settlement_name(world, p.entity);
     log(world, format!("{name}'s request lapsed: {}", r.kind.name()));
 }

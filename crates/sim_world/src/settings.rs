@@ -383,6 +383,17 @@ impl StateHash for WorldGenSettings {
     }
 }
 
+/// GP-12: saved as its RON text (what the state hash reads), validated on load.
+impl sim_core::SaveState for WorldGenSettings {
+    fn save(&self, w: &mut sim_core::SaveWriter) {
+        w.ron(self);
+    }
+    fn load(r: &mut sim_core::SaveReader) -> Result<Self, sim_core::SaveError> {
+        let text = r.str()?;
+        Self::from_ron(&text).map_err(sim_core::SaveError::Mismatch)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

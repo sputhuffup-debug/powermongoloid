@@ -16,6 +16,8 @@ impl StateHash for Mobile {
     fn hash_state(&self, _h: &mut StateHasher) {}
 }
 
+sim_core::save_unit!(Mobile);
+
 /// Derived from positions every tick, so not part of the state hash.
 #[derive(Resource, Debug, Default)]
 pub struct SpatialGrid {

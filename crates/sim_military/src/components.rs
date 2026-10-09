@@ -126,6 +126,14 @@ pub struct Captain {
     pub last_engaged: u64,
     /// SIM-36: members of the army who died during its current battle.
     pub battle_losses: u32,
+    /// UI-09: the factions the army has fought in its current battle, one
+    /// bit per faction id (`1 << id`), for its battle report.
+    pub battle_foes: u32,
+    /// UI-09: foes its people killed in its current battle.
+    pub battle_kills: u32,
+    /// UI-09: the tick the first of its men broke and ran in its current
+    /// battle (the report's turning point); `None` while it holds.
+    pub battle_rout: Option<u64>,
 }
 
 impl Captain {
@@ -143,6 +151,9 @@ impl Captain {
             battle_since: None,
             last_engaged: 0,
             battle_losses: 0,
+            battle_foes: 0,
+            battle_kills: 0,
+            battle_rout: None,
         }
     }
 }
@@ -193,6 +204,15 @@ impl StateHash for Captain {
         }
         h.u64(self.last_engaged);
         h.u32(self.battle_losses);
+        h.u32(self.battle_foes);
+        h.u32(self.battle_kills);
+        match self.battle_rout {
+            Some(t) => {
+                h.u8(1);
+                h.u64(t);
+            }
+            None => h.u8(0),
+        }
     }
 }
 
@@ -389,7 +409,12 @@ impl StateHash for ArmyStats {
 /// Recent military events for the UI (UI-01). History only.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct MilitaryLog {
+    /// `(tick, text)`, oldest first; the last 64.
     pub entries: VecDeque<(u64, String)>,
+    /// Entries ever pushed (UI-05): entry `i` of `entries` has sequence
+    /// number `seq - entries.len() + i`, so the event feed can read new
+    /// lines by cursor, like [`sim_core::EventFeed`].
+    pub seq: u64,
 }
 
 impl MilitaryLog {
@@ -401,5 +426,17 @@ impl MilitaryLog {
             self.entries.pop_front();
         }
         self.entries.push_back((tick, text.into()));
+        self.seq += 1;
+    }
+
+    /// Entries with sequence number `>= cursor`, oldest first, as
+    /// `(seq, tick, text)`. Pass the last seen `seq + 1`.
+    pub fn since(&self, cursor: u64) -> impl Iterator<Item = (u64, u64, &str)> + '_ {
+        let first = self.seq - self.entries.len() as u64;
+        self.entries
+            .iter()
+            .enumerate()
+            .map(move |(i, (tick, text))| (first + i as u64, *tick, text.as_str()))
+            .filter(move |(seq, ..)| *seq >= cursor)
     }
 }

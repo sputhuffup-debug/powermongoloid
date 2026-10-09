@@ -43,6 +43,48 @@ impl BuildingKind {
     }
 }
 
+impl sim_core::SaveState for BuildingKind {
+    fn save(&self, w: &mut sim_core::SaveWriter) {
+        match *self {
+            BuildingKind::House => w.u8(0),
+            BuildingKind::Workplace(k) => {
+                w.u8(1);
+                w.serde(&k);
+            }
+        }
+    }
+    fn load(r: &mut sim_core::SaveReader) -> Result<Self, sim_core::SaveError> {
+        Ok(match r.u8()? {
+            0 => BuildingKind::House,
+            1 => BuildingKind::Workplace(r.serde()?),
+            t => {
+                return Err(sim_core::SaveError::Corrupt(format!(
+                    "bad building kind {t}"
+                )));
+            }
+        })
+    }
+}
+
+// GP-12: saved field by field; entities as their SpawnIds.
+sim_core::save_fields!(Building {
+    kind,
+    settlement,
+    tile
+});
+sim_core::save_fields!(Workplace {
+    kind,
+    recipe,
+    workers
+});
+sim_core::save_fields!(Home { residents });
+sim_core::save_fields!(SettlementEconomy {
+    storehouse,
+    homes,
+    workplaces,
+    population
+});
+
 /// A building: what it is, whose it is and where.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Building {

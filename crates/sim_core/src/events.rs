@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::FactionId;
 use crate::hash::{StateHash, StateHasher};
+use crate::names::NameId;
 use crate::schedule::SimTick;
 
 /// What happened. Append only: the discriminant is stored in saves and is
@@ -38,15 +39,17 @@ pub enum SimEventKind {
     /// `amount`: the number of choices.
     OfferPosted,
     /// An offer was answered. `subject`: the offer id; `other`: the card
-    /// picked (its index in the deck); `amount`: the choice.
+    /// picked (its index in the deck); `amount`: the offer kind's tag
+    /// ([`OfferKind::tag`](crate::OfferKind::tag): 0 start boon, 1 dominion
+    /// boon, 2 trait, 3 invitation, 4 hire), which says which deck.
     OfferChosen,
     /// A monument changed to `faction` (GP-23). `subject`: the monument;
     /// `other`: the previous holder's faction id (0 for nobody); `at`: the
     /// monument; `amount`: its kind (`MonumentKind` index).
     MonumentTaken,
     /// `faction` lost a monument. `subject`: the monument; `other`: the
-    /// faction that took it (0 when it drifted back to nobody); `at`: the
-    /// monument; `amount`: its kind.
+    /// faction that took it (0 when it drifted back to nobody, cause
+    /// [`Cause::Neglect`]); `at`: the monument; `amount`: its kind.
     MonumentLost,
     /// A settlement asks the player for help (GP-22). `subject`: the
     /// request id; `other`: the settlement; `at`: its centre; `amount`: the
@@ -56,9 +59,9 @@ pub enum SimEventKind {
     /// request id; `other`: the settlement; `at`: its centre; `amount`: the
     /// kind's tag.
     RequestDone,
-    /// A request expired, or its danger passed without the player.
-    /// `subject`: the request id; `other`: the settlement; `at`: its
-    /// centre; `amount`: the kind's tag.
+    /// A request expired, or its danger passed without the player (cause
+    /// [`Cause::Lapsed`]). `subject`: the request id; `other`: the
+    /// settlement; `at`: its centre; `amount`: the kind's tag.
     RequestFailed,
     /// `faction` took a settlement by force (GP-05). `subject`: the
     /// settlement; `other`: its previous owner's faction id; `at`: its
@@ -77,10 +80,13 @@ pub enum SimEventKind {
     RankUp,
     /// Someone gained a trait (SIM-34). `subject`: the person; `amount`: the trait id.
     TraitGained,
-    /// A soldier reached a veteran rank (SIM-36). `subject`: the soldier;
-    /// `at`: its army's captain's tile; `amount`: the rank.
+    /// Soldiers of one army reached a veteran rank after a battle (SIM-36),
+    /// grouped so a big battle doesn't flood the feed (the names are in its
+    /// [`BattleReport`]). `subject`: the army's captain; `other`: how many;
+    /// `at`: the captain's tile; `amount`: the rank.
     VeteranRank,
     /// The champion died (SIM-35). `subject`: the champion; `at`: where;
+    /// `amount`: the champion's name (a `NameId`, since the person is gone);
     /// `cause`: `Death` (the striker's faction) or `Starvation`.
     ChampionFell,
     /// A captain became champion (SIM-35). `subject`: the new champion;
@@ -93,16 +99,17 @@ pub enum SimEventKind {
     RivalLevy,
     /// The rival sent a raiding band (GP-28). `faction`: the rival;
     /// `subject`: its captain; `at`: the seat's centre; `amount`: people in
-    /// the band, its captain included.
+    /// the band, its captain included; `cause`: `Raid` (its captain).
     RivalRaid,
     /// The pacing director brought raiders (GP-16). `faction`: the raiders;
     /// `subject`: their captain; `other`: the settlement they were sent to
     /// raid (0 for none); `at`: where they appeared; `amount`: people in
-    /// the band, its captain included.
+    /// the band, its captain included; `cause`: `Raid` (their captain).
     RaidersArrived,
     /// An army's battle ended (SIM-36). `faction`: the army's; `subject`:
     /// its captain; `other`: the survivors who fought; `at`: the captain's
-    /// tile; `amount`: the army's dead.
+    /// tile; `amount`: the army's dead; `cause`: `Fight` (its first foe).
+    /// Its [`BattleReport`] is in [`Chronicle::reports`] (UI-09).
     Battle,
     /// Volunteers joined a band (GP-22). `subject`: the captain; `other`:
     /// the settlement they came from; `at`: the captain's tile; `amount`:
@@ -219,6 +226,12 @@ pub enum Cause {
     Boon { card: u16 },
     /// A death at the hands of `faction`.
     Death { faction: FactionId },
+    /// Nobody answered in time (a request that lapsed, UI-09).
+    Lapsed,
+    /// Left unwatched too long (a monument that drifted back to nobody).
+    Neglect,
+    /// Fighting `faction` (a battle; its first foe by faction id).
+    Fight { faction: FactionId },
 }
 
 impl Cause {
@@ -237,6 +250,9 @@ impl Cause {
             Cause::Hold => 9,
             Cause::Boon { .. } => 10,
             Cause::Death { .. } => 11,
+            Cause::Lapsed => 12,
+            Cause::Neglect => 13,
+            Cause::Fight { .. } => 14,
         }
     }
 
@@ -246,14 +262,16 @@ impl Cause {
             Cause::Request { id } => id,
             Cause::Conquest { captain } | Cause::Raid { captain } => captain,
             Cause::Boon { card } => card as u64,
-            Cause::Death { faction } => faction.0 as u64,
+            Cause::Death { faction } | Cause::Fight { faction } => faction.0 as u64,
             Cause::None
             | Cause::Player
             | Cause::Invitation
             | Cause::Starvation
             | Cause::Plunder
             | Cause::Revolt
-            | Cause::Hold => 0,
+            | Cause::Hold
+            | Cause::Lapsed
+            | Cause::Neglect => 0,
         }
     }
 }
@@ -381,12 +399,81 @@ impl ChronicleEntry {
     }
 }
 
-/// The run's history (UI-09): every chronicled event in recording order.
-/// Append only. Hashed (as its length, a running digest of every entry and
-/// the last notable tick, so hashing is O(1)) and saved.
+/// A soldier who rose in veteran rank in a battle (SIM-36), named so the
+/// chronicle can tell of its Elites after they are gone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Promotion {
+    /// The soldier's SpawnId.
+    pub soldier: u64,
+    /// The rank reached.
+    pub rank: u8,
+    /// The soldier's name.
+    pub name: NameId,
+}
+
+/// One army's account of a battle (UI-09), written when its battle ends
+/// (with its `Battle` event, same tick, captain and faction): who fought
+/// whom, the losses on both sides, the turning point and the ranks earned.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BattleReport {
+    /// The tick the battle ended (its `Battle` entry's tick).
+    pub tick: u64,
+    /// The tick of its first blow.
+    pub started: u64,
+    /// The army's faction.
+    pub faction: FactionId,
+    /// The army's captain (SpawnId).
+    pub captain: u64,
+    /// The factions it fought, ascending (0: a village's militia).
+    pub foes: Vec<FactionId>,
+    /// Where its captain stood at the end.
+    pub at: IVec2,
+    /// Survivors who struck or were struck.
+    pub fought: u32,
+    /// Its dead.
+    pub losses: u32,
+    /// Foes its people killed.
+    pub kills: u32,
+    /// The turning point: the tick its first man broke and ran (`None`:
+    /// it held to the end).
+    pub turning_point: Option<u64>,
+    /// Its people who rose in veteran rank, in SpawnId order: the ranks
+    /// earned (traits from triggers come in a later milestone).
+    pub promotions: Vec<Promotion>,
+}
+
+impl BattleReport {
+    fn hash_into(&self, h: &mut StateHasher) {
+        h.u64(self.tick);
+        h.u64(self.started);
+        h.u16(self.faction.0);
+        h.u64(self.captain);
+        h.u32(self.foes.len() as u32);
+        for f in &self.foes {
+            h.u16(f.0);
+        }
+        h.ivec2(self.at);
+        h.u32(self.fought);
+        h.u32(self.losses);
+        h.u32(self.kills);
+        h.u64(self.turning_point.map_or(u64::MAX, |t| t));
+        h.u32(self.promotions.len() as u32);
+        for p in &self.promotions {
+            h.u64(p.soldier);
+            h.u8(p.rank);
+            h.u32(p.name.0);
+        }
+    }
+}
+
+/// The run's history (UI-09): every chronicled event in recording order,
+/// and a [`BattleReport`] per battle. Append only. Hashed (as its lengths,
+/// a running digest of every entry and report, and the last notable tick,
+/// so hashing is O(1)) and saved.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct Chronicle {
     entries: Vec<ChronicleEntry>,
+    reports: Vec<BattleReport>,
     digest: u64,
     last_notable: u64,
 }
@@ -397,6 +484,35 @@ impl Chronicle {
     pub fn push(&mut self, entry: ChronicleEntry) {
         self.digest = entry.extend(self.digest);
         self.entries.push(entry);
+    }
+
+    /// Appends a battle report and updates the digest (sim_military's
+    /// battle step, in captain SpawnId order).
+    pub fn push_report(&mut self, report: BattleReport) {
+        let no_entities = HashMap::new();
+        let mut h = StateHasher::new(&no_entities);
+        h.u64(self.digest);
+        report.hash_into(&mut h);
+        self.digest = h.finish();
+        self.reports.push(report);
+    }
+
+    /// Every battle report, oldest first.
+    pub fn reports(&self) -> &[BattleReport] {
+        &self.reports
+    }
+
+    /// The report of a `Battle` entry: same tick, faction and captain.
+    pub fn report_for(&self, entry: &ChronicleEntry) -> Option<&BattleReport> {
+        (entry.event.kind == SimEventKind::Battle)
+            .then(|| {
+                self.reports.iter().find(|r| {
+                    r.tick == entry.tick
+                        && r.faction == entry.event.faction
+                        && r.captain == entry.event.subject
+                })
+            })
+            .flatten()
     }
 
     /// Every entry, oldest first.
@@ -429,6 +545,7 @@ impl Chronicle {
 impl StateHash for Chronicle {
     fn hash_state(&self, h: &mut StateHasher) {
         h.u64(self.entries.len() as u64);
+        h.u64(self.reports.len() as u64);
         h.u64(self.digest);
         h.u64(self.last_notable);
     }
@@ -494,6 +611,46 @@ impl EventFeed {
         self.entries.is_empty()
     }
 }
+
+// GP-12: the chronicle and the feed are saved (the feed so the UI's
+// cursor carries on after a load).
+crate::save_serde!(SimEventKind, Cause);
+crate::save_fields!(SimEvent {
+    kind,
+    faction,
+    subject,
+    other,
+    at,
+    amount,
+    cause
+});
+crate::save_fields!(ChronicleEntry { tick, event });
+crate::save_fields!(Promotion {
+    soldier,
+    rank,
+    name
+});
+crate::save_fields!(BattleReport {
+    tick,
+    started,
+    faction,
+    captain,
+    foes,
+    at,
+    fought,
+    losses,
+    kills,
+    turning_point,
+    promotions
+});
+crate::save_fields!(Chronicle {
+    entries,
+    reports,
+    digest,
+    last_notable
+});
+crate::save_fields!(FeedEntry { seq, tick, event });
+crate::save_fields!(EventFeed { entries, next_seq });
 
 /// Records one event at `tick`: always to the feed, and to the chronicle if
 /// its kind is chronicled.

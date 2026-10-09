@@ -104,6 +104,9 @@ impl StateHash for Monument {
     }
 }
 
+sim_core::save_serde!(MonumentKind);
+sim_core::save_fields!(Monument { kind, region, name });
+
 /// A monument chosen by world generation, before it is installed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MonumentSite {

@@ -112,6 +112,10 @@ impl StateHash for Goodwill {
     }
 }
 
+// GP-12: saved field by field (Goodwill's list stays private).
+sim_core::save_fields!(Owner { faction, since });
+sim_core::save_fields!(Goodwill { by_faction });
+
 /// The deed behind a [`GoodwillChange`] (GP-22). Its delta comes from
 /// progression.ron `goodwill_deeds` (sim_military), or from the boon's own
 /// effect for [`Deed::Boon`]. Append only: saves and the hash store the tag.
@@ -150,6 +154,36 @@ pub struct GoodwillChange {
     /// The deed.
     pub cause: Deed,
 }
+
+impl sim_core::SaveState for Deed {
+    fn save(&self, w: &mut sim_core::SaveWriter) {
+        w.u8(*self as u8);
+    }
+    fn load(r: &mut sim_core::SaveReader) -> Result<Self, sim_core::SaveError> {
+        const ALL: [Deed; 8] = [
+            Deed::Trade,
+            Deed::Equip,
+            Deed::Seize,
+            Deed::Plunder,
+            Deed::Provoke,
+            Deed::Killing,
+            Deed::Request,
+            Deed::Boon,
+        ];
+        let t = r.u8()?;
+        ALL.get(t as usize)
+            .copied()
+            .ok_or_else(|| sim_core::SaveError::Corrupt(format!("bad deed tag {t}")))
+    }
+}
+
+sim_core::save_fields!(GoodwillChange {
+    settlement,
+    faction,
+    delta,
+    cause
+});
+sim_core::save_newtype!(GoodwillLedger);
 
 impl GoodwillChange {
     /// The canonical order: settlement, faction, deed, then the delta's bits.

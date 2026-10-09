@@ -12,9 +12,14 @@
 //!   `fought` cleared; the army reports a `Battle` event (its faction, its
 //!   captain, how many fought, its losses), and a champion in the army
 //!   earns its battle points ([`crate::progression::champion::credit`]).
+//!   Its `BattleReport` goes into the chronicle (UI-09): the foes it
+//!   fought (`Captain::battle_foes`, set by `resolve_strikes`), its losses
+//!   and kills, the turning point (`Captain::battle_rout`, the first tick
+//!   one of its men ran, seen by `build_index`) and the ranks earned.
 //! - In a run only, survivors rank up: rank = the `veterans.thresholds`
-//!   that `battles x VeteranRate` reaches (never lower than before), with a
-//!   `VeteranRank` event per promotion. Outside a run every rank stays 0,
+//!   that `battles x VeteranRate` reaches (never lower than before), with
+//!   one `VeteranRank` event per rank reached (the count in `other`; the
+//!   names in the report). Outside a run every rank stays 0,
 //!   so the M3 skirmish and battle numbers never move (guide D6).
 //! - A rank's `veterans.gains` apply where each stat is used: attack and
 //!   defence in `resolve_strikes`, the morale target and the desertion
@@ -23,8 +28,8 @@
 use bevy_ecs::prelude::*;
 use sim_agents::CombatStats;
 use sim_core::{
-    Calendar, FactionModifiers, Position, RunState, SimEvent, SimEventKind, SimTick, SpawnId, Stat,
-    StateHash, StateHasher,
+    BattleReport, Calendar, Cause, Chronicle, FactionId, FactionModifiers, NameId, Position,
+    Promotion, RunState, SimEvent, SimEventKind, SimTick, SpawnId, Stat, StateHash, StateHasher,
 };
 
 use crate::components::{Captain, Follower};
@@ -76,17 +81,24 @@ pub fn end_battles(world: &mut World) {
     ended.sort_unstable();
     let in_run = world.resource::<RunState>().in_run();
     for (id, captain) in ended {
-        let (faction, losses) = {
+        let (faction, losses, started, foes, kills, turning_point) = {
             let mut c = world.get_mut::<Captain>(captain).expect("a captain");
-            c.battle_since = None;
-            (c.faction, std::mem::take(&mut c.battle_losses))
+            let started = c.battle_since.take().unwrap_or(tick);
+            (
+                c.faction,
+                std::mem::take(&mut c.battle_losses),
+                started,
+                std::mem::take(&mut c.battle_foes),
+                std::mem::take(&mut c.battle_kills),
+                c.battle_rout.take(),
+            )
         };
         let rate = world
             .resource::<FactionModifiers>()
             .mult(faction, Stat::VeteranRate);
         let members = members(world, captain);
         let mut fought = 0u32;
-        let mut promoted: Vec<(u64, u8)> = Vec::new();
+        let mut promoted: Vec<Promotion> = Vec::new();
         let mut champion = false;
         for &(mid, e) in &members {
             champion |= world.get::<Champion>(e).is_some();
@@ -106,43 +118,86 @@ pub fn end_battles(world: &mut World) {
                 let rank = data.rank_for(v.battles, rate).max(v.rank);
                 if rank > v.rank {
                     v.rank = rank;
-                    promoted.push((mid.0, rank));
+                    promoted.push(Promotion {
+                        soldier: mid.0,
+                        rank,
+                        name: person_name(world, e),
+                    });
                 }
             }
         }
         let at = world
             .get::<Position>(captain)
             .map_or_else(Default::default, |p| p.0);
+        let foes: Vec<FactionId> = (0..32u16)
+            .filter(|f| foes & (1 << f) != 0)
+            .map(FactionId)
+            .collect();
+        // UI-09: the battle's cause is its first foe (by faction id).
+        let cause = foes
+            .first()
+            .map_or(Cause::None, |&f| Cause::Fight { faction: f });
         world.write_message(
             SimEvent::new(SimEventKind::Battle, faction)
                 .subject(id.0)
                 .other(fought as u64)
                 .at(at)
-                .amount(losses as i32),
+                .amount(losses as i32)
+                .cause(cause),
         );
-        for &(soldier, rank) in &promoted {
+        // One event per rank reached, not per soldier, so a big battle
+        // doesn't flood the feed; the report names them.
+        let mut ranks: Vec<u8> = promoted.iter().map(|p| p.rank).collect();
+        ranks.sort_unstable();
+        ranks.dedup();
+        for rank in ranks {
+            let n = promoted.iter().filter(|p| p.rank == rank).count();
             world.write_message(
                 SimEvent::new(SimEventKind::VeteranRank, faction)
-                    .subject(soldier)
+                    .subject(id.0)
+                    .other(n as u64)
                     .at(at)
                     .amount(rank as i32),
             );
         }
+        let promotions = promoted.len();
+        world.resource_mut::<Chronicle>().push_report(BattleReport {
+            tick,
+            started,
+            faction,
+            captain: id.0,
+            foes,
+            at,
+            fought,
+            losses,
+            kills,
+            turning_point,
+            promotions: promoted,
+        });
         // SIM-35: a battle the champion's own army lived through.
         if champion {
             credit(world, faction, Feat::Battle);
         }
         let who = faction_name(world, faction);
-        let ranks = if promoted.is_empty() {
+        let ranks = if promotions == 0 {
             String::new()
         } else {
-            format!(", {} rose in rank", promoted.len())
+            format!(", {promotions} rose in rank")
         };
         log(
             world,
             format!("{who}: a battle is over ({fought} fought, {losses} fell{ranks})"),
         );
     }
+}
+
+/// A person's name: a villager's or a spawned soldier's.
+pub(crate) fn person_name(world: &World, e: Entity) -> NameId {
+    world
+        .get::<sim_agents::Villager>(e)
+        .map(|v| v.name)
+        .or_else(|| world.get::<crate::components::Soldier>(e).map(|s| s.name))
+        .unwrap_or(NameId(u32::MAX))
 }
 
 /// The captain and its followers, in SpawnId order.
@@ -354,12 +409,25 @@ mod tests {
                 ),
                 (100, FactionId::PLAYER, champion_id, 3, 2)
             );
-            let ranked = world
+            // One grouped VeteranRank per rank reached (two Soldiers and a
+            // Veteran: recorded in sort order), and the battle report.
+            let ranked: Vec<(u64, u64, i32)> = world
                 .resource::<EventFeed>()
                 .iter()
                 .filter(|e| e.event.kind == SimEventKind::VeteranRank)
-                .count();
-            assert_eq!(ranked, if run { 3 } else { 0 });
+                .map(|e| (e.event.subject, e.event.other, e.event.amount))
+                .collect();
+            let want = if run {
+                vec![(champion_id, 1, 2), (champion_id, 2, 1)]
+            } else {
+                vec![]
+            };
+            assert_eq!(ranked, want);
+            let report = world.resource::<Chronicle>().report_for(&battle).unwrap();
+            assert_eq!(
+                (report.fought, report.losses, report.promotions.len()),
+                (3, 2, if run { 3 } else { 0 })
+            );
             let battle_points = world
                 .resource::<crate::Progression>()
                 .data

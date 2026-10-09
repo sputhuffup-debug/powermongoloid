@@ -442,6 +442,23 @@ impl StateHash for Villagers {
     }
 }
 
+/// GP-12: saves the data as its RON text (what the state hash reads).
+pub(crate) fn save_villagers(world: &World, w: &mut sim_core::SaveWriter) {
+    w.ron(&world.resource::<Villagers>().data);
+}
+
+/// GP-12: rebuilds [`Villagers`] from saved RON text and the loaded calendar.
+pub(crate) fn load_villagers(
+    world: &mut World,
+    r: &mut sim_core::SaveReader,
+) -> Result<(), sim_core::SaveError> {
+    let text = r.str()?;
+    let v = Villagers::from_ron(&text, world.resource::<Calendar>())
+        .map_err(sim_core::SaveError::Mismatch)?;
+    world.insert_resource(v);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -7,6 +7,8 @@
 //!   optional [`Scenario`] (villages, skirmish, battle, or a run on the run
 //!   island, GP-21) set up by [`set_up_scenario`].
 //! - [`run`], [`record_replay`], [`verify_replay`]: run and check hashes.
+//! - [`load_app`], [`save_app`] and [`resume_commands`] (GP-12): resume a
+//!   saved game; [`continue_run`] runs the rest of a session from a save.
 //! - [`sample_commands`] and [`sample_orders`]: deterministic command streams
 //!   for tests.
 //! - [`stats`]: population and army summaries (`--stats-every`).
@@ -50,6 +52,10 @@ pub struct SimPlugins {
     /// A run's config (GP-21): `Some` makes this app a run, set up by
     /// [`set_up_scenario`] with [`Scenario::Run`].
     pub run: Option<RunConfig>,
+    /// Generate the world and populate it when the app finishes building
+    /// (default). `false` builds an empty app for a save to load into
+    /// ([`load_app`], GP-12).
+    pub generate: bool,
 }
 
 impl SimPlugins {
@@ -60,6 +66,7 @@ impl SimPlugins {
             population: None,
             worldgen: WorldGenSettings::default_data(),
             run: None,
+            generate: true,
         }
     }
 
@@ -71,6 +78,7 @@ impl SimPlugins {
             population: None,
             worldgen: WorldGenSettings::preset(WorldPreset::Run),
             run: Some(config),
+            generate: true,
         }
     }
 }
@@ -85,6 +93,7 @@ impl PluginGroup for SimPlugins {
             .add(sim_world::WorldPlugin {
                 settings: self.worldgen,
                 threads: sim_world::worldgen::default_threads(),
+                generate: self.generate,
             })
             .add(sim_economy::EconomyPlugin)
             .add(sim_agents::AgentsPlugin {
@@ -252,6 +261,7 @@ pub fn headless_app(config: HeadlessConfig) -> App {
             population: run.is_none().then_some(config.population),
             worldgen: config.worldgen(),
             run,
+            generate: true,
         });
     if config.threading == Threading::Single {
         app.edit_schedule(FixedUpdate, |s| {
@@ -291,29 +301,109 @@ pub fn run(
     commands: &[LoggedCommand],
     checkpoint_every: u64,
 ) -> RunResult {
+    run_saving(config, ticks, commands, checkpoint_every, None).0
+}
+
+/// [`run`], also saving the game (GP-12) after `save_at` ticks (0: before
+/// the first tick). The run carries on to `ticks` either way.
+pub fn run_saving(
+    config: HeadlessConfig,
+    ticks: u64,
+    commands: &[LoggedCommand],
+    checkpoint_every: u64,
+    save_at: Option<u64>,
+) -> (RunResult, Option<Vec<u8>>) {
     let start = Instant::now();
     let mut app = headless_app(config);
     let setup_time = start.elapsed();
+    let (mut result, saved) = continue_run(&mut app, ticks, commands, checkpoint_every, save_at);
+    result.setup_time = setup_time;
+    (result, saved)
+}
+
+/// Steps `app` from its current tick `t0` until `until` ticks have run in
+/// all, replaying the commands of `commands` it hasn't reached yet (tick >=
+/// `t0`), hashing every `checkpoint_every` ticks (and at `until`), and
+/// saving after `save_at` ticks. A fresh app starts at 0; a loaded one
+/// (GP-12) where its save was taken. `setup_time` is left zero.
+pub fn continue_run(
+    app: &mut App,
+    until: u64,
+    commands: &[LoggedCommand],
+    checkpoint_every: u64,
+    save_at: Option<u64>,
+) -> (RunResult, Option<Vec<u8>>) {
     let start = Instant::now();
-    app.insert_resource(CommandScript::from_log(commands));
+    let t0 = app.world().resource::<sim_core::SimTick>().0;
+    resume_commands(app, commands);
+    let mut saved = None;
+    if save_at == Some(t0) {
+        saved = Some(save_app(app));
+    }
     let mut checkpoints = Vec::new();
-    for tick in 1..=ticks {
+    for tick in t0 + 1..=until {
         app.step(1);
-        if tick == ticks || (checkpoint_every > 0 && tick % checkpoint_every == 0) {
+        if tick == until || (checkpoint_every > 0 && tick % checkpoint_every == 0) {
             checkpoints.push(Checkpoint {
                 tick,
                 hash: compute_state_hash(app.world_mut()),
             });
         }
+        if save_at == Some(tick) {
+            saved = Some(save_app(app));
+        }
     }
     let tick_time = start.elapsed();
     let log = app.world().resource::<CommandLog>().0.clone();
-    RunResult {
+    let result = RunResult {
         checkpoints,
         log,
-        setup_time,
+        setup_time: Duration::ZERO,
         tick_time,
+    };
+    (result, saved)
+}
+
+/// GP-12: saves the app's world ([`sim_core::save_world`]). Call between ticks.
+pub fn save_app(app: &mut App) -> Vec<u8> {
+    sim_core::save_world(app.world_mut())
+}
+
+/// GP-12: builds an app from a save (see [`sim_core::save_world`]): the
+/// plugins from the save's header (seed, run config) without generating a
+/// world, then [`sim_core::load_world`], which regenerates the map from the
+/// seed and restores everything else. The app is ready to step, from the
+/// tick the save was taken at. Pending commands are not saved: schedule the
+/// rest of a session's commands with [`resume_commands`].
+pub fn load_app(bytes: &[u8], threading: Threading) -> Result<App, sim_core::SaveError> {
+    let header = sim_core::read_header(bytes)?;
+    let mut app = App::new();
+    app.add_plugins(TaskPoolPlugin::default())
+        .add_plugins(SimPlugins {
+            seed: header.seed,
+            population: None,
+            // Replaced by the save's own settings.
+            worldgen: WorldGenSettings::default_data(),
+            run: header.run,
+            generate: false,
+        });
+    if threading == Threading::Single {
+        app.edit_schedule(FixedUpdate, |s| {
+            s.set_executor(SingleThreadedExecutor::new());
+        });
     }
+    app.prepare_sim();
+    sim_core::load_world(app.world_mut(), bytes)?;
+    Ok(app)
+}
+
+/// GP-12: schedules the commands of `log` the app hasn't reached yet (tick
+/// at or after its current tick), replacing its script: after a load, the
+/// rest of a replay or of a recorded session.
+pub fn resume_commands(app: &mut App, log: &[LoggedCommand]) {
+    let now = app.world().resource::<sim_core::SimTick>().0;
+    let rest: Vec<LoggedCommand> = log.iter().filter(|c| c.tick >= now).cloned().collect();
+    app.insert_resource(CommandScript::from_log(&rest));
 }
 
 /// Runs `ticks` ticks from `seed` and returns the final state hash.
@@ -373,6 +463,18 @@ impl std::fmt::Display for Divergence {
 /// If the replay names a scenario this build doesn't know: re-running it
 /// as anything else could only diverge.
 pub fn verify_replay(replay: &Replay, threading: Threading) -> Result<RunResult, Divergence> {
+    verify_replay_saving(replay, threading, None).0
+}
+
+/// [`verify_replay`], also saving the game (GP-12) after `save_at` ticks.
+///
+/// # Panics
+/// As [`verify_replay`].
+pub fn verify_replay_saving(
+    replay: &Replay,
+    threading: Threading,
+    save_at: Option<u64>,
+) -> (Result<RunResult, Divergence>, Option<Vec<u8>>) {
     let scenario = match Scenario::parse(&replay.scenario) {
         Some(Scenario::Run(_)) => Scenario::Run(replay.run.unwrap_or_default()),
         Some(s) => s,
@@ -388,16 +490,18 @@ pub fn verify_replay(replay: &Replay, threading: Threading) -> Result<RunResult,
         world_size: replay.world_size,
         scenario,
     };
-    let result = run(
+    let (result, saved) = run_saving(
         config,
         replay.ticks,
         &replay.commands,
         replay.checkpoint_every,
+        save_at,
     );
-    match replay.first_divergence(&result.checkpoints) {
+    let outcome = match replay.first_divergence(&result.checkpoints) {
         None => Ok(result),
         Some((expected, actual)) => Err(Divergence { expected, actual }),
-    }
+    };
+    (outcome, saved)
 }
 
 /// `count` deterministic no-op commands spread over `ticks`, from `seed`.

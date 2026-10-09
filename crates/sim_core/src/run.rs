@@ -172,6 +172,15 @@ impl StateHash for RunState {
     }
 }
 
+crate::save_serde!(RunConfig, RunOutcome, OfferKind, Offer);
+crate::save_fields!(RunState {
+    config,
+    pending,
+    outcome,
+    cause,
+    ended_at
+});
+
 /// Run condition: the simulation advances (no run, or a run that hasn't
 /// ended). Gates every [`SimSet`](crate::SimSet).
 pub fn run_in_progress(state: Option<Res<RunState>>) -> bool {
@@ -368,6 +377,8 @@ impl Offers {
         gone
     }
 }
+
+crate::save_fields!(Offers { next_id, pending });
 
 impl StateHash for Offers {
     fn hash_state(&self, h: &mut StateHasher) {

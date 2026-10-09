@@ -5,6 +5,8 @@
 //!   sim_headless --replay run.ron                   verify a replay file
 //!   sim_headless --run --difficulty harsh           a run on the run island
 //!   sim_headless --run --bot --ticks 24000          the scripted player plays it
+//!   sim_headless --run --ticks 2400 --save day1.sav save the run after a day
+//!   sim_headless --load day1.sav --ticks 1000       resume it for 1000 more ticks
 //!
 //! Exit code 1 on bad arguments, 2 if a replay diverges.
 
@@ -13,7 +15,7 @@ use std::time::Instant;
 
 use sim_core::{Difficulty, Replay, RunConfig};
 use sim_headless::{
-    HeadlessConfig, Scenario, Threading, record_replay, run, sample_commands, verify_replay,
+    HeadlessConfig, Scenario, Threading, record_replay, sample_commands, verify_replay_saving,
 };
 
 const USAGE: &str = "\
@@ -45,7 +47,16 @@ usage: sim_headless [options]
   --bot                     the scripted player plays the run (needs --run;
                             not with --commands); with --record,
                             --stats-every or --timings its commands are
-                            replayed";
+                            replayed
+  --save <file>             save the game (GP-12) at the end of the run, or
+                            of the --replay
+  --save-at <tick>          save after this tick instead of the end (the
+                            run carries on)
+  --load <file>             resume a saved game: --ticks more ticks, or with
+                            --replay, the rest of that replay (its commands
+                            from the saved tick on), checking its hashes
+  --chronicle               at the end, print the chronicle in words and the
+                            run summary (UI-09; a plain run, --bot or --load)";
 
 struct Args {
     seed: u64,
@@ -66,6 +77,10 @@ struct Args {
     difficulty: Option<Difficulty>,
     timings: bool,
     bot: bool,
+    save: Option<String>,
+    save_at: Option<u64>,
+    load: Option<String>,
+    chronicle: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -85,6 +100,10 @@ fn parse_args() -> Result<Args, String> {
         difficulty: None,
         timings: false,
         bot: false,
+        save: None,
+        save_at: None,
+        load: None,
+        chronicle: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -118,6 +137,10 @@ fn parse_args() -> Result<Args, String> {
             }
             "--timings" => args.timings = true,
             "--bot" => args.bot = true,
+            "--save" => args.save = Some(value()?),
+            "--save-at" => args.save_at = Some(num(&flag, value()?)?),
+            "--load" => args.load = Some(value()?),
+            "--chronicle" => args.chronicle = true,
             "-h" | "--help" => return Err(USAGE.to_string()),
             other => return Err(format!("unknown argument {other}\n{USAGE}")),
         }
@@ -138,6 +161,46 @@ fn parse_args() -> Result<Args, String> {
         if args.commands > 0 {
             return Err("--bot can't be combined with --commands".to_string());
         }
+    }
+    if args.chronicle
+        && (args.replay.is_some() && args.load.is_none()
+            || args.record.is_some()
+            || args.stats_every > 0
+            || args.timings)
+    {
+        return Err(
+            "--chronicle goes with a plain run, --bot or --load (not --record, --replay, \
+             --stats-every or --timings)"
+                .to_string(),
+        );
+    }
+    if args.save_at.is_some() && args.save.is_none() {
+        return Err("--save-at needs --save".to_string());
+    }
+    if args.save.is_some()
+        && (args.record.is_some() || args.bot || args.stats_every > 0 || args.timings)
+    {
+        return Err(
+            "--save works with a plain run, --replay or --load (not --record, --bot, --stats-every or --timings)"
+                .to_string(),
+        );
+    }
+    if args.load.is_some()
+        && (args.scenario != Scenario::Villages
+            || args.difficulty.is_some()
+            || args.population.is_some()
+            || args.world_size.is_some()
+            || args.commands > 0
+            || args.record.is_some()
+            || args.map_ppm.is_some()
+            || args.stats_every > 0
+            || args.timings)
+    {
+        return Err(
+            "--load takes the world from the save: only --ticks, --replay, --checkpoint-every, \
+             --single-threaded and --save go with it"
+                .to_string(),
+        );
     }
     if args.population.is_some() && matches!(args.scenario, Scenario::Run(_)) {
         return Err(
@@ -386,6 +449,10 @@ fn main() -> ExitCode {
         }
     };
 
+    if let Some(path) = &args.load {
+        return resume(&args, path);
+    }
+
     if let Some(path) = &args.replay {
         let replay = match std::fs::read_to_string(path)
             .map_err(|e| e.to_string())
@@ -398,8 +465,15 @@ fn main() -> ExitCode {
             }
         };
         let start = Instant::now();
-        let outcome = verify_replay(&replay, args.threading);
+        let save_at = args
+            .save
+            .as_ref()
+            .map(|_| args.save_at.unwrap_or(replay.ticks));
+        let (outcome, saved) = verify_replay_saving(&replay, args.threading, save_at);
         report_speed(replay.ticks, start);
+        if let Err(code) = write_save(args.save.as_deref(), saved) {
+            return code;
+        }
         return match outcome {
             Ok(result) => {
                 println!(
@@ -468,7 +542,8 @@ fn main() -> ExitCode {
     // The bot plays first; its recorded commands then drive the replay.
     let mut played_checkpoints = Vec::new();
     let commands = if args.bot {
-        let played = sim_headless::bot::run_bot(config, args.ticks, args.checkpoint_every);
+        let (bot_app, played) =
+            sim_headless::bot::play_bot(config, args.ticks, args.checkpoint_every);
         for (tick, note) in &played.notes {
             eprintln!("bot @{tick}: {note}");
         }
@@ -498,6 +573,9 @@ fn main() -> ExitCode {
                 played.end_tick
             );
             println!("state_hash=0x{:016x}", played.final_hash);
+            if args.chronicle {
+                print_chronicle(&bot_app);
+            }
             return ExitCode::SUCCESS;
         }
         played_checkpoints = played.checkpoints;
@@ -616,6 +694,9 @@ fn main() -> ExitCode {
                     state.ended_at.unwrap_or(0),
                     state.cause
                 );
+                for line in sim_headless::stats::run_summary(&app) {
+                    println!("    {line}");
+                }
                 break;
             }
         }
@@ -638,8 +719,23 @@ fn main() -> ExitCode {
         report_speed(args.ticks, start);
         return ExitCode::SUCCESS;
     }
-    let result = run(config, args.ticks, &commands, args.checkpoint_every);
-    let _ = start;
+    let save_at = args
+        .save
+        .as_ref()
+        .map(|_| args.save_at.unwrap_or(args.ticks));
+    let mut app = sim_headless::headless_app(config);
+    let setup_time = start.elapsed();
+    let (mut result, saved) = sim_headless::continue_run(
+        &mut app,
+        args.ticks,
+        &commands,
+        args.checkpoint_every,
+        save_at,
+    );
+    result.setup_time = setup_time;
+    if let Err(code) = write_save(args.save.as_deref(), saved) {
+        return code;
+    }
     eprintln!(
         "setup={:.3}s ticks={:.3}s ticks_per_sec={:.0}",
         result.setup_time.as_secs_f64(),
@@ -662,5 +758,126 @@ fn main() -> ExitCode {
         println!("checkpoint tick={} hash=0x{:016x}", c.tick, c.hash);
     }
     println!("state_hash=0x{:016x}", result.final_hash());
+    if args.chronicle {
+        print_chronicle(&app);
+    }
+    ExitCode::SUCCESS
+}
+
+/// `--chronicle`: the chronicle in words and the run summary (UI-09).
+fn print_chronicle(app: &bevy_app::App) {
+    println!("chronicle:");
+    for line in sim_headless::stats::chronicle(app) {
+        println!("  {line}");
+    }
+    for line in sim_headless::stats::run_summary(app) {
+        println!("summary: {line}");
+    }
+}
+
+/// Writes a save taken during the run (GP-12) to `path`, if one was asked for.
+fn write_save(path: Option<&str>, saved: Option<Vec<u8>>) -> Result<(), ExitCode> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    let Some(bytes) = saved else {
+        eprintln!("{path}: the run never reached --save-at");
+        return Err(ExitCode::FAILURE);
+    };
+    let header = sim_core::read_header(&bytes).expect("a save we just wrote");
+    if let Err(e) = std::fs::write(path, &bytes) {
+        eprintln!("{path}: {e}");
+        return Err(ExitCode::FAILURE);
+    }
+    println!("saved {path}: tick {} ({} bytes)", header.tick, bytes.len());
+    Ok(())
+}
+
+/// `--load`: resumes a saved game (GP-12) for `--ticks` more ticks, or to
+/// the end of `--replay`, checking that replay's hashes after the save.
+fn resume(args: &Args, path: &str) -> ExitCode {
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("{path}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let start = Instant::now();
+    let mut app = match sim_headless::load_app(&bytes, args.threading) {
+        Ok(app) => app,
+        Err(e) => {
+            eprintln!("{path}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let header = sim_core::read_header(&bytes).expect("a loaded save has a header");
+    eprintln!(
+        "loaded {path} in {:.0}ms: seed {} {} preset{}, tick {} (build {})",
+        start.elapsed().as_secs_f64() * 1000.0,
+        header.seed,
+        header.preset,
+        header
+            .run
+            .map_or(String::new(), |r| format!(", run {}", r.difficulty.name())),
+        header.tick,
+        header.build
+    );
+    let replay = match &args.replay {
+        None => None,
+        Some(rpath) => match std::fs::read_to_string(rpath)
+            .map_err(|e| e.to_string())
+            .and_then(|text| Replay::from_ron(&text).map_err(|e| e.to_string()))
+        {
+            Ok(r) => Some(r),
+            Err(e) => {
+                eprintln!("{rpath}: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
+    };
+    let (until, commands, every) = match &replay {
+        Some(r) => (r.ticks, r.commands.clone(), r.checkpoint_every),
+        None => (header.tick + args.ticks, Vec::new(), args.checkpoint_every),
+    };
+    let save_at = args.save.as_ref().map(|_| args.save_at.unwrap_or(until));
+    let start = Instant::now();
+    let (result, saved) = sim_headless::continue_run(&mut app, until, &commands, every, save_at);
+    report_speed(until.saturating_sub(header.tick), start);
+    if let Err(code) = write_save(args.save.as_deref(), saved) {
+        return code;
+    }
+    if let Some(replay) = &replay {
+        let diverged = replay
+            .checkpoints
+            .iter()
+            .filter(|c| c.tick > header.tick)
+            .find(|c| result.checkpoints.iter().find(|a| a.tick == c.tick) != Some(c));
+        if let Some(c) = diverged {
+            let got = result.checkpoints.iter().find(|a| a.tick == c.tick);
+            println!(
+                "replay FAILED after the load: tick {} expected 0x{:016x}, got {}",
+                c.tick,
+                c.hash,
+                got.map_or("nothing".to_string(), |a| format!("0x{:016x}", a.hash))
+            );
+            return ExitCode::from(2);
+        }
+        println!(
+            "replay ok from the save at tick {}: ticks={} commands={} checkpoints={}",
+            header.tick,
+            replay.ticks,
+            result.log.len(),
+            result.checkpoints.len()
+        );
+    } else {
+        for c in &result.checkpoints[..result.checkpoints.len().saturating_sub(1)] {
+            println!("checkpoint tick={} hash=0x{:016x}", c.tick, c.hash);
+        }
+    }
+    println!("state_hash=0x{:016x}", result.final_hash());
+    if args.chronicle {
+        print_chronicle(&app);
+    }
     ExitCode::SUCCESS
 }

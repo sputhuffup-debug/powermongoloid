@@ -49,6 +49,23 @@ impl StateHash for SimRng {
     }
 }
 
+crate::save_newtype!(SimSeed);
+
+impl crate::save::SaveState for SimRng {
+    fn save(&self, w: &mut crate::save::SaveWriter) {
+        w.raw(&self.0.get_seed());
+        w.u64(self.0.get_stream());
+        w.u128(self.0.get_word_pos());
+    }
+    fn load(r: &mut crate::save::SaveReader) -> Result<Self, crate::save::SaveError> {
+        let seed: [u8; 32] = r.raw(32)?.try_into().expect("32 bytes");
+        let mut rng = ChaCha8Rng::from_seed(seed);
+        rng.set_stream(r.u64()?);
+        rng.set_word_pos(r.u128()?);
+        Ok(SimRng(rng))
+    }
+}
+
 /// Builds a stable RNG stream key from a string, e.g. `rng_key("sim_agents::decide")`.
 pub const fn rng_key(name: &str) -> u64 {
     fnv1a_64(name.as_bytes())

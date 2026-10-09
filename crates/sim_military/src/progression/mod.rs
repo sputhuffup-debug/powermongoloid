@@ -446,6 +446,8 @@ pub struct ProgressionData {
     pub champion: ChampionData,
     /// The rival's clock, one row per difficulty (GP-28).
     pub rival: Vec<RivalData>,
+    /// How the chronicle words causes (UI-09).
+    pub chronicle: crate::chronicle::ChronicleData,
 }
 
 /// Progression data (GP-21, GP-27, SIM-34). Hashed as its RON text.
@@ -472,6 +474,7 @@ impl Progression {
     /// Checks the data hangs together.
     pub fn validate(&self) -> Result<(), String> {
         let d = &self.data;
+        d.chronicle.validate()?;
         let weight_ok = |w: f32| w.is_finite() && w > 0.0;
         let non_negative = |v: f32| v.is_finite() && v >= 0.0;
         let s = &d.start;
@@ -1266,6 +1269,9 @@ pub(crate) mod tests {
         assert!(check(&|d| d.requests.camp_radius = -1.0).is_err());
         assert!(check(&|d| d.monuments.hold_radius = 0.0).is_err());
         assert!(check(&|d| d.monuments.set_min = 0).is_err());
+        assert!(check(&|d| d.chronicle.causes.hold = " ".into()).is_err());
+        assert!(check(&|d| d.chronicle.causes.raid = "led by {who}".into()).is_err());
+        assert!(check(&|d| d.chronicle.causes.raid = "led by {captain".into()).is_err());
         assert!(check(&|d| d.monuments.kinds[0].cap = -0.1).is_err());
         assert!(
             check(&|d| {
@@ -1518,7 +1524,7 @@ pub(crate) mod tests {
         })
         .add_plugins(sim_world::WorldPlugin {
             settings: WorldGenSettings::preset(WorldPreset::Run),
-            threads: sim_world::worldgen::default_threads(),
+            ..Default::default()
         })
         .add_plugins(sim_economy::EconomyPlugin)
         .add_plugins(sim_agents::AgentsPlugin { population: None })

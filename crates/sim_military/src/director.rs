@@ -477,7 +477,8 @@ fn bring_band(world: &mut World, p: &Personality, tick: u64, cal: &Calendar) -> 
             .subject(id)
             .other(target.map_or(0, |t| t.0))
             .at(tile)
-            .amount(size as i32),
+            .amount(size as i32)
+            .cause(sim_core::Cause::Raid { captain: id }),
     );
     log(
         world,

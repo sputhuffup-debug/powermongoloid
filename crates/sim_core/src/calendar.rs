@@ -194,6 +194,16 @@ impl StateHash for Calendar {
     }
 }
 
+/// Saved as its RON text, like the other data resources (GP-12).
+impl crate::save::SaveState for Calendar {
+    fn save(&self, w: &mut crate::save::SaveWriter) {
+        w.ron(self);
+    }
+    fn load(r: &mut crate::save::SaveReader) -> Result<Self, crate::save::SaveError> {
+        r.ron()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

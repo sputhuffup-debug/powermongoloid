@@ -240,6 +240,52 @@ impl Transfers {
     }
 }
 
+// GP-12: saved field by field; the store is saved as its SpawnId.
+sim_core::save_fields!(Stockpile { goods, capacity });
+sim_core::save_fields!(Inventory { slots, capacity });
+sim_core::save_fields!(TransferOrder { store, ops });
+sim_core::save_fields!(Transfers { order });
+
+impl sim_core::SaveState for TransferOp {
+    fn save(&self, w: &mut sim_core::SaveWriter) {
+        match *self {
+            TransferOp::Take { good, max } => {
+                w.u8(1);
+                w.u8(good.0);
+                w.u16(max);
+            }
+            TransferOp::TakeFood { max } => {
+                w.u8(2);
+                w.u16(max);
+            }
+            TransferOp::TakeMeal { max } => {
+                w.u8(3);
+                w.u16(max);
+            }
+            TransferOp::TakeAny { max } => {
+                w.u8(4);
+                w.u16(max);
+            }
+            TransferOp::PutAll => w.u8(5),
+        }
+    }
+    fn load(r: &mut sim_core::SaveReader) -> Result<Self, sim_core::SaveError> {
+        Ok(match r.u8()? {
+            1 => TransferOp::Take {
+                good: GoodId(r.u8()?),
+                max: r.u16()?,
+            },
+            2 => TransferOp::TakeFood { max: r.u16()? },
+            3 => TransferOp::TakeMeal { max: r.u16()? },
+            4 => TransferOp::TakeAny { max: r.u16()? },
+            5 => TransferOp::PutAll,
+            t => {
+                return Err(sim_core::SaveError::Corrupt(format!("bad transfer op {t}")));
+            }
+        })
+    }
+}
+
 impl StateHash for Transfers {
     fn hash_state(&self, h: &mut StateHasher) {
         match &self.order {

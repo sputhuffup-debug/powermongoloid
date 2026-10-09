@@ -241,10 +241,13 @@ pub fn fallen(world: &mut World, dead: Entity, faction: FactionId) {
         .get::<Position>(dead)
         .map_or_else(Default::default, |p| p.0);
     let cause = cause_of_death(world, dead);
+    // UI-09: the name goes with the event; the person is about to go.
+    let name = crate::veterans::person_name(world, dead);
     world.write_message(
         SimEvent::new(SimEventKind::ChampionFell, faction)
             .subject(dead_id)
             .at(at)
+            .amount(name.0 as i32)
             .cause(cause),
     );
     let mut q = world.query::<(

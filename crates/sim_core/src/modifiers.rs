@@ -248,6 +248,19 @@ impl StateHash for FactionModifiers {
     }
 }
 
+crate::save_serde!(Stat, ModifierSource);
+crate::save_fields!(ModifierEntry {
+    faction,
+    stat,
+    source,
+    value
+});
+crate::save_fields!(FactionModifiers {
+    by_faction,
+    world,
+    breakdown
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;

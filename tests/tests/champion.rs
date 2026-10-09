@@ -366,20 +366,45 @@ fn soldiers_who_fought_rank_up_with_the_configured_gains() {
         assert!(v.battles <= 1 && !v.fought, "{id}: {v:?}");
         assert_eq!(v.rank, want, "{id}: {v:?}");
     }
-    let promoted: Vec<u64> = world
+    // UI-09: one VeteranRank for the army and the rank reached (grouped,
+    // so a big battle doesn't flood the feed), and the battle report names
+    // every soldier promoted.
+    let ranked: Vec<(u64, u64, i32)> = world
         .resource::<EventFeed>()
         .iter()
         .filter(|e| {
             e.event.kind == SimEventKind::VeteranRank && e.event.faction == FactionId::PLAYER
         })
-        .map(|e| {
-            assert_eq!(e.event.amount, 1);
-            e.event.subject
-        })
+        .map(|e| (e.event.subject, e.event.other, e.event.amount))
         .collect();
     let mut want: Vec<u64> = fought.iter().map(|(id, _)| *id).collect();
     want.sort_unstable();
-    assert_eq!(promoted, want, "a VeteranRank for each");
+    assert_eq!(
+        ranked,
+        vec![(warband_id, want.len() as u64, 1)],
+        "one VeteranRank for the rank reached"
+    );
+    let report = world
+        .resource::<sim_core::Chronicle>()
+        .report_for(&battle)
+        .expect("the battle's report");
+    let promoted: Vec<u64> = report
+        .promotions
+        .iter()
+        .map(|p| {
+            assert_eq!(p.rank, 1);
+            p.soldier
+        })
+        .collect();
+    assert_eq!(promoted, want, "the report names each soldier promoted");
+    assert_eq!(
+        (report.fought, report.losses),
+        (fought.len() as u32, dead as u32)
+    );
+    assert!(
+        report.foes.contains(&FactionId::RAIDERS) && report.kills > 0,
+        "{report:?}"
+    );
     for (id, e) in &members(&mut app, reserve) {
         assert_eq!(
             *app.world().get::<Veteran>(*e).unwrap(),

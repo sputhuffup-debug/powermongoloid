@@ -476,3 +476,21 @@ pub fn run_line(world: &mut World) -> Option<String> {
         rival.defence_bonus, rival.levied, rival.raids, director.tension, director.bands
     ))
 }
+
+/// UI-09: the run's summary ([`sim_military::RunSummary`]) as lines: how
+/// it ended, days, settlements, monuments, battles and veterans. Empty
+/// outside a run.
+pub fn run_summary(app: &App) -> Vec<String> {
+    if !app.world().resource::<sim_core::RunState>().in_run() {
+        return Vec::new();
+    }
+    sim_military::run_summary(app.world()).lines()
+}
+
+/// UI-09: every chronicle entry as a sentence
+/// ([`sim_military::chronicle::describe`]), oldest first.
+pub fn chronicle(app: &App) -> Vec<String> {
+    let world = app.world();
+    let entries = world.resource::<sim_core::Chronicle>().entries();
+    sim_military::describe_entries(world, entries)
+}

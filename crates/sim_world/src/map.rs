@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use bevy_ecs::prelude::*;
 use bevy_math::IVec2;
 use sim_core::hash::fnv1a_64;
-use sim_core::{StateHash, StateHasher};
+use sim_core::{SaveError, SaveReader, SaveWriter, SimSeed, StateHash, StateHasher};
 
 /// Terrain types (SIM-01). Stored as one byte per tile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -324,6 +324,91 @@ impl StateHash for WorldMap {
             h.u64(d);
         }
     }
+}
+
+impl WorldMap {
+    /// GP-12: what a save keeps of the map. The map itself is regenerated
+    /// from the seed and settings on load ([`load_map`]); the save holds its
+    /// digest, to check the regeneration, and the terrain of every chunk
+    /// changed since generation, with its revision.
+    pub(crate) fn save_overlay(&self, w: &mut SaveWriter) {
+        w.u64(self.digest());
+        let changed: Vec<u32> = (0..self.chunk_revision.len() as u32)
+            .filter(|&c| self.chunk_revision[c as usize] != 0)
+            .collect();
+        w.count(changed.len());
+        let cs = self.chunk_size as usize;
+        for c in changed {
+            w.u32(c);
+            w.u32(self.chunk_revision[c as usize]);
+            let origin = self.chunk_origin(c);
+            for y in 0..cs {
+                let row = self.index(origin + IVec2::new(0, y as i32));
+                for t in &self.terrain[row..row + cs] {
+                    w.u8(*t as u8);
+                }
+            }
+        }
+    }
+
+    /// Lays a save's changed chunks over a freshly generated map, then
+    /// checks the result against the saved digest.
+    pub(crate) fn apply_overlay(&mut self, r: &mut SaveReader) -> Result<(), SaveError> {
+        let digest = r.u64()?;
+        let n = r.count()?;
+        let cs = self.chunk_size as usize;
+        for _ in 0..n {
+            let c = r.u32()?;
+            let revision = r.u32()?;
+            if c as usize >= self.chunk_revision.len() {
+                return Err(SaveError::Corrupt(format!("map chunk {c} out of range")));
+            }
+            let origin = self.chunk_origin(c);
+            for y in 0..cs {
+                let row = self.index(origin + IVec2::new(0, y as i32));
+                for i in row..row + cs {
+                    let t = r.u8()?;
+                    self.terrain[i] = *Terrain::ALL
+                        .get(t as usize)
+                        .ok_or_else(|| SaveError::Corrupt(format!("bad terrain {t}")))?;
+                }
+            }
+            self.chunk_revision[c as usize] = revision;
+            self.dirty.insert(c);
+        }
+        self.refresh_digests();
+        if self.digest() != digest {
+            return Err(SaveError::Mismatch(format!(
+                "the map regenerated from the seed has digest {:#018x}, the save {digest:#018x}",
+                self.digest()
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// GP-12: writes the map's digest and changed chunks ([`WorldMap::save_overlay`]).
+pub(crate) fn save_map(world: &World, w: &mut SaveWriter) {
+    world.resource::<WorldMap>().save_overlay(w);
+}
+
+/// GP-12: regenerates the map from the loaded seed and worldgen settings
+/// (both restored before the map), lays the saved chunks over it and checks
+/// its digest.
+pub(crate) fn load_map(world: &mut World, r: &mut SaveReader) -> Result<(), SaveError> {
+    let seed = world.resource::<SimSeed>().0;
+    let settings = world.resource::<crate::WorldGenSettings>().clone();
+    let start = std::time::Instant::now();
+    let generated = crate::generate_world(seed, &settings, crate::worldgen::default_threads());
+    let total = start.elapsed();
+    let mut map = generated.map;
+    map.apply_overlay(r)?;
+    world.insert_resource(map);
+    world.insert_resource(crate::WorldGenReport {
+        total,
+        stages: generated.timings,
+    });
+    Ok(())
 }
 
 /// Bookkeeping: refresh digests of chunks changed this tick.

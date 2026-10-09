@@ -125,8 +125,9 @@ pub(crate) fn resolve_strikes(
     order.sort_unstable();
     let eq = &army.data.equipment;
     let c = &army.data.combat;
-    // Everyone a blow landed on or came from, for the battle bookkeeping.
-    let mut engaged: Vec<Entity> = Vec::new();
+    // Everyone a blow landed on or came from, for the battle bookkeeping:
+    // (person, the faction on the other end, whether the person killed).
+    let mut engaged: Vec<(Entity, FactionId, bool)> = Vec::new();
     for (id, e) in order {
         let Ok((_, _, allegiance, cs, mut strike, equipment, vet)) = q.get_mut(e) else {
             continue;
@@ -151,6 +152,7 @@ pub(crate) fn resolve_strikes(
         if !victim.alive() {
             continue;
         }
+        let victim_faction = victim_side.0;
         let mut rng = seed.stream(rng_key("sim_military::strike") ^ id.0, tick.0);
         let roll = rng.random_range(c.roll_min..=c.roll_max);
         let mut defense =
@@ -188,21 +190,25 @@ pub(crate) fn resolve_strikes(
                 v.fought = true;
             }
         }
-        engaged.push(e);
-        engaged.push(target);
+        engaged.push((e, victim_faction, killed));
+        engaged.push((target, faction, false));
     }
     // SIM-36: both sides' armies are in battle. Setting the same tick on
-    // each, so the order doesn't matter.
-    let mut armies: Vec<Entity> = engaged
+    // each, so the order doesn't matter. UI-09: each army notes whom it
+    // fought and how many it killed (bit-or and sums: order-free too).
+    let mut armies: Vec<(Entity, u32, u32)> = engaged
         .into_iter()
-        .filter_map(|p| army_of(p, &captains, &followers))
+        .filter_map(|(p, foe, killed)| {
+            army_of(p, &captains, &followers).map(|a| (a, 1u32 << (foe.0 & 31), killed as u32))
+        })
         .collect();
     armies.sort_unstable();
-    armies.dedup();
-    for a in armies {
+    for (a, foe, kill) in armies {
         if let Ok(mut c) = captains.get_mut(a) {
             c.last_engaged = tick.0;
             c.battle_since.get_or_insert(tick.0);
+            c.battle_foes |= foe;
+            c.battle_kills += kill;
         }
     }
 }

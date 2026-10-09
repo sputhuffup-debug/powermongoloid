@@ -356,6 +356,19 @@ impl StateHash for Economy {
     }
 }
 
+// GP-12: saved as ids and, for the data, as its RON text.
+sim_core::save_newtype!(GoodId, RecipeId);
+sim_core::save_serde!(Occupation, WorkplaceKind);
+
+impl sim_core::SaveState for Economy {
+    fn save(&self, w: &mut sim_core::SaveWriter) {
+        w.ron(&self.data);
+    }
+    fn load(r: &mut sim_core::SaveReader) -> Result<Self, sim_core::SaveError> {
+        Self::from_ron(&r.str()?).map_err(sim_core::SaveError::Mismatch)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

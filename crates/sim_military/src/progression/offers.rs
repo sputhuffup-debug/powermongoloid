@@ -63,7 +63,7 @@ pub fn choose(
         SimEvent::new(SimEventKind::OfferChosen, issuer)
             .subject(offer)
             .other(card as u64)
-            .amount(choice as i32)
+            .amount(o.kind.tag() as i32)
             .cause(Cause::Player),
     );
     let who = world
