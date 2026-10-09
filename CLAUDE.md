@@ -6,8 +6,8 @@ Requirement IDs (GP-, SIM-, RND-, UI-, NFR-) are stable; reference them
 in commits, tests and comments.
 
 ## Current milestone
-M4 "Rise" (roguelite runs; docs/PROGRESSION_DESIGN.md), planned in docs/M4_PLAN.md, awaiting go.
-(M0 complete 2026-10-05, M1, M2 and M3b complete 2026-10-06, M3 complete 2026-10-07; update this line as milestones complete)
+M4 "Rise" built 2026-10-09 (roguelite runs; docs/PROGRESSION_DESIGN.md, plan docs/M4_PLAN.md), awaiting the playtest in docs/M4_PLAYTEST.md.
+(M0 complete 2026-10-05, M1, M2 and M3b complete 2026-10-06, M3 complete 2026-10-07, M4 built 2026-10-09; update this line as milestones complete)
 
 ## Hard rules
 - sim_* crates never depend on rendering, windowing, audio or asset crates.
@@ -36,13 +36,18 @@ M4 "Rise" (roguelite runs; docs/PROGRESSION_DESIGN.md), planned in docs/M4_PLAN.
                   with --stats-every 600 for army lines, --timings for per-stage cost
                   (--timings --stats-every 250: mean/worst tick per window)
 - Stress (RND-04): cargo run --release -p game_app -- --stress 20000
-- Bot run (M4):    cargo run --release -p sim_headless -- --run --bot --seed 1 --ticks 96000
+- Run (M4):       cargo run --release -p sim_headless -- --run --seed 7 --difficulty harsh --ticks 24000 --stats-every 2400
+                  (--difficulty steady|chaotic|harsh; the game takes --seed and --difficulty too: cargo run -p game_app -- --seed 7)
+- Bot run (M4):   cargo run --release -p sim_headless -- --run --bot --seed 1 --ticks 96000
                   (balance: cargo test --release -p integration_tests --test bot_run -- --ignored)
+- Save/resume:    sim_headless --run --ticks 2400 --save day1.sav [--save-at <tick>], then --load day1.sav --ticks 1000
+                  (or --load day1.sav --replay run.ron for the rest of a replay; the game saves with F5/F9)
+- Chronicle:      sim_headless --run --bot --seed 1 --ticks 24000 --chronicle (the run told in words, then its summary)
 - Village stats:  cargo run --release -p sim_headless -- --ticks 7200 --stats-every 600
                   (STATS_DETAIL=1 adds who isn't working, restless sleepers, the hungriest villager)
 - Low-memory build (4-core cloud box): add `-j 3` to cargo build/test/clippy
 - Docs:           RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
-- Aliases (.cargo/config.toml): cargo game, cargo headless, cargo lint,
+- Aliases (.cargo/config.toml): cargo game, cargo headless, cargo bot, cargo lint,
                   cargo test-fast (unit tests), cargo test-all
 
 ## World (ADR 0005)
@@ -76,6 +81,75 @@ M4 "Rise" (roguelite runs; docs/PROGRESSION_DESIGN.md), planned in docs/M4_PLAN.
   walks the goal field.
 - Fighters closing on a foe respect `formation.max_per_tile` (ADR 0012), or
   big battles crush into one blob that costs seconds per tick.
+
+## Runs (ADR 0013)
+- A run is a seed plus a `RunConfig` (`sim_core::run`, Copy + Eq + Default, in the replay header).
+  Difficulty selects data (progression.ron and director.ron rows), never RNG streams. The run
+  preset (1024-tile island, every settlement populated) is what `Scenario::Run` builds and the
+  game's default start; the developed preset stays what `default_data()` means, and the M1-M3
+  tests, benches and stress mode use it.
+- Run-only rules are gated by `in_run`, draw from new stream keys, spawn nothing before the
+  villagers outside the run preset, and leave the developed and skirmish output byte-identical.
+- The run gate: all `SimSet`s run only while `run_in_progress`. End a run only with
+  `RunState::finish(outcome, cause)` (first caller wins); `settle_outcome` records `RunEnded`.
+  After that `SimTick` and the hash freeze, so frontends keep stepping and never special-case it.
+- Offers (`Offers`, `post_offer`) live in sim_core. A pick is the recorded player command
+  `ChooseOffer`, taken once. Setup writes state directly or `SimCommand::ai`, never player commands.
+- `sim_military::progression::progress` (`MilitarySet::Progress`) is the hourly driver of run
+  state: a fixed list of serial steps (end_battles, monument hold, revolts, requests, dominion
+  tally, champion ranks, `rebuild_modifiers`, rival clock, director). Add a step at the end and
+  document its slot; never reorder.
+- The `sim_headless::bot` plays through ordinary player commands; `bot_run` (ignored, run in
+  release by CI) guards the balance: it must win 3 of 5 seeds. Re-run it after any data change
+  that touches a run. Change data when the game is unbalanced, the bot when it plays badly
+  (HOWTO "Tune run balance").
+
+## Standing and loyalty (ADR 0014)
+- `Owner`, `Goodwill`, `SettlementLoyalty` on every populated settlement and `Loyalty` on every
+  villager (sim_agents `standing.rs`, `loyalty.rs`) exist in all presets. Independent is owner 0.
+- A settlement changes hands only through `sim_agents::set_owner`; sim_military calls it through
+  `conquest::transfer` (conquest, revolt, accepted invitation), which reports the event, counts
+  it and can end the run (the rival's seat).
+- Goodwill changes only through `GoodwillLedger` deeds (`Deed`), posted from serial steps and
+  applied once a tick by `apply_goodwill` (sorted, spread to neighbours). Never write it directly.
+- Conquest is an `Attack` that breaks the militia and then holds the centre for
+  army.ron's `conquest.hold_hours`; there is no instant capture. Owned villages feed and garrison their
+  owner's armies (`garrison` in army.ron, the `Garrison` order) and are never plundered by them.
+- Revolts are the daily serial `conquest::revolts`: no garrison means independence, a small one
+  means a rising. Loyalty drift is tuned in villagers.ron `loyalty`; `conquest` and
+  `invitation` guard it, so re-run them after any change.
+
+## Monuments and modifiers (ADR 0015)
+- `sim_core::FactionModifiers` is rebuilt from scratch once a game hour by
+  `sim_military::rebuild_modifiers` (held monuments, boons, champion traits, run modifiers) and
+  written by nothing else. Hand-set values do not survive an hour in a full app.
+- Read it at the point of use: `mult(faction, stat)` or `value(..)`. Never fold a bonus into
+  `Economy`, `Villagers` or `Army` data: they hash only their data text, so the behaviour would
+  change without the hash noticing. Run the consumer with a hand-built resource to test it.
+- A consumer must be an exact no-op at 1.0 (`x * 1.0`, `d / 1.0`, `+ 0.0`), or the developed
+  world and the M2/M3 tests change. A yield bonus beyond the recipe's units goes in with
+  `add_over_capacity`. A new `Stat` needs a consumer (HOWTO "Add a modifier").
+- Monuments are placed by worldgen (run preset only), held by soldiers standing at them
+  (`monuments::hold`), and guarded by ordinary armies that carry `Guard` and `NoUpkeep`.
+  Bonuses are capped per kind; a region's complete set adds `set_bonus` beyond the cap.
+
+## Saves and events (ADR 0016, ADR 0017)
+- Saves are serde + postcard + zstd behind a versioned `SaveHeader` (`sim_core::save_world`,
+  `load_world`, `SAVE_FORMAT`). Never bincode. Save between ticks; `load_world` validates
+  everything before it changes the world.
+- Every hashed type is also saved: implement `SaveState` (`save_fields!`, `save_newtype!`,
+  `save_unit!`, `save_serde!`) and register it with `register_saved` next to `register_hashed`.
+  `every_hashed_type_is_saved` fails otherwise. Exempt types the next tick reads before
+  rebuilding them (`ArmyIndex`, `FighterGrid`) are saved too.
+- `Entity` fields save as SpawnId + 1 and load as the entity now carrying that SpawnId. Saved
+  enums are append only, as `CommandKind`, `OrderSpec`, `SimEventKind` and `Cause` are.
+- The map is regenerated from the seed on load and checked against the saved digest, so
+  worldgen changes make old saves unloadable. Bump `SAVE_FORMAT` when the layout changes.
+- Events: any sim crate writes a `SimEvent`; `record_events` (`BookkeepingSet::Record`) sorts
+  them and feeds the `Chronicle` (hashed and saved) and the `EventFeed` (exempt, a UI ring,
+  saved so cursors survive). The sim stores no text: words come from
+  `sim_military::chronicle::describe` and progression.ron `chronicle.causes`. Name a cause
+  wherever there is a why.
 
 ## Rendering (ADR 0008, ADR 0009)
 - Detail bands come from assets/data/render.ron: stylized textures inside the

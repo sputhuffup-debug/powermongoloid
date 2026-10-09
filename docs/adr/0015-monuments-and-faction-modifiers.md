@@ -41,3 +41,15 @@ M4 gives a run's island monuments that bands take and hold for small, capped bon
 - **Set bonuses sit outside the cap,** per region, so the cap bounds only the per-monument sum. A faction can exceed a kind's cap only by completing regional sets.
 - **Hand-set modifiers don't survive an hour** in a full app: tests set the data (boons, traits, holders) or run a consumer system once with a hand-built resource.
 - **Tests:** `caps_and_set_bonus`, `shipped_monument_data_fits_the_island` and the monuments.rs unit tests (guards hold and never hunger; holding takes an unguarded monument and drift returns it; a cleared camp answers its request and frees the monument); `modifiers_scale_yields_and_cycles_and_are_no_ops_at_one` (sim_agents); `recipe_modifiers_are_food_yield_or_smith_speed` (sim_economy). The `monuments` scenario (`tests/tests/monuments.rs`: take an unguarded and a guarded monument, the capped sum with a set, an enemy taking it back, a camp's request done) and the run's hash coverage with a monument changing hands came in the second part of the step.
+
+## As built (reviewed at M4's close, step 12)
+
+The decisions above held. Clarifications from the build:
+
+- **`rebuild_modifiers` and `monuments::hold` run in every preset**, not only in a run; without monuments, boons or run data they are no-ops, and the developed world's multipliers stay exactly 1.0.
+- **Guard camps count as holders.** Every faction but 0 (nobody) gets a monument's bonus, so a raider or beast camp guarding a road marker has +1% march speed. `spawn_army` also seats a faction that has no seat, so in a run the first raider camp becomes the raiders' seat; nothing relies on it.
+- **A yield bonus beyond the recipe's own units** goes in with `add_over_capacity`; the recipe's units keep the capped `add`. Switching every output to the over-capacity add would have changed what developed workers carrying food produce.
+- **Set bonus:** a region's lone monument of a kind is no set (`set_min`, 2), the bonus is per region and sits outside the cap, and a zero `set_bonus` adds no breakdown entry.
+- **Clear-the-camp is a third request track** (ADR 0014 addendum): one open request per camp, from the nearest settlement within `camp_radius` (80) that may ask, done when the camp has no captain left or has lost its monument and a player captain stands within `reward_radius` of it.
+- **The UI reads, never writes:** hovering a monument shows its bonus and cap from progression.ron `monuments.kinds`, the monuments overlay shows holders, and each monument carries a pennant in its holder's colour (game_render).
+- **Balance:** the step 11 bot takes the nearest unheld, unguarded monument before day 12 and took 4-10 monuments in each winning run. The caps (10%, watchtower +2 tiles) are small by design; whether they matter to a human is for the playtest.

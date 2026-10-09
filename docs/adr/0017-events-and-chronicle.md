@@ -28,3 +28,16 @@ M4 tells the player what happened ([M4_PLAN.md](../M4_PLAN.md), "Events, chronic
 - New `Captain` fields and causes change every scenario's state hash (nothing is golden); the developed and skirmish outputs are byte-identical.
 - The chronicle grows by a report per battle (about 30 in ten days of a bot run); its hash stays O(1).
 - Tests: `chronicle` (a three-day bot run: a battle with its report, a monument taken by holding it, a request lapsed or answered, the run's end, each with its cause; every entry described; the summary agrees), `champion` (the grouped `VeteranRank` and the report's promotions), and the sim_military unit tests `entries_read_as_sentences_with_their_causes`, `the_summary_counts_the_run` and `a_battle_ends_after_a_quiet_hour_and_ranks_its_fighters`.
+
+## As built (reviewed at M4's close, step 12)
+
+The decisions above held. Differences and additions:
+
+- **`describe` is not re-exported at the sim_military root** (the root `describe` already words orders): call `sim_military::chronicle::describe`, or `describe_entries` for a batch (one name lookup for the whole batch; a single `describe` scans every named entity).
+- **A side wiped out to the last man has no battle report,** since there is no captain left to end its battle. The turning point is each army's own first rout (`battle_rout`), so the two sides of one battle tell different stories.
+- **"Traits earned" in a report are the veteran ranks** with names; soldiers' trait triggers (SIM-34) are not built.
+- **Event meanings changed during the step** (kinds stayed append only): `OfferChosen.amount` is the offer kind's tag, `VeteranRank` is one event per army and rank, `ChampionFell.amount` is the champion's `NameId`. Only `RunStarted` and `RankUp` keep `Cause::None`.
+- **Words:** faction names come from army.ron as written ("Rival", "Beasts"), so sentences read "against Rival"; a per-faction chronicle name could be added to the data. `Cause::describe` (sim_core) gives the plain, nameless wording used by `RunSummary::lines()` and the headless "run ended" line ("run abandoned (by your choice) after 1.8 days"); the end screen's `cause_text` delegates to it and adds the faction for a death or a fight.
+- **UI:** the feed (`crates/game_ui/src/feed.rs`) reads the `EventFeed` by `seq`, tells new entries with `describe_entries`, merges the player's `MilitaryLog` lines, and auto-pauses on the difficulty's `auto_pause` kinds (director.ron). The end screen shows `run_summary(world).lines()`, the player's last three battle reports and a timeline of the entries on the player's story (what it did, what was done to it, the run's start and end, anyone's conquests, rival raids).
+- **Not built:** UI-09's short biographies of settlements and named characters (the chronicle and reports are in; the biographies are not), a filter on the timeline (a long run lists every lapsed request), and a drill-down into battles older than the last three.
+- **The chronicle test has no conquest** (the three-day bot of that time did not conquer); conquest sentences are covered by the `entries_read_as_sentences_with_their_causes` unit test, and `bot_run` plays whole winning runs.

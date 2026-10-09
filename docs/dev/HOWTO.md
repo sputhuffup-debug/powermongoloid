@@ -100,6 +100,16 @@ Copy `tests/tests/posture.rs`. Shared helpers (commands, positions, village list
 4. **Assert** the requirement, and print the numbers so a failure explains itself.
 5. **Note what the test guards** in [TESTING.md](TESTING.md).
 
+## Add a run scenario test
+
+A run scenario plays an M4 rule on the run island with a real band, from one seed, through the same commands a player sends. Copy `tests/tests/wanderers.rs` (a band, commands only), `tests/tests/champion.rs` (state set up before the first tick) or `tests/tests/conquest.rs` (branches from one saved prefix). It is a scenario test (see "Add a scenario test") with these run-specific steps:
+1. **Build it:** `common::run_app(SEED)`, then `common::start_offer(&app)` and `common::choose(&mut app, offer, 0)` to pick the start boon (the cards are generic over which boon the seed offers, so assert on effects, not names). Pick a seed whose draws fit (`--run --seed N --ticks 1` prints the band and the boons on offer) and search its world for the settlements or monuments you need; don't hard-code coordinates.
+2. **Quiet what you aren't testing:** `common::quiet_director(&mut app)` before the first tick stops director bands, and the rival's clock can be shortened in `Progression` data (`tests/tests/rival.rs`). Hourly steps run at ticks 0, 100, 200, ...; modifiers apply at the next hourly rebuild, not at once.
+3. **Set up before the first tick** by editing state directly (spawn a band with `sim_military::spawn_army`, set a `Goodwill`, spoil a store), then **act only with commands** (`common::order`, `common::command`), as the player would.
+4. **Read the result** from the chronicle (`common::chronicle`), `RunState`, `RunProgress` and the components, not from `SimEvent` messages (they live two ticks). A run that ends freezes `SimTick`, so don't assert that every scripted command ran.
+5. **Keep it short and cheap:** under about a minute at the test profile. Tests in one file run in parallel threads with a full world each, so loop seeds inside one `#[test]`, and play a shared prefix once (a `OnceLock` plus `sim_headless::save_app` and `load_app`, as `conquest.rs` does) when several branches need it.
+6. **Cover the state it adds:** extend `run_state_hash_covers_every_sim_component` in `tests/tests/determinism.rs`, add the test's row to [TESTING.md](TESTING.md), and say which requirement ID it guards in its doc comment.
+
 ## Add a run-only rule
 
 Runs (GP-21, M4) add rules that the developed world, the benchmarks and the M2/M3 tests must never feel ([ADR 0013](../adr/0013-runs-presets-and-run-config.md)). Example: the start boon, applied in `crates/sim_military/src/progression/offers.rs`.
@@ -126,6 +136,13 @@ Traits (SIM-34) and boons (GP-24, GP-27) are cards in `assets/data/progression.r
 2. **Use effects something reads.** A `Stat(stat, value)` effect is folded into `FactionModifiers` at the next hourly rebuild (`rebuild_modifiers`): the trait's for its champion's faction, the boon's for the player. Pick a stat with a consumer (DATA.md's `traits[].effects` row lists them); a new kind of effect needs a consumer first (see "Add a modifier"). Boons also have one-off effects applied at the pick in `crates/sim_military/src/progression/offers.rs` (`FoodDays`, `ArmBand`, `Goodwill`, `CaptainSlots`); a new one is an appended `Effect` variant handled there.
 3. **Let the champion be offered a trait** by adding its id to `champion_traits`: its starting trait and each rank's offer of three come from that pool (`crates/sim_military/src/progression/champion.rs`). Leave negative traits (Shaken) out of it.
 4. **Check it:** `shipped_data_is_valid` and `rejects_bad_data` in `crates/sim_military/src/progression/mod.rs` must pass; re-run `--test champion` (traits) or `--test run_start` and `--test dominion` (boons), whose draws change with a new card. Document the card's effect in [DATA.md](DATA.md) if it needs more than its `text`.
+
+## Add a run modifier
+
+Run modifiers (GP-27) are the one or two cards drawn from the seed at the start of every run and shown on the new-game screen. They live in `assets/data/progression.ron` (`modifiers`, `modifiers_per_run`), are drawn in `crates/sim_military/src/progression/start.rs` and applied in `crates/sim_military/src/progression/mod.rs`. Example: "Lean year", whose `Stat(FoodYield, -0.15)` cuts every crop by 15%.
+1. **Append the card:** `id` (its index, append only: `RunProgress` and saves store it), `name`, `text`, `group` (cards in one group, like "harvest" or "rival", never come together), `weight` and `effects`.
+2. **Pick an effect something reads.** `Stat(stat, v)` goes into the world row of `FactionModifiers` at the hourly rebuild and applies to every faction, so the stat needs a consumer (see "Add a modifier"). `Stores(f)` acts once at setup, `RaiderPace(x)` is read by the director (`crates/sim_military/src/director.rs`) and `RivalStrength(x)` by the rival (`crates/sim_military/src/rival.rs`). `Sellswords(n)` is accepted but does nothing yet. A new kind of effect is an appended `Effect` variant with its reader.
+3. **Check it:** `shipped_data_is_valid` and `rejects_bad_data` in `crates/sim_military/src/progression/mod.rs`, then `--test run_start` (the twenty seeds' draws change with a new card) and `--test rival` or `--test director` for a card they read. Document the card's effect in [DATA.md](DATA.md) (`modifiers[].effects`).
 
 ## Add a modifier
 

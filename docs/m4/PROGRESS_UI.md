@@ -119,7 +119,7 @@ Built on `3a8baa0` (steps 8-9 merged). Only `game_ui` and `game_app` changed; no
 ### Open issues
 - **No ironman**: F9 after a defeat reloads the last quicksave of that run until you leave it (its slot is deleted only when you leave a finished run).
 - **Loads block the window** for 0.7-0.8 s (the map is regenerated on load); a new island also builds in the background for about a second.
-- The summary's first line comes from `RunSummary::lines()` and reads "Run abandoned (Player) after 1.8 days" (the cause in `Debug` form); a worded cause belongs in sim_military.
+- The summary's first line comes from `RunSummary::lines()` and reads "Run abandoned (Player) after 1.8 days" (the cause in `Debug` form); a worded cause belongs in sim_military. **Fixed in step 12:** `Cause::describe` words it ("Run abandoned (by your choice) after 1.8 days").
 - The timeline lists every request that lapsed; a long run will have many. It scrolls, but a filter (or grouping lapsed requests per day) may read better.
 - The feed's duplicate filter for military log lines is a list of phrases in `feed.rs` (`log_line_shown`); a new log line that repeats an event needs adding there.
 - Saves of the developed starts (`world-<seed>.sav`) are never cleaned up.

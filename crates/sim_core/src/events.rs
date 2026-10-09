@@ -256,6 +256,30 @@ impl Cause {
         }
     }
 
+    /// The cause in a few plain words, with no names (a summary line, a log
+    /// line: "by your choice", "conquest", "killed in battle"). The ids in
+    /// the payload are not looked up; the chronicle's sentences name them
+    /// through progression.ron's `chronicle.causes`.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Cause::None => "no cause",
+            Cause::Player => "by your choice",
+            Cause::Request { .. } => "a request",
+            Cause::Conquest { .. } => "conquest",
+            Cause::Invitation => "an invitation",
+            Cause::Starvation => "starvation",
+            Cause::Plunder => "plunder",
+            Cause::Revolt => "a revolt",
+            Cause::Raid { .. } => "a raid",
+            Cause::Hold => "held long enough",
+            Cause::Boon { .. } => "a boon",
+            Cause::Death { .. } => "killed in battle",
+            Cause::Lapsed => "left unanswered",
+            Cause::Neglect => "neglect",
+            Cause::Fight { .. } => "a battle",
+        }
+    }
+
     /// The variant's payload as a number (0 for none).
     pub fn payload(self) -> u64 {
         match self {
@@ -696,6 +720,40 @@ mod tests {
         app.add_plugins(SimCorePlugin { seed: 1, run: None })
             .prepare_sim();
         app
+    }
+
+    /// UI-09: every cause has plain words of its own, with no variant name or
+    /// id in them, so a summary line never prints `Player` or `Conquest { .. }`.
+    #[test]
+    fn every_cause_is_worded() {
+        let f = FactionId::RIVAL;
+        let causes = [
+            Cause::None,
+            Cause::Player,
+            Cause::Request { id: 3 },
+            Cause::Conquest { captain: 4 },
+            Cause::Invitation,
+            Cause::Starvation,
+            Cause::Plunder,
+            Cause::Revolt,
+            Cause::Raid { captain: 5 },
+            Cause::Hold,
+            Cause::Boon { card: 2 },
+            Cause::Death { faction: f },
+            Cause::Lapsed,
+            Cause::Neglect,
+            Cause::Fight { faction: f },
+        ];
+        let mut words: Vec<&str> = causes.iter().map(|c| c.describe()).collect();
+        assert!(
+            words
+                .iter()
+                .all(|w| !w.is_empty() && !w.contains(['{', '}']))
+        );
+        assert_eq!(Cause::Player.describe(), "by your choice");
+        words.sort_unstable();
+        words.dedup();
+        assert_eq!(words.len(), causes.len(), "each cause reads differently");
     }
 
     fn events() -> [SimEvent; 4] {

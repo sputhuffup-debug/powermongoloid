@@ -360,16 +360,16 @@ Documentation so human developers can work alongside Claude Code. No gameplay. P
 
 One complete, playable hour: a roguelite run from a wandering band to the rival warlord's seat (design: `docs/PROGRESSION_DESIGN.md`, plan: `docs/M4_PLAN.md`). Conquest, loyalty, save and resume, event feed, chronicle, traits and the pacing director carry over from the earlier "Conquest and faith" plan; faith moves to M4b.
 
-- [ ] A run starts from a seed: band, starting boons, modifiers and nearby monuments come from it; the same seed gives the same start, and seeds visibly differ
-- [ ] A landless band survives on foraging and village requests, and starves if it does neither
-- [ ] Monuments can be taken, held and lost; their bonuses stack to the caps
-- [ ] Conquest or invitation transfers a settlement; loyalty responds to treatment and food security; a starved conquest revolts
-- [ ] Holding 25% and 50% of a region offers one of three boons; captain slots follow population held
-- [ ] The champion ranks up and picks traits, soldiers rank up, and a captain succeeds a fallen champion once
-- [ ] The rival grows on its clock and raids from mid-run; taking its seat wins; a scripted bot wins most fixed seeds
-- [ ] Save and load restore an identical state hash
-- [ ] The chronicle tells the run with causes; the pacing director keeps runs free of long dead stretches
-- [ ] **Playtest:** a run takes about an hour, and two seeds feel different in their first ten minutes
+- [x] A run starts from a seed: band, starting boons, modifiers and nearby monuments come from it; the same seed gives the same start, and seeds visibly differ (`tests/run_start.rs`: twenty seeds, same-seed identity; `tests/worldgen.rs`)
+- [x] A landless band survives on foraging and village requests, and starves if it does neither (`tests/wanderers.rs`)
+- [x] Monuments can be taken, held and lost; their bonuses stack to the caps (`tests/monuments.rs`)
+- [x] Conquest or invitation transfers a settlement; loyalty responds to treatment and food security; a starved conquest revolts (`tests/conquest.rs`, `tests/invitation.rs`)
+- [x] Holding 25% and 50% of a region offers one of three boons; captain slots follow population held (`tests/dominion.rs`)
+- [x] The champion ranks up and picks traits, soldiers rank up, and a captain succeeds a fallen champion once (`tests/champion.rs`)
+- [x] The rival grows on its clock and raids from mid-run; taking its seat wins; a scripted bot wins most fixed seeds (`tests/rival.rs`; `tests/bot_run.rs`, ignored in the normal suite and run in release by CI: 5 of 5 seeds won on days 18-31, 2026-10-09)
+- [x] Save and load restore an identical state hash (`tests/save_load.rs`, which also checks NFR-07's 3 s; `every_hashed_type_is_saved`)
+- [x] The chronicle tells the run with causes; the pacing director keeps runs free of long dead stretches (`tests/chronicle.rs`, `tests/director.rs`, and the quiet limit checked over every `bot_run` seed). UI-09's short biographies, and UI-04's knowledge-age and supply-route overlays, are not built in M4
+- [ ] **Playtest:** a run takes about an hour, and two seeds feel different in their first ten minutes (playtest: `docs/M4_PLAYTEST.md`)
 
 ### M4b: Living towns
 

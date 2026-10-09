@@ -652,7 +652,7 @@ impl RunSummary {
     /// The summary as lines of text (sim_headless, logs).
     pub fn lines(&self) -> Vec<String> {
         let ended = match self.outcome {
-            Some(o) => format!("{} ({:?})", o.name(), self.cause),
+            Some(o) => format!("{} ({})", o.name(), self.cause.describe()),
             None => "in progress".into(),
         };
         vec![
@@ -900,5 +900,10 @@ mod tests {
         );
         assert_eq!((s.requests_done, s.boons), (1, 2));
         assert_eq!(s.lines().len(), 4);
+        assert_eq!(
+            s.lines()[0],
+            "run won (conquest) after 2.0 days",
+            "the cause is worded, not printed as a variant"
+        );
     }
 }

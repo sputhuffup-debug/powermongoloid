@@ -689,10 +689,10 @@ fn main() -> ExitCode {
             let state = *app.world().resource::<sim_core::RunState>();
             if let Some(outcome) = state.outcome {
                 println!(
-                    "run ended: {} at tick {} ({:?})",
+                    "run ended: {} at tick {} ({})",
                     outcome.name(),
                     state.ended_at.unwrap_or(0),
-                    state.cause
+                    state.cause.describe()
                 );
                 for line in sim_headless::stats::run_summary(&app) {
                     println!("    {line}");

@@ -34,3 +34,14 @@ M4 saves and resumes a run ([M4_PLAN.md](../M4_PLAN.md), "Save and resume"). ADR
 - A save only loads into the build that wrote it (same registered types and format, and the same worldgen code, or the digest check refuses it). Migration between formats is future work, keyed on `SAVE_FORMAT`.
 - Archetype order differs after a load (entities arrive in SpawnId order), so any system whose result depends on query order would diverge; the save/load test is the guard for that rule (DETERMINISM.md).
 - Tests: `save_load` (2), `sim_core::save` unit tests (round trip with entity references, refusals before any change, reader errors), the conquest branches.
+
+## As built (reviewed at M4's close, step 12)
+
+The decisions above held. Differences and additions:
+
+- **The payload lists the SpawnIds first,** so resources that hold entities (the army index) can map them while loading. `Travel` saves its whole path (exact and cheap after zstd), and the map is regenerated in its own resource loader (`register_saved_resource_with`) right after `WorldGenSettings` loads, with the digest check before anything else loads. `SaveWriter::count` and `SaveReader::count` are the length methods (clippy forbids `len` without `is_empty`).
+- **The army index and fighter grid are saved, not rebuilt,** because the next tick's raiders, rival and attack hold read them before `build_index` runs; rebuilding from end-of-tick state could change their decisions and renumber slots at the load.
+- **`CommandLog` and pending commands are not saved;** `load_world` resets the log and the script and clears pending messages, so an in-process load starts clean. Save between ticks.
+- **The game saves and loads in process** (step 10b, `crates/game_app/src/saves.rs`): one slot per run (`run-<seed>-<difficulty>.sav` in `--save-dir`, else `saves/` next to the binary), F5 saves, F9 loads, closing the game saves a run that has started and isn't over, and the new-game screen lists saved runs under "Resume". A load goes through `load_world` into the running world after the world was first saved to memory (restored if the load fails part-way); it then bumps `game_render::WorldEpoch` so terrain, models, labels, the selection and the UI's offer cursors forget the old world. A new run is built on a worker thread with `headless_app` + `save_app`, then loaded the same way; if that fails the game restarts itself with `--seed --difficulty`. Measured: a quicksave takes about 0.06 s and a load 0.7-0.8 s (the map is regenerated).
+- **There is no ironman:** F9 after a defeat reloads the run's last save until the player leaves the finished run, which deletes its slot.
+- **No migration:** `SAVE_FORMAT` is 1 and a save loads only into the build that wrote it (same registered types and worldgen code, enforced by the type-name check and the map digest). Developed-start quicksaves (`world-<seed>.sav`) are never cleaned up.

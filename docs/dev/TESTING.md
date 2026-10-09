@@ -1,7 +1,7 @@
 # Tests
 
 ```sh
-cargo test --workspace                                  # everything, ~4 min on 4 cores
+cargo test --workspace                                  # everything: ~9 min of tests plus the build (16 min warm, ~36 min cold on 4 cores with -j 2; bot_run is ignored)
 cargo test-fast                                         # unit tests only, seconds (alias)
 cargo test -p integration_tests --test posture          # one integration test file
 cargo test -p integration_tests --test orders attacking # tests whose names match
@@ -25,7 +25,7 @@ Nightly (`.github/workflows/bench.yml`): `cargo bench -p sim_headless`, compared
 
 ## Integration tests (`tests/tests/`)
 
-Times are on a 4-core machine.
+Times are on a 4-core machine. The whole suite (251 tests at the close of M4, `cargo test -j 2 --workspace -- --test-threads=2`) spends about 9 minutes in the tests themselves (determinism.rs alone takes ~170 s, conquest.rs ~55 s, wanderers.rs ~35 s, every other file under 20 s); the rest is compiling. Take the test time from this table and the build from the cache: 16 minutes in all with a warm dependency cache, about 36 minutes cold.
 
 | File | Test | Guards | Time |
 | --- | --- | --- | --- |
@@ -90,6 +90,7 @@ These run in seconds and sit next to the code they test.
   - commands applied exactly once
   - a finished run stops the clock and freezes the hash; outside a run it never stops
   - a tick's events are recorded in sorted order whatever order they were written in
+  - every `Cause` has plain, distinct words with no variant name or id in them (UI-09, `every_cause_is_worded`; `RunSummary::lines()` and the headless "run ended" line use them)
   - offers are answered once and expire; modifiers are exact no-ops when empty
   - saves (GP-12, `save.rs`): a world saved and loaded into a fresh app hashes the same, entity references follow their SpawnIds, an entity without a SpawnId isn't saved, and both apps keep agreeing (`a_saved_world_loads_identically`); a bad magic, another format, a damaged or truncated payload and a build with other types are refused before anything changes (`bad_saves_are_refused_before_anything_changes`); readers refuse short and bad data
 - **sim_world:**

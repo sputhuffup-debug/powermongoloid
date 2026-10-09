@@ -459,25 +459,13 @@ fn capitalise(s: &str) -> String {
 /// Plain words for why a run ended.
 pub fn cause_text(c: Cause, army: &Army) -> String {
     match c {
-        Cause::None => "no cause".into(),
-        Cause::Player => "by your choice".into(),
-        Cause::Request { .. } => "a request".into(),
-        Cause::Conquest { .. } => "conquest".into(),
-        Cause::Invitation => "an invitation".into(),
-        Cause::Starvation => "starvation".into(),
-        Cause::Plunder => "plunder".into(),
-        Cause::Revolt => "a revolt".into(),
-        Cause::Raid { .. } => "a raid".into(),
-        Cause::Hold => "held long enough".into(),
-        Cause::Boon { .. } => "a boon".into(),
         Cause::Death { faction } => {
             format!("killed by {}", army.faction_name(faction).to_lowercase())
         }
-        Cause::Lapsed => "left unanswered".into(),
-        Cause::Neglect => "neglect".into(),
         Cause::Fight { faction } => {
             format!("fighting {}", army.faction_name(faction).to_lowercase())
         }
+        other => other.describe().into(),
     }
 }
 

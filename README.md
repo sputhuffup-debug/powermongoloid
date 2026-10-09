@@ -2,7 +2,7 @@
 
 An indirect-control medieval conquest simulation in Rust + Bevy. You command captains, not soldiers, on a living island where every villager is simulated: a name, a home, a job, needs and reasons. Armies march as crowds, live off the land and scare or provoke the villages they pass.
 
-**Status:** M3 (armies) is built and awaiting its go/no-go playtest ([checklist](docs/M3_PLAYTEST.md)). Next come M3b (developer handbook), M4 (conquest and faith) and M4b (living towns).
+**Status:** M4 "Rise" (roguelite runs: a landless band against a rival warlord's seat, on a fresh island each time) is built and awaiting its playtest ([checklist](docs/M4_PLAYTEST.md)). Next comes M4b (living towns).
 
 ## Playing
 
