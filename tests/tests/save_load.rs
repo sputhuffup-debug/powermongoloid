@@ -161,8 +161,12 @@ fn assert_same(what: &str, expected: &[(u64, u64)], actual: &[(u64, u64)]) {
 fn save_load_restores_an_identical_hash() {
     let mut app = headless_app(HeadlessConfig::run(SEED, RunConfig::default()));
     let (hamlet, warband) = warband_beside_a_hamlet(&mut app);
+    // The bot answers offers and plays the champion; the test drives the
+    // warband itself.
+    let mut bot = Bot::new(SEED);
+    bot.ignore(spawn_id(&app, warband));
     let mut player = Player {
-        bot: Bot::new(SEED),
+        bot,
         start_offer: common::start_offer(&app),
         hamlet,
         warband,

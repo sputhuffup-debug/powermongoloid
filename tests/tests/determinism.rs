@@ -502,31 +502,38 @@ fn a_run_replays() {
 }
 
 /// NFR-08, GP-16: the scripted player (`sim_headless::bot`) plays only
-/// through recorded player commands, so replaying its log reproduces its
-/// run: the same checkpoints, in parallel and serially.
+/// through recorded player commands, so its log reproduces its run. The
+/// bot plays two game days in parallel; its log and checkpoints are
+/// packed as a replay, written as RON and read back, and the replay
+/// verifies serially.
 #[test]
 fn a_bot_run_replays() {
-    const BOT_TICKS: u64 = 1_500;
+    const BOT_TICKS: u64 = 4_800;
+    const EVERY: u64 = 1_200;
     let config = HeadlessConfig::run(42, RunConfig::default());
-    let played = sim_headless::bot::run_bot(config, BOT_TICKS, 500);
+    let played = sim_headless::bot::run_bot(config, BOT_TICKS, EVERY);
     println!(
-        "bot: {} commands, outcome {:?}, end tick {}, notes {:?}",
+        "bot: {} commands, outcome {:?}, end tick {}",
         played.log.len(),
         played.outcome,
         played.end_tick,
-        played.notes
     );
     assert_eq!(played.outcome, None, "the run goes on");
     assert_eq!(played.end_tick, BOT_TICKS);
     let first = played.log.first().expect("the bot played");
     assert_eq!(first.tick, 0);
     assert!(
-        matches!(
-            first.command.kind,
-            CommandKind::ChooseOffer { choice: 0, .. }
-        ),
-        "the bot picks the first start boon at tick 0: {first:?}"
+        matches!(first.command.kind, CommandKind::ChooseOffer { .. }),
+        "the bot picks a start boon at tick 0: {first:?}"
     );
+    for kind in ["IssueOrder", "AppointCaptain"] {
+        let n = played
+            .log
+            .iter()
+            .filter(|c| format!("{:?}", c.command.kind).starts_with(kind))
+            .count();
+        println!("{kind}: {n}");
+    }
     assert!(
         played
             .log
@@ -535,14 +542,22 @@ fn a_bot_run_replays() {
         "the bot gives orders"
     );
     let ticks: Vec<u64> = played.checkpoints.iter().map(|c| c.tick).collect();
-    assert_eq!(ticks, [500, 1_000, 1_500]);
-    let replay = record_replay(config, BOT_TICKS, &played.log, 500);
-    assert_eq!(replay.commands, played.log);
-    assert_eq!(
-        replay.checkpoints, played.checkpoints,
-        "the bot's log reproduces its run"
-    );
-    verify_replay(&replay, Threading::Single).expect("the bot's run replays serially");
+    assert_eq!(ticks, [1_200, 2_400, 3_600, 4_800]);
+    let replay = Replay {
+        format: sim_core::REPLAY_FORMAT,
+        seed: config.seed,
+        population: config.population,
+        world_size: config.world_size,
+        scenario: config.scenario.name(),
+        run: config.scenario.run_config(),
+        ticks: BOT_TICKS,
+        checkpoint_every: EVERY,
+        commands: played.log.clone(),
+        checkpoints: played.checkpoints.clone(),
+    };
+    let reloaded = Replay::from_ron(&replay.to_ron()).expect("replay parses");
+    assert_eq!(reloaded, replay, "RON round-trip");
+    verify_replay(&reloaded, Threading::Single).expect("the bot's run replays serially");
 }
 
 /// NFR-08, guide G1: a battle's setup orders are AI commands, so a

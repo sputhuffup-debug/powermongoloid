@@ -52,3 +52,16 @@ jobs:
           $bin --seed 42 --ticks 10000 --commands 200 --record replay.ron
           $bin --replay replay.ron
           $bin --replay replay.ron --single-threaded
+
+      # M4 (GP-16, GP-21): a run played by the bot records and replays.
+      - name: Run replay smoke (bot)
+        run: |
+          bin=target/release/sim_headless
+          $bin --run --bot --seed 42 --ticks 24000 --record run.ron
+          $bin --replay run.ron
+          $bin --replay run.ron --single-threaded
+
+      # M4 balance (M4_PLAN default 5): the bot wins 3 of 5 fixed seeds
+      # within 40 days, and the director never goes quiet too long.
+      - name: Bot balance run
+        run: cargo test --release -p integration_tests --test bot_run -- --ignored --nocapture
