@@ -16,7 +16,14 @@ impl Plugin for TimeBarPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_time_bar).add_systems(
             Update,
-            (speed_keys, speed_buttons, update_time_bar, cap_catch_up).chain(),
+            (
+                speed_keys.run_if(crate::playing),
+                speed_buttons,
+                update_time_bar,
+                cap_catch_up,
+            )
+                .chain()
+                .in_set(crate::UiSet::Hud),
         );
     }
 }

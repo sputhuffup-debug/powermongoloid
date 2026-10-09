@@ -15,7 +15,7 @@ impl Plugin for DebugPanelPlugin {
             app.add_plugins(FrameTimeDiagnosticsPlugin::default());
         }
         app.add_plugins(EguiPlugin::default())
-            .add_systems(EguiPrimaryContextPass, debug_panel);
+            .add_systems(EguiPrimaryContextPass, debug_panel.run_if(crate::playing));
     }
 }
 

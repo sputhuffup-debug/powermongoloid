@@ -29,8 +29,15 @@ pub struct CameraRigPlugin;
 
 impl Plugin for CameraRigPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_camera)
-            .add_systems(Update, (rig_input, jump_to_settlement, apply_rig).chain());
+        app.add_systems(Startup, spawn_camera).add_systems(
+            Update,
+            (
+                (rig_input, jump_to_settlement).run_if(|g: Res<crate::InputGate>| !g.blocked),
+                apply_rig,
+            )
+                .chain()
+                .in_set(crate::RenderSet::World),
+        );
     }
 }
 
@@ -160,7 +167,8 @@ fn spawn_camera(mut commands: Commands, map: Option<Res<WorldMap>>) {
 
 #[allow(clippy::too_many_arguments)]
 fn rig_input(
-    time: Res<Time>,
+    // Real time: the camera moves while the game is paused.
+    time: Res<Time<Real>>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
@@ -300,7 +308,7 @@ fn jump_to_settlement(
     rig.target_distance = SETTLEMENT_VIEW_DISTANCE;
 }
 
-fn apply_rig(time: Res<Time>, mut q: Query<(&mut CameraRig, &mut Transform)>) {
+fn apply_rig(time: Res<Time<Real>>, mut q: Query<(&mut CameraRig, &mut Transform)>) {
     let dt = time.delta_secs();
     for (mut rig, mut transform) in &mut q {
         rig.step(dt);

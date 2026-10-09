@@ -168,7 +168,9 @@ These run in seconds and sit next to the code they test.
   - detail bands and hysteresis
   - camera maths: pan, zoom, rotation snapping, easing
   - texture determinism
-- **game_ui:** the picking ray, action descriptions, text bars, the catch-up cap on ticks per frame.
+  - monument models: every kind has parts standing on the ground (`every_kind_has_a_model_above_ground`)
+  - overlays: modes cycle, tints cover only their discs and chunk signatures follow them, quantising ignores small changes
+- **game_ui:** the picking ray, action descriptions, text bars, the catch-up cap on ticks per frame; offer cards (stat wording, every shipped boon and trait has a card); run-bar time spans; random seeds from the clock.
 
 ## Writing tests
 

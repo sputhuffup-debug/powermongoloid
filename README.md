@@ -7,9 +7,10 @@ An indirect-control medieval conquest simulation in Rust + Bevy. You command cap
 ## Playing
 
 ```sh
-cargo run -p game_app                  # opens on the skirmish: your captain and 50 men, raiders on the far side
-cargo run -p game_app -- --villages    # villages only
-cargo run -p game_app -- --seed 7      # another island
+cargo run -p game_app                       # a run (M4): new-game screen, pick a start boon, take the island
+cargo run -p game_app -- --seed 7 --difficulty harsh   # a given run island and difficulty (steady, chaotic, harsh)
+cargo run -p game_app -- --skirmish         # the M3 skirmish: your captain and 50 men, raiders on the far side
+cargo run -p game_app -- --villages         # villages only
 ```
 
 | Action | Control |
@@ -26,7 +27,14 @@ cargo run -p game_app -- --seed 7      # another island
 | Forage | F or the panel's *Forage* button: the army stands and gathers wild food around it until the baggage is full or the land is bare |
 | Posture | Panel buttons, or P to cycle passive / neutral / aggressive |
 | Return to camp / cancel orders | R / Backspace |
-| Appoint a captain | Select one of your followers, then *Appoint captain* in the panel |
+| Appoint a captain | Select one of your followers, then *Appoint captain* in the panel (in a run it greys out when your captain slots are full) |
+| New run (M4) | On the new-game screen: type a seed (digits, Backspace) or *Random*, pick a difficulty, *Build it* if either changed, then click one of the three start-boon cards to begin |
+| Offers | Waiting offers (dominion boons, traits, invitations) are buttons in the run bar under the clock: click one to see its cards, click a card to choose, *Later* to close |
+| Fast-forward | *>> Next event* in the run bar: 8x until the next notable event, then pause. The game also pauses on the events the difficulty's director lists (raiders, rival raids, a fallen champion) |
+| Event feed | Bottom left; click a line to move the camera there |
+| Overlays | O cycles ownership, goodwill / loyalty, food security, monuments, off |
+| Monuments | Hover one for its kind, bonus and holder |
+| Abandon a run | *Abandon run* in the run bar, twice. The end screen offers *New run* and *Same seed again* |
 
 ## Developing
 

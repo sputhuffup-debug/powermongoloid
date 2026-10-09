@@ -15,7 +15,17 @@ pub struct SettlementLabelsPlugin;
 
 impl Plugin for SettlementLabelsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (spawn_labels, place_labels, click_labels).chain());
+        app.init_resource::<Labelled>().add_systems(
+            Update,
+            (
+                clear_labels.run_if(game_render::epoch_changed),
+                spawn_labels,
+                place_labels,
+                click_labels,
+            )
+                .chain()
+                .in_set(crate::UiSet::Hud),
+        );
     }
 }
 
@@ -27,15 +37,27 @@ struct SettlementLabel {
 
 /// Settlements that already have a label. Kept on the UI side: the UI never
 /// writes to simulation entities.
-#[derive(Default)]
+#[derive(Resource, Default)]
 struct Labelled(bevy::platform::collections::HashSet<Entity>);
+
+/// A new world (`WorldEpoch`): drop every label.
+fn clear_labels(
+    mut commands: Commands,
+    mut done: ResMut<Labelled>,
+    labels: Query<Entity, With<SettlementLabel>>,
+) {
+    done.0.clear();
+    for e in &labels {
+        commands.entity(e).despawn();
+    }
+}
 
 fn spawn_labels(
     mut commands: Commands,
     map: Option<Res<WorldMap>>,
     names: Option<Res<NameTable>>,
     settlements: Query<(Entity, &Settlement)>,
-    mut done: Local<Labelled>,
+    mut done: ResMut<Labelled>,
 ) {
     let (Some(map), Some(names)) = (map, names) else {
         return;
