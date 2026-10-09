@@ -93,7 +93,7 @@ Locally: the smoke recorded 39 commands and both replays said "replay ok" with `
 - `cargo fmt --check`; `cargo clippy -j 2 --workspace --all-targets -- -D warnings`; `RUSTDOCFLAGS="-D warnings" cargo doc -j 2 --workspace --no-deps`: clean.
 - `bot_run` (release, `--ignored`): 5 of 5.
 - `chronicle`, `save_load`, `determinism::a_bot_run_replays`: pass (13.5 s, 11.5 s, 17.8 s).
-- Full suite `CARGO_INCREMENTAL=0 cargo test -j 2 --workspace -- --test-threads=2`: see the last section.
+- Full suite `CARGO_INCREMENTAL=0 cargo test -j 2 --workspace -- --test-threads=2`: exit 0, 243 passed, 0 failed, 2 ignored (`bot_run` and `survey_twenty_seeds`); determinism 13 in 140 s; 36 min wall with the debug build of the game crates.
 
 ## Open issues
 
