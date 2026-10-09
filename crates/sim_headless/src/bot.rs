@@ -127,6 +127,8 @@ pub struct Bot {
     /// The most militia seen standing at each settlement.
     seen: BTreeMap<u64, u32>,
     plan: Plan,
+    /// Captains (SpawnIds) the bot leaves to someone else.
+    ignored: Vec<u64>,
     /// What the bot decided, with the tick, for reports.
     pub notes: Vec<(u64, String)>,
 }
@@ -201,7 +203,7 @@ struct View {
 }
 
 impl View {
-    fn read(world: &mut World, tick: u64) -> Self {
+    fn read(world: &mut World, tick: u64, ignored: &[u64]) -> Self {
         let day = tick as f32 / world.resource::<Calendar>().ticks_per_day as f32;
         let econ = world.resource::<Economy>().clone();
         let weapons = good_named(&econ, "weapons");
@@ -258,7 +260,7 @@ impl View {
         let mut q = world.query::<(Entity, &SpawnId, &Captain, &Position, Option<&Stockpile>)>();
         let mut caps: Vec<Cap> = q
             .iter(world)
-            .filter(|(_, _, c, ..)| c.faction == FactionId::PLAYER)
+            .filter(|(_, id, c, ..)| c.faction == FactionId::PLAYER && !ignored.contains(&id.0))
             .map(|(e, id, c, p, bag)| {
                 let (n, unarmed, first) = members.get(&e).copied().unwrap_or((0, 0, None));
                 let people = n + 1;
@@ -393,8 +395,15 @@ impl Bot {
             seen: BTreeMap::new(),
             shunned: BTreeMap::new(),
             plan: Plan::Grow,
+            ignored: Vec::new(),
             notes: Vec::new(),
         }
+    }
+
+    /// Leaves captain `id` (a SpawnId) alone: the bot neither orders nor
+    /// counts it (a test drives it itself).
+    pub fn ignore(&mut self, id: u64) {
+        self.ignored.push(id);
     }
 
     /// Reads `app` between ticks and returns the player commands to send
@@ -405,7 +414,7 @@ impl Bot {
             return Vec::new();
         }
         let world = app.world_mut();
-        let view = View::read(world, tick);
+        let view = View::read(world, tick, &self.ignored);
         let mut out = self.offers(world, &view);
         if view.main().is_none() {
             return out;
