@@ -417,7 +417,9 @@ pub fn armies(app: &mut App) -> Vec<String> {
 
 /// In a run, one line on band life (GP-22): requests, invitations,
 /// drifters, the player's share of each region with its dominion flags
-/// (GP-24), captain slots (GP-25) and the best goodwill toward the player.
+/// (GP-24), captain slots (GP-25), the best goodwill toward the player, the
+/// rival's lands, garrison and clock (GP-28) and the pacing director's
+/// tension and bands (GP-16).
 /// `None` outside a run.
 pub fn run_line(world: &mut World) -> Option<String> {
     use sim_core::{FactionId, OfferKind, Offers, RunState};
@@ -457,5 +459,20 @@ pub fn run_line(world: &mut World) -> Option<String> {
         .iter(world)
         .map(|g| g.get(FactionId::PLAYER))
         .fold(f32::NEG_INFINITY, f32::max);
-    Some(format!("{line} | best goodwill {best:.2}"))
+    // GP-28, GP-16: the rival's garrison and clock, the director's mood.
+    let rival = world.resource::<sim_military::RivalState>().clone();
+    let garrison = sim_military::rival::garrison(world).map_or(0, |g| {
+        let mut q = world.query::<&sim_military::Follower>();
+        q.iter(world).filter(|f| f.captain == g).count() + 1
+    });
+    let mut q = world.query::<(&sim_agents::Owner, &sim_economy::SettlementEconomy)>();
+    let (lands, people) = q
+        .iter(world)
+        .filter(|(o, _)| o.faction == FactionId::RIVAL)
+        .fold((0, 0), |(n, p), (_, se)| (n + 1, p + se.population));
+    let director = world.resource::<sim_military::Director>().clone();
+    Some(format!(
+        "{line} | best goodwill {best:.2} | rival: {lands} settlements ({people} people), garrison {garrison}, defence +{:.2}, levied {}, raids {} | director: tension {:.2}, bands {}",
+        rival.defence_bonus, rival.levied, rival.raids, director.tension, director.bands
+    ))
 }

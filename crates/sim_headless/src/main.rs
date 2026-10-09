@@ -4,6 +4,7 @@
 //!   sim_headless --commands 200 --record run.ron    record a replay file
 //!   sim_headless --replay run.ron                   verify a replay file
 //!   sim_headless --run --difficulty harsh           a run on the run island
+//!   sim_headless --run --bot --ticks 24000          the scripted player plays it
 //!
 //! Exit code 1 on bad arguments, 2 if a replay diverges.
 
@@ -40,7 +41,10 @@ usage: sim_headless [options]
                             boon is picked at tick 0 (with --commands: plus
                             random military orders)
   --difficulty <name>       the run's difficulty: steady (default), chaotic
-                            or harsh (needs --run)";
+                            or harsh (needs --run)
+  --bot                     the scripted player plays the run (needs --run;
+                            not with --commands or --timings); with
+                            --record its commands make the replay";
 
 struct Args {
     seed: u64,
@@ -60,6 +64,7 @@ struct Args {
     scenario: Scenario,
     difficulty: Option<Difficulty>,
     timings: bool,
+    bot: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -78,6 +83,7 @@ fn parse_args() -> Result<Args, String> {
         scenario: Scenario::Villages,
         difficulty: None,
         timings: false,
+        bot: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -110,6 +116,7 @@ fn parse_args() -> Result<Args, String> {
                 ))?);
             }
             "--timings" => args.timings = true,
+            "--bot" => args.bot = true,
             "-h" | "--help" => return Err(USAGE.to_string()),
             other => return Err(format!("unknown argument {other}\n{USAGE}")),
         }
@@ -122,6 +129,14 @@ fn parse_args() -> Result<Args, String> {
             return Err("--difficulty needs --run".to_string());
         };
         cfg.difficulty = difficulty;
+    }
+    if args.bot {
+        if !matches!(args.scenario, Scenario::Run(_)) {
+            return Err("--bot needs --run".to_string());
+        }
+        if args.commands > 0 || args.timings {
+            return Err("--bot can't be combined with --commands or --timings".to_string());
+        }
     }
     if args.population.is_some() && matches!(args.scenario, Scenario::Run(_)) {
         return Err(
@@ -448,6 +463,36 @@ fn main() -> ExitCode {
         }
     }
     let start = Instant::now();
+
+    // The bot plays first; its recorded commands then drive the replay.
+    let commands = if args.bot {
+        let played = sim_headless::bot::run_bot(config, args.ticks);
+        for (tick, note) in &played.notes {
+            eprintln!("bot @{tick}: {note}");
+        }
+        eprintln!(
+            "bot: {} commands, outcome {:?} ({:?}) at tick {}",
+            played.log.len(),
+            played.outcome.map(|o| o.name()),
+            played.cause,
+            played.end_tick
+        );
+        if args.record.is_none() && args.stats_every == 0 {
+            report_speed(played.end_tick, start);
+            println!(
+                "seed={} ticks={} bot outcome={} end_tick={}",
+                args.seed,
+                args.ticks,
+                played.outcome.map_or("none", |o| o.name()),
+                played.end_tick
+            );
+            println!("state_hash=0x{:016x}", played.final_hash);
+            return ExitCode::SUCCESS;
+        }
+        played.log
+    } else {
+        commands
+    };
 
     if let Some(path) = &args.record {
         let replay = record_replay(config, args.ticks, &commands, args.checkpoint_every);

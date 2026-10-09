@@ -16,7 +16,7 @@
 //!   rival's people within `seat_radius` of the seat by `Defence + bonus`.
 //!   It stands in for walls until M5's sieges.
 //! - **Raids**: from `raid_from_day`, every `raid_every_days`, a band is
-//!   split off the garrison ([`crate::orders::split_army`]), so raids
+//!   split off the garrison (`orders::split_army`), so raids
 //!   weaken the seat. Each band carries a [`RivalBand`] and is steered by
 //!   [`think`] (in `SimInputSet::Ai`) with AI-origin commands: it attacks
 //!   the player's nearest settlement or contests the player's nearest
@@ -143,6 +143,23 @@ pub struct RivalState {
     pub raids: u32,
     /// Villagers levied so far.
     pub levied: u32,
+}
+
+impl RivalState {
+    /// GP-28: what the seat adds to the `Defence` multiplier of a person of
+    /// `faction` standing at `at`: the defence bonus for the rival's people
+    /// within `seat_radius` of the seat, else 0.
+    pub fn seat_defence(&self, faction: FactionId, at: IVec2) -> f32 {
+        if self.seat.is_some()
+            && self.defence_bonus > 0.0
+            && faction == FactionId::RIVAL
+            && (at - self.seat_center).as_vec2().length() <= self.seat_radius
+        {
+            self.defence_bonus
+        } else {
+            0.0
+        }
+    }
 }
 
 impl StateHash for RivalState {
@@ -282,7 +299,8 @@ fn spawn_garrison(
 pub fn garrison(world: &mut World) -> Option<Entity> {
     let state = world.resource::<RivalState>().clone();
     let seat = state.seat?;
-    let mut q = world.query_filtered::<(Entity, &SpawnId, &Captain, &Position), Without<RivalBand>>();
+    let mut q =
+        world.query_filtered::<(Entity, &SpawnId, &Captain, &Position), Without<RivalBand>>();
     q.iter(world)
         .filter(|(_, _, c, _)| c.faction == FactionId::RIVAL)
         .map(|(e, id, c, p)| {
@@ -327,11 +345,20 @@ pub fn clock(world: &mut World) {
     if tick >= world.resource::<RivalState>().next_levy {
         let size = (data.levy_size as f32 * strength).round() as u32;
         levy(world, seat, size, &data);
-        world.resource_mut::<RivalState>().next_levy += cal.days(data.levy_every_days).max(1);
+        let every = cal.days(data.levy_every_days).max(1);
+        let mut state = world.resource_mut::<RivalState>();
+        // On schedule; levies missed while the seat was lost are skipped.
+        while state.next_levy <= tick {
+            state.next_levy += every;
+        }
     }
     if tick >= world.resource::<RivalState>().next_raid {
         raid(world, data.raid_size);
-        world.resource_mut::<RivalState>().next_raid += cal.days(data.raid_every_days).max(1);
+        let every = cal.days(data.raid_every_days).max(1);
+        let mut state = world.resource_mut::<RivalState>();
+        while state.next_raid <= tick {
+            state.next_raid += every;
+        }
     }
 }
 
@@ -360,13 +387,7 @@ fn levy(world: &mut World, seat: u64, size: u32, data: &RivalData) {
     let state = world.resource::<RivalState>().clone();
     let captain = match garrison(world) {
         Some(c) => c,
-        None => spawn_garrison(
-            world,
-            seat,
-            state.seat_center,
-            0,
-            data.garrison_food_days,
-        ),
+        None => spawn_garrison(world, seat, state.seat_center, 0, data.garrison_food_days),
     };
     let mut joined = 0;
     let deepest = pools.iter().map(Vec::len).max().unwrap_or(0);
@@ -553,5 +574,142 @@ pub fn think(
                 },
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::progression::tests::run_app;
+    use sim_economy::{Economy, Stockpile};
+
+    /// The seat's defence covers only the rival's people near the seat.
+    #[test]
+    fn the_seat_guards_only_its_own_near_it() {
+        let state = RivalState {
+            seat: Some(19),
+            seat_center: IVec2::new(100, 100),
+            defence_bonus: 0.5,
+            seat_radius: 30.0,
+            ..Default::default()
+        };
+        let near = IVec2::new(120, 100);
+        assert_eq!(state.seat_defence(FactionId::RIVAL, near), 0.5);
+        assert_eq!(state.seat_defence(FactionId::PLAYER, near), 0.0);
+        assert_eq!(
+            state.seat_defence(FactionId::RIVAL, IVec2::new(131, 100)),
+            0.0
+        );
+        assert_eq!(
+            RivalState::default().seat_defence(FactionId::RIVAL, near),
+            0.0
+        );
+    }
+
+    /// The defence bonus follows its steps; the shipped rows are valid,
+    /// one per difficulty.
+    #[test]
+    fn defence_steps_and_shipped_rows() {
+        let p = Progression::default_data();
+        for d in Difficulty::ALL {
+            let r = p.rival(d).expect("a row per difficulty");
+            r.validate().unwrap();
+        }
+        let r = RivalData {
+            defence_steps: vec![(0.0, 0.1), (2.0, 0.5), (5.0, 1.0)],
+            ..p.rival(Difficulty::Steady).unwrap().clone()
+        };
+        assert_eq!(r.defence_on(0.0), 0.1);
+        assert_eq!(r.defence_on(1.99), 0.1);
+        assert_eq!(r.defence_on(2.0), 0.5);
+        assert_eq!(r.defence_on(9.0), 1.0);
+        let none = RivalData {
+            defence_steps: vec![(1.0, 0.5)],
+            ..r.clone()
+        };
+        assert_eq!(none.defence_on(0.5), 0.0);
+        assert!(
+            RivalData {
+                defence_steps: vec![(2.0, 0.5), (1.0, 0.6)],
+                ..r.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            RivalData {
+                raid_size: 1,
+                ..r.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            RivalData {
+                levy_every_days: 0.0,
+                ..r
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
+    /// GP-28: a levy enlists the rival's own villagers into the seat's
+    /// garrison, round-robin over its settlements; a raid splits a band of
+    /// the asked size off the garrison, aggressive, with its share of the
+    /// baggage by head count and a `RivalBand`.
+    #[test]
+    fn levies_fill_the_garrison_and_raids_split_it() {
+        let (mut app, _) = run_app(42);
+        let world = app.world_mut();
+        let seat = world.resource::<RivalState>().seat.expect("a seat");
+        let g = garrison(world).expect("a garrison");
+        let count = |world: &mut World, c: Entity| {
+            let mut q = world.query::<&Follower>();
+            q.iter(world).filter(|f| f.captain == c).count() as u32
+        };
+        let before = count(world, g);
+        let data = clock_data(world).unwrap();
+        levy(world, seat, 7, &data);
+        assert_eq!(count(world, g), before + 7);
+        assert_eq!(world.resource::<RivalState>().levied, 7);
+        let mut q = world.query::<(&Follower, &sim_agents::Villager)>();
+        let homes: std::collections::BTreeSet<Entity> = q
+            .iter(world)
+            .filter(|(f, _)| f.captain == g)
+            .map(|(_, v)| v.settlement)
+            .collect();
+        assert!(
+            homes.len() >= 2,
+            "levied from several settlements: {homes:?}"
+        );
+        for s in &homes {
+            assert_eq!(crate::conquest::owner_of(world, *s), FactionId::RIVAL);
+        }
+        let econ = world.resource::<Economy>().clone();
+        let food = |world: &World, c: Entity| {
+            world
+                .get::<Stockpile>(c)
+                .map_or(0.0, |s| s.food_value(&econ))
+        };
+        let (people, total) = (before + 8, food(world, g));
+        raid(world, 6);
+        let mut q = world.query::<(Entity, &Captain, &RivalBand)>();
+        let bands: Vec<(Entity, Posture)> = q.iter(world).map(|(e, c, _)| (e, c.posture)).collect();
+        assert_eq!(bands.len(), 1);
+        let (band, posture) = bands[0];
+        assert_eq!(posture, Posture::Aggressive);
+        assert_eq!(count(world, band) + 1, 6, "a band of six");
+        assert_eq!(count(world, g) + 1, people - 6, "the garrison is six fewer");
+        assert_eq!(world.resource::<RivalState>().raids, 1);
+        let share = food(world, band) / total;
+        assert!(
+            (share - 6.0 / people as f32).abs() < 0.05,
+            "the band's share of the food {share}"
+        );
+        assert!(
+            (food(world, band) + food(world, g) - total).abs() < 1e-3,
+            "no food lost"
+        );
     }
 }

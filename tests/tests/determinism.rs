@@ -187,6 +187,13 @@ fn run_state_hash_covers_every_sim_component() {
     let warband_id = app.world().get::<SpawnId>(warband).unwrap().0;
     let hungry = spoil_food_near_start(&mut app, hamlet);
     let monument = band_at_a_quiet_monument(&mut app);
+    // Step 7 (GP-28): the rival levies and raids early (its clock moved
+    // forward before the first tick), so its bands are on the field.
+    {
+        let mut rival = app.world_mut().resource_mut::<sim_military::RivalState>();
+        rival.next_levy = 200;
+        rival.next_raid = 300;
+    }
     let champion = sim_military::champion_of(app.world_mut(), FactionId::PLAYER).unwrap();
     let champion_id = app.world().get::<SpawnId>(champion).unwrap().0;
     let issue = |app: &mut sim_headless::App, order: OrderSpec| {
@@ -366,6 +373,18 @@ fn run_state_hash_covers_every_sim_component() {
         rank.points >= points.settlement + points.monument,
         "{rank:?}"
     );
+    // Step 7 (GP-28, GP-16): the rival levied and sent a band; the
+    // director's state is kept (its bands, if any, carry `Raider`).
+    let rival = app.world().resource::<sim_military::RivalState>().clone();
+    let director = app.world().resource::<sim_military::Director>().clone();
+    let bands = {
+        let world = app.world_mut();
+        let mut q = world.query::<&sim_military::RivalBand>();
+        q.iter(world).count()
+    };
+    println!("rival {rival:?}; {bands} rival bands; director {director:?}");
+    assert!(rival.levied > 0, "the rival levied nobody");
+    assert!(rival.raids >= 1 && bands >= 1, "no rival band out");
     let missing = unhashed_state(app.world_mut());
     assert!(
         missing.is_empty(),

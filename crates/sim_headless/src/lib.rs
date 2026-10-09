@@ -10,9 +10,12 @@
 //! - [`sample_commands`] and [`sample_orders`]: deterministic command streams
 //!   for tests.
 //! - [`stats`]: population and army summaries (`--stats-every`).
+//! - [`bot`]: a scripted player for runs ([`bot::run_bot`], `--bot`), and
+//!   [`step_until_event`], the headless fast-forward (GP-16).
 //!
 //! The CLI (`src/main.rs`) wraps these; run it with `--help`.
 
+pub mod bot;
 pub mod stats;
 
 use std::time::{Duration, Instant};
@@ -418,7 +421,8 @@ pub fn sample_commands(seed: u64, ticks: u64, count: usize) -> Vec<LoggedCommand
 /// settlement the player doesn't hold, offers that don't
 /// exist) that must be refused. Issued by the player's faction, except
 /// `AbandonRun`, which the raiders issue so that it is always refused and
-/// never cuts a run short. Used by tests and `sim_headless --commands`.
+/// never cuts a run short. In a run, orders go to the player's captains
+/// only. Used by tests and `sim_headless --commands`.
 pub fn sample_orders(app: &mut App, seed: u64, ticks: u64, count: usize) -> Vec<LoggedCommand> {
     use bevy_ecs::prelude::*;
     use sim_core::{OrderSpec, Posture, SpawnId};
@@ -431,6 +435,14 @@ pub fn sample_orders(app: &mut App, seed: u64, ticks: u64, count: usize) -> Vec<
         .map(|(id, c, p)| (id.0, c.faction.0, p.0))
         .collect();
     captains.sort_unstable_by_key(|c| c.0);
+    // In a run, most captains are guard camps, the rival's and raiders',
+    // whose orders the player's commands can't touch: give orders to the
+    // player's own.
+    if world.resource::<sim_core::RunState>().in_run()
+        && captains.iter().any(|c| c.1 == FactionId::PLAYER.0)
+    {
+        captains.retain(|c| c.1 == FactionId::PLAYER.0);
+    }
     let mut q = world.query_filtered::<&SpawnId, With<SettlementEconomy>>();
     let mut settlements: Vec<u64> = q.iter(world).map(|s| s.0).collect();
     settlements.sort_unstable();
@@ -535,6 +547,36 @@ pub fn start_boon_pick(app: &App, choice: u8) -> Option<LoggedCommand> {
             CommandKind::ChooseOffer { offer, choice },
         ),
     })
+}
+
+/// GP-16: the headless "fast-forward until something happens": steps
+/// `app` one tick at a time, at most `max_ticks` ticks, until a notable
+/// event (`SimEventKind::notable`, which moves
+/// `Chronicle::last_notable`) is recorded. Returns that event's tick, or
+/// `None` if nothing notable happened in `max_ticks` or the run ended
+/// without one (the clock stopped).
+pub fn step_until_event(app: &mut App, max_ticks: u64) -> Option<u64> {
+    use sim_core::{Chronicle, EventFeed, SimTick};
+    let before = app.world().resource::<Chronicle>().last_notable();
+    for _ in 0..max_ticks {
+        let tick = app.world().resource::<SimTick>().0;
+        app.step(1);
+        let now = app.world().resource::<Chronicle>().last_notable();
+        // `last_notable` starts at 0, so on the first tick look at the feed.
+        let at_start = tick == 0
+            && app
+                .world()
+                .resource::<EventFeed>()
+                .iter()
+                .any(|f| f.tick == 0 && f.event.kind.notable());
+        if now != before || at_start {
+            return Some(now);
+        }
+        if app.world().resource::<SimTick>().0 == tick {
+            return None;
+        }
+    }
+    None
 }
 
 /// A tile within 60 tiles of `at` (clamped at 0).

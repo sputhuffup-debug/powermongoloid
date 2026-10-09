@@ -6,7 +6,8 @@
 //!   world: the rival's seat, the start spot, the band, the champion's trait,
 //!   run modifiers and the three starting boons on offer.
 //! - [`setup_run`]: before the first tick of a run, spawns the band and its
-//!   champion, applies one-off run modifiers and posts the start offer.
+//!   champion, applies one-off run modifiers, sets up monuments, the rival
+//!   ([`crate::rival::setup`]) and the director, and posts the start offer.
 //! - [`offers`]: answering offers ([`choose`]) and abandoning the run
 //!   ([`abandon`]), both reached only through `SimCommand`s.
 //! - [`RunProgress`]: what the run has drawn and picked so far.
@@ -30,8 +31,8 @@ use bevy_math::IVec2;
 use serde::{Deserialize, Serialize};
 use sim_agents::{CombatStats, Deed, Villagers};
 use sim_core::{
-    Allegiance, Difficulty, FactionId, FactionModifiers, ModifierSource, OfferKind, RunState, SimEvent,
-    SimEventKind, SimSeed, SpawnId, Stat, StateHash, StateHasher, post_offer,
+    Allegiance, Difficulty, FactionId, FactionModifiers, ModifierSource, OfferKind, RunState,
+    SimEvent, SimEventKind, SimSeed, SpawnId, Stat, StateHash, StateHasher, post_offer,
 };
 use sim_economy::{Economy, SettlementEconomy, Stockpile};
 use sim_world::{Monument, MonumentKind, RegionId};
@@ -138,9 +139,11 @@ pub enum Effect {
     Goodwill(f32),
     /// This fraction of the food in every storehouse is lost at the start.
     Stores(f32),
-    /// Raider bands come this many times as often (the director, M4 step 7).
+    /// The pacing director's low-tension raider bands come this many times
+    /// as often (its `spacing_hours` divided by this; GP-16).
     RaiderPace(f32),
-    /// The rival's levies and defence scale by this (M4 step 7).
+    /// The rival's starting garrison, levies and seat defence scale by this
+    /// (GP-28, [`crate::rival::strength`]).
     RivalStrength(f32),
     /// A band of this many sellswords for hire near the start (later step).
     Sellswords(u32),
@@ -666,7 +669,12 @@ impl Progression {
             return Err("progression: monument guard chances add up to more than 1".into());
         }
         for difficulty in Difficulty::ALL {
-            match d.rival.iter().filter(|r| r.difficulty == difficulty).count() {
+            match d
+                .rival
+                .iter()
+                .filter(|r| r.difficulty == difficulty)
+                .count()
+            {
                 1 => {}
                 n => {
                     return Err(format!(
@@ -849,7 +857,10 @@ pub struct RunStart {
 /// GP-21, GP-27: sets up a run before its first tick. Draws the start
 /// ([`draw_start`]), records it in [`RunProgress`], seats the player at the
 /// start spot, spawns the band with its [`Champion`] (carrying one trait),
-/// applies one-off run modifiers, posts the start boon offer and reports
+/// applies one-off run modifiers, gives every monument a holder and some a
+/// guard camp, hands the rival its lands and seat garrison (GP-28,
+/// [`crate::rival::setup`]), sets the pacing director's spacing
+/// ([`crate::director::setup`]), posts the start boon offer and reports
 /// [`SimEventKind::RunStarted`].
 ///
 /// Returns `None` (and changes nothing) outside a run, or if the world has
@@ -959,8 +970,9 @@ fn outfit_groups(world: &mut World, captain: Entity, band: &BandData) {
 }
 
 /// GP-27: applies the one-off start effects of run modifier `cards`, in
-/// draw order. Only `Stores` acts now; the other effects are read later
-/// (`FactionModifiers` in M4 step 4, the director in step 7).
+/// draw order. Only `Stores` acts here; the others are read where they
+/// apply (`Stat` in [`rebuild_modifiers`], `RaiderPace` by the director,
+/// `RivalStrength` by the rival).
 fn apply_start_modifiers(world: &mut World, data: &Progression, cards: &[u16]) {
     for &card in cards {
         let Some(m) = data.modifier(card) else {
@@ -1260,6 +1272,20 @@ pub(crate) mod tests {
         );
         assert!(check(&|d| d.champion.ranks = vec![0, 5]).is_err());
         assert!(check(&|d| d.champion.ranks = vec![5, 5]).is_err());
+        assert!(
+            check(&|d| d.rival.truncate(2)).is_err(),
+            "a row per difficulty"
+        );
+        assert!(
+            check(&|d| {
+                let r = d.rival[0].clone();
+                d.rival.push(r);
+            })
+            .is_err(),
+            "one row per difficulty"
+        );
+        assert!(check(&|d| d.rival[0].start_loyalty = 1.5).is_err());
+        assert!(check(&|d| d.rival[0].raid_size = 1).is_err());
         assert!(
             check(&|d| d.champion.ranks.clear()).is_ok(),
             "no ranks, no offers"

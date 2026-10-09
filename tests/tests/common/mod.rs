@@ -130,3 +130,21 @@ pub fn rejected(app: &App, faction: FactionId) -> u32 {
         .get(faction)
         .rejected_commands
 }
+
+/// GP-16: silences the pacing director before the first tick (data and
+/// its spacing), for scenarios that test something else and must not meet
+/// its raider bands. The rival's clock is untouched.
+pub fn quiet_director(app: &mut App) {
+    for p in &mut app
+        .world_mut()
+        .resource_mut::<sim_military::DirectorData>()
+        .personalities
+    {
+        p.quiet_limit_hours = 1e6;
+        p.first_event_within_hours = 1e6;
+        p.spacing_hours = 1e6;
+    }
+    app.world_mut()
+        .resource_mut::<sim_military::Director>()
+        .next_check = u64::MAX;
+}

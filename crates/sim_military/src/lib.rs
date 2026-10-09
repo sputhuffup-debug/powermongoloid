@@ -103,7 +103,7 @@ pub use components::{
 };
 pub use conquest::{militia_or_foes_near, owner_of, transfer, transfer_seeded};
 pub use data::{Army, RankGain, VeteranData};
-pub use director::{DirectorData, Director, Personality, RaiderBandData, TensionWeights};
+pub use director::{Director, DirectorData, Personality, RaiderBandData, TensionWeights};
 pub use index::{ArmyIndex, ArmyInfo, FighterGrid, Side};
 pub use monuments::{Guard, Holder, NoUpkeep};
 pub use orders::{CommandInbox, arm_followers, enlist, enlist_into, find_settlement, provoke};
@@ -136,9 +136,9 @@ pub enum MilitarySet {
     Combat,
     /// Hunger, morale, desertion (Needs).
     Upkeep,
-    /// The hourly progress driver: revolts and, later in M4, the run's
-    /// settlement-level steps (Needs, after `Upkeep` and
-    /// `AgentSet::Standing`).
+    /// The hourly progress driver: battles, monuments, revolts and the
+    /// run's settlement-level steps, the rival's clock and the pacing
+    /// director (Needs, after `Upkeep` and `AgentSet::Standing`).
     Progress,
 }
 

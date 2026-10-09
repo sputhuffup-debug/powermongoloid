@@ -3,7 +3,9 @@
 //! `(attack + weapon) x leadership x roll x Attack - (defense + tools)`, at
 //! least 1, divided by the victim's `Defence`, where `Attack` and `Defence`
 //! are the factions' `FactionModifiers` multipliers (GP-23; 1.0 without
-//! modifiers).
+//! modifiers). Near the rival's seat in a run, the rival's people add the
+//! seat's defence bonus to their `Defence` (GP-28,
+//! [`crate::rival::RivalState::seat_defence`]).
 
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
@@ -76,7 +78,8 @@ pub(crate) fn find_fallen(
 /// Act: blows land, in the strikers' SpawnId order. Damage is `(attack +
 /// weapon + rank gain) x leadership x roll x Attack - (defense + tools +
 /// rank gain)`, at least 1, divided by the victim's `Defence` (GP-23,
-/// SIM-36). A blow on a living victim marks both sides as having
+/// SIM-36), plus the rival seat's defence bonus for the rival's people
+/// near it (GP-28). A blow on a living victim marks both sides as having
 /// [`Veteran::fought`] and keeps both armies in battle (`Captain::
 /// battle_since`, `last_engaged`); whoever it kills is listed in
 /// [`Casualties::slain_by`].
@@ -107,7 +110,7 @@ pub(crate) fn resolve_strikes(
     // GP-28: the rival's seat stands in for walls: blows on the rival's
     // people near it are divided by `Defence + bonus` (no bonus outside a
     // run).
-    let seat_radius = (rival.defence_bonus > 0.0).then_some(rival.seat_radius);
+    let walls = rival.defence_bonus > 0.0;
     casualties.slain_by.clear();
     // Only fighters swing; blows land in SpawnId order.
     let mut order: Vec<(SpawnId, Entity)> = grid
@@ -163,16 +166,11 @@ pub(crate) fn resolve_strikes(
         // GP-23: the striker's Attack and the victim's Defence modifiers
         // (exactly 1.0 without any).
         let mut guard = mods.mult(victim_side.0, Stat::Defence);
-        if let Some(r) = seat_radius
-            && victim_side.0 == FactionId::RIVAL
-            && positions.get(target).is_ok_and(|p| {
-                (p.0 - rival.seat_center).as_vec2().length() <= r
-            })
-        {
-            guard += rival.defence_bonus;
+        if walls && let Ok(p) = positions.get(target) {
+            guard += rival.seat_defence(victim_side.0, p.0);
         }
-        let damage = (attack * bonus * roll * mods.mult(faction, Stat::Attack) - defense).max(1.0)
-            / guard;
+        let damage =
+            (attack * bonus * roll * mods.mult(faction, Stat::Attack) - defense).max(1.0) / guard;
         victim.health -= damage;
         victim.morale = (victim.morale - 0.01).max(0.0);
         let killed = !victim.alive();

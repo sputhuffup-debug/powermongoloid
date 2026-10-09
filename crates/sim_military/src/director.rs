@@ -6,7 +6,7 @@
 //! player's armies in battle, and how long it has been quiet (the time
 //! since `Chronicle::last_notable`). Quiet lowers tension; the rest raise
 //! it. Then it may bring a band of raiders ([`Raider`], `RAIDERS`,
-//! aggressive, armed) to a seeded tile around a village near the player
+//! aggressive) to a seeded tile around a village near the player
 //! (stream `sim_military::director` at the tick), aimed at that village
 //! (`Raider::target`): on arrival the village asks the player to drive
 //! them off (a `DriveOff` request), so a band also nudges a request into
@@ -33,8 +33,8 @@ use serde::{Deserialize, Serialize};
 use sim_agents::{Owner, Threat, Villagers};
 use sim_core::rng::rng_key;
 use sim_core::{
-    Calendar, Chronicle, Difficulty, FactionId, Posture, RunState, SimEvent, SimEventKind,
-    SimSeed, SimTick, SpawnId, StateHash, StateHasher,
+    Calendar, Chronicle, Difficulty, FactionId, Posture, RunState, SimEvent, SimEventKind, SimSeed,
+    SimTick, SpawnId, StateHash, StateHasher,
 };
 use sim_economy::SettlementEconomy;
 use sim_world::{NO_REGION, Settlement, WorldMap};
@@ -75,6 +75,8 @@ pub struct RaiderBandData {
     pub max: u32,
     /// More people per day of the run (rounded down).
     pub per_day: f32,
+    /// Every raider carries a weapon.
+    pub armed: bool,
 }
 
 impl RaiderBandData {
@@ -173,7 +175,10 @@ impl DirectorData {
         }
         let (lo, hi) = self.spawn_distance;
         if !(ok(lo) && hi.is_finite() && lo <= hi && hi > 0.0) || !ok(self.band_food_days) {
-            return Err("director: spawn_distance needs 0 <= min <= max, max > 0, and band_food_days >= 0".into());
+            return Err(
+                "director: spawn_distance needs 0 <= min <= max, max > 0, and band_food_days >= 0"
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -207,7 +212,8 @@ pub struct Director {
     pub last_spawn: Option<u64>,
     /// No band for low tension before this tick (spacing).
     pub next_check: u64,
-    /// When the run's first event (a request, a raid or a fight) was seen.
+    /// The tick of the run's first event (a request, raiders, a raid or a
+    /// fight: [`eventful`]), once the director has seen it.
     pub first_event: Option<u64>,
     /// Bands brought so far.
     pub bands: u32,
@@ -338,14 +344,21 @@ pub fn step(world: &mut World) {
     let cal = world.resource::<Calendar>().clone();
     let hour = cal.ticks_per_hour();
     if world.resource::<Director>().first_event.is_none() {
-        let seen = world.resource::<RequestBoard>().posted > 0
-            || world
-                .resource::<Chronicle>()
-                .entries()
-                .iter()
-                .any(|e| eventful(e.event.kind));
-        if seen {
-            world.resource_mut::<Director>().first_event = Some(tick);
+        // A request is posted in this same hourly driver, before this
+        // step; anything else is in the chronicle with its tick.
+        let posted = (world.resource::<RequestBoard>().posted > 0).then_some(tick);
+        let chronicled = world
+            .resource::<Chronicle>()
+            .entries()
+            .iter()
+            .find(|e| eventful(e.event.kind))
+            .map(|e| e.tick);
+        let first = match (posted, chronicled) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        if first.is_some() {
+            world.resource_mut::<Director>().first_event = first;
         }
     }
     let quiet_for = tick.saturating_sub(world.resource::<Chronicle>().last_notable());
@@ -371,6 +384,7 @@ pub fn step(world: &mut World) {
     let spawned = bring_band(world, &p, tick, &cal);
     let mut d = world.resource_mut::<Director>();
     if spawned {
+        d.first_event.get_or_insert(tick);
         d.last_spawn = Some(tick);
         d.bands += 1;
         d.next_check = tick + cal.hours(p.spacing_hours / pace);
@@ -424,7 +438,9 @@ fn bring_band(world: &mut World, p: &Personality, tick: u64, cal: &Calendar) -> 
         for _ in 0..24 {
             let d = rng.random_range(lo..=hi);
             let a = rng.random_range(0.0..TAU);
-            let at = (anchor.as_vec2() + Vec2::from_angle(a) * d).round().as_ivec2();
+            let at = (anchor.as_vec2() + Vec2::from_angle(a) * d)
+                .round()
+                .as_ivec2();
             let Some(t) = nearest_passable(map, &costs, at) else {
                 continue;
             };
@@ -447,7 +463,7 @@ fn bring_band(world: &mut World, p: &Personality, tick: u64, cal: &Calendar) -> 
         &ArmySpec {
             posture: Posture::Aggressive,
             food_days: data.band_food_days,
-            armed: true,
+            armed: p.raider_band.armed,
             raider: true,
             ..ArmySpec::new(FactionId::RAIDERS, tile, size.saturating_sub(1))
         },
@@ -463,6 +479,64 @@ fn bring_band(world: &mut World, p: &Personality, tick: u64, cal: &Calendar) -> 
             .at(tile)
             .amount(size as i32),
     );
-    log(world, format!("{size} raiders appeared at ({}, {})", tile.x, tile.y));
+    log(
+        world,
+        format!("{size} raiders appeared at ({}, {})", tile.x, tile.y),
+    );
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shipped_data_is_valid_and_bands_grow_by_day() {
+        let d = DirectorData::default_data();
+        for difficulty in Difficulty::ALL {
+            assert!(d.personality(difficulty).is_some());
+        }
+        let b = RaiderBandData {
+            min: 4,
+            max: 10,
+            per_day: 0.5,
+            armed: false,
+        };
+        assert_eq!(b.size_on(0.0), 4);
+        assert_eq!(b.size_on(1.9), 4);
+        assert_eq!(b.size_on(2.0), 5);
+        assert_eq!(b.size_on(100.0), 10);
+        assert!(eventful(SimEventKind::RequestPosted));
+        assert!(eventful(SimEventKind::RaidersArrived));
+        assert!(!eventful(SimEventKind::RunStarted));
+        assert!(!eventful(SimEventKind::OfferChosen));
+        assert!(!eventful(SimEventKind::OfferPosted));
+    }
+
+    #[test]
+    fn rejects_bad_data() {
+        let ok = DirectorData::default_data();
+        let check = |edit: &dyn Fn(&mut DirectorData)| {
+            let mut d = ok.clone();
+            edit(&mut d);
+            d.validate()
+        };
+        assert!(check(&|_| {}).is_ok());
+        assert!(check(&|d| d.personalities.truncate(2)).is_err());
+        assert!(
+            check(&|d| {
+                let p = d.personalities[0].clone();
+                d.personalities.push(p);
+            })
+            .is_err()
+        );
+        assert!(check(&|d| d.personalities[0].quiet_limit_hours = 1.0).is_err());
+        assert!(check(&|d| d.personalities[0].first_event_within_hours = 0.5).is_err());
+        assert!(check(&|d| d.personalities[0].spacing_hours = 0.0).is_err());
+        assert!(check(&|d| d.personalities[0].weights.quiet = -1.0).is_err());
+        assert!(check(&|d| d.personalities[0].raider_band.min = 0).is_err());
+        assert!(check(&|d| d.personalities[0].raider_band.min = 99).is_err());
+        assert!(check(&|d| d.spawn_distance = (50.0, 10.0)).is_err());
+        assert!(check(&|d| d.band_food_days = -1.0).is_err());
+    }
 }

@@ -70,7 +70,9 @@ pub fn transfer(world: &mut World, s: Entity, to: FactionId, cause: Cause) -> Op
 /// - A faction (not the independents) that held no settlement before gets
 ///   its seat (where `Return` leads) at this one's centre.
 /// - GP-28: when the player takes the rival's seat in a run, the run ends
-///   in a win (`RunState::finish`, which does nothing outside a run).
+///   in a win (`RunState::finish`, which does nothing outside a run), and
+///   the rival's other settlements become independent
+///   ([`crate::rival::free_lands`]).
 ///
 /// Returns `None`, changing nothing, if `s` isn't a populated settlement.
 pub fn transfer_seeded(
@@ -125,12 +127,15 @@ pub fn transfer_seeded(
         _ => format!("{} took {name}", faction_name(world, to)),
     };
     log(world, text);
-    // GP-28: taking the rival's seat wins the run. (M4 step 7 also frees
-    // the rest of the rival's lands here.)
-    if to == FactionId::PLAYER && world.resource::<RunProgress>().rival_seat == Some(id) {
-        world
+    // GP-28: taking the rival's seat wins the run, and the rest of the
+    // rival's lands go free.
+    if to == FactionId::PLAYER
+        && world.resource::<RunProgress>().rival_seat == Some(id)
+        && world
             .resource_mut::<RunState>()
-            .finish(RunOutcome::Won, cause);
+            .finish(RunOutcome::Won, cause)
+    {
+        crate::rival::free_lands(world);
     }
     Some(change)
 }
@@ -313,14 +318,29 @@ pub(crate) mod tests {
     use crate::spawn::{ArmySpec, spawn_army};
     use sim_core::{Allegiance, Chronicle, CommandKind, OrderSpec, SimStepper};
 
-    /// Populated settlements other than the rival's seat, in SpawnId order.
-    pub(crate) fn settlements(world: &mut World) -> Vec<(u64, Entity, IVec2)> {
+    /// Populated settlements other than the rival's seat, whoever owns
+    /// them, in SpawnId order.
+    fn any_settlements(world: &mut World) -> Vec<(u64, Entity, IVec2)> {
         let seat = world.resource::<RunProgress>().rival_seat;
         let mut q = world.query_filtered::<(Entity, &SpawnId, &Settlement), With<Owner>>();
         let mut v: Vec<(u64, Entity, IVec2)> = q
             .iter(world)
             .filter(|(_, id, _)| Some(id.0) != seat)
             .map(|(e, id, st)| (id.0, e, st.center))
+            .collect();
+        v.sort_unstable_by_key(|s| s.0);
+        v
+    }
+
+    /// Populated independent settlements (never the rival's lands, GP-28),
+    /// in SpawnId order.
+    pub(crate) fn settlements(world: &mut World) -> Vec<(u64, Entity, IVec2)> {
+        let seat = world.resource::<RunProgress>().rival_seat;
+        let mut q = world.query::<(Entity, &SpawnId, &Settlement, &Owner)>();
+        let mut v: Vec<(u64, Entity, IVec2)> = q
+            .iter(world)
+            .filter(|(_, id, _, o)| Some(id.0) != seat && o.faction == FactionId::INDEPENDENT)
+            .map(|(e, id, st, _)| (id.0, e, st.center))
             .collect();
         v.sort_unstable_by_key(|s| s.0);
         v
@@ -590,7 +610,8 @@ pub(crate) mod tests {
         let (mut app, _) = run_app(42);
         // Past tick 0's day tick, so the first drift is the one at `day`.
         app.step(1);
-        let (bid, b, bc) = settlements(app.world_mut())[1];
+        // Settlement #1 (the rival's at the start; transfer replaces it).
+        let (bid, b, bc) = any_settlements(app.world_mut())[1];
         let world = app.world_mut();
         transfer(world, b, FactionId::PLAYER, Cause::None).unwrap();
         spawn_army(world, &ArmySpec::new(FactionId::PLAYER, bc, 1));

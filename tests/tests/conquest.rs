@@ -160,6 +160,8 @@ fn conquered_with(seed: u64, threading: Threading) -> (App, Entity) {
         threading,
         ..HeadlessConfig::run(seed, RunConfig::default())
     });
+    // The loyalty branches meet no director's raiders (GP-16).
+    quiet_director(&mut app);
     let champion = champion(&mut app);
     let offer = start_offer(&app);
     let data = app.world().resource::<Progression>().data.clone();
