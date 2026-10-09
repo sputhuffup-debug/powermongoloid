@@ -114,11 +114,10 @@ fn despawn<T: Component>(mut commands: Commands, roots: Query<Entity, With<T>>) 
 }
 
 /// Opens the new-game screen on a run's first frame (the start boon still
-/// waiting at tick 0, the clock paused) and the end screen once the run is
-/// over.
+/// waiting, normally at tick 0; the clock paused) and the end screen once
+/// the run is over.
 fn choose_screen(
     run: Option<Res<RunState>>,
-    tick: Option<Res<SimTick>>,
     offers: Option<Res<Offers>>,
     screen: Res<State<UiScreen>>,
     mut next: ResMut<NextState<UiScreen>>,
@@ -126,7 +125,7 @@ fn choose_screen(
     mut opened: Local<bool>,
 ) {
     let _span = info_span!("game_ui::screens::choose_screen").entered();
-    let (Some(run), Some(tick), Some(offers)) = (run, tick, offers) else {
+    let (Some(run), Some(offers)) = (run, offers) else {
         return;
     };
     if !run.in_run() {
@@ -143,7 +142,7 @@ fn choose_screen(
         let boon_waiting = offers
             .for_faction(FactionId::PLAYER)
             .any(|o| o.kind == OfferKind::StartBoon);
-        if tick.0 == 0 && boon_waiting {
+        if boon_waiting {
             time.pause();
             next.set(UiScreen::NewGame);
         }
@@ -255,7 +254,7 @@ fn spawn_new_game(
             ))
             .with_children(|r| {
                 r.spawn(line(
-                    "This seed or difficulty makes a different island:",
+                    "A new seed or difficulty needs a fresh start:",
                     14.0,
                     style::GOLD,
                 ));

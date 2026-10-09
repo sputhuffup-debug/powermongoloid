@@ -224,7 +224,11 @@ fn read_feed(
     mut state: Local<FeedState>,
     mut root: Query<&mut Visibility, With<FeedRoot>>,
     mut lines: Query<(&FeedLine, &mut Text)>,
-    mut targets: ResMut<FeedTargets>,
+    (mut targets, offers, sent): (
+        ResMut<FeedTargets>,
+        Option<Res<sim_core::Offers>>,
+        Res<crate::cards::SentOffers>,
+    ),
 ) {
     let _span = info_span!("game_ui::feed::read_feed").entered();
     let (
@@ -265,7 +269,12 @@ fn read_feed(
     let mut pause = false;
     for entry in feed.since(state.cursor) {
         let e = &entry.event;
-        let mine = e.faction == FactionId::PLAYER || e.kind != SimEventKind::OfferPosted;
+        // Pause on an offer only while it still waits for you (the start
+        // boon is posted before tick 0 and answered on the new-game screen).
+        let mine = e.kind != SimEventKind::OfferPosted
+            || (e.faction == FactionId::PLAYER
+                && !sent.0.contains(&e.subject)
+                && offers.as_ref().is_some_and(|o| o.get(e.subject).is_some()));
         if run.in_run() && mine && pause_on.contains(&e.kind) {
             pause = true;
         }
@@ -275,6 +284,9 @@ fn read_feed(
         // A big battle ranks up dozens at once: one line for them all.
         if e.kind == SimEventKind::VeteranRank {
             veterans += 1;
+            continue;
+        }
+        if e.kind == SimEventKind::OfferPosted && !mine {
             continue;
         }
         if let Some(text) = describe(e, &army, &progression, &name) {

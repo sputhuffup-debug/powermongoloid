@@ -48,7 +48,8 @@ fn panel(top: bool) -> (Node, BackgroundColor, Interaction, Visibility) {
     (
         Node {
             position_type: PositionType::Absolute,
-            top: if top { Val::Px(56.0) } else { Val::Auto },
+            // Below the time bar and the run bar (M4).
+            top: if top { Val::Px(146.0) } else { Val::Auto },
             bottom: if top { Val::Auto } else { Val::Px(10.0) },
             right: Val::Px(10.0),
             width: Val::Px(380.0),

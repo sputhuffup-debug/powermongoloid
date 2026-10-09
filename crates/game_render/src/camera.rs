@@ -167,7 +167,8 @@ fn spawn_camera(mut commands: Commands, map: Option<Res<WorldMap>>) {
 
 #[allow(clippy::too_many_arguments)]
 fn rig_input(
-    time: Res<Time>,
+    // Real time: the camera moves while the game is paused.
+    time: Res<Time<Real>>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
@@ -307,7 +308,7 @@ fn jump_to_settlement(
     rig.target_distance = SETTLEMENT_VIEW_DISTANCE;
 }
 
-fn apply_rig(time: Res<Time>, mut q: Query<(&mut CameraRig, &mut Transform)>) {
+fn apply_rig(time: Res<Time<Real>>, mut q: Query<(&mut CameraRig, &mut Transform)>) {
     let dt = time.delta_secs();
     for (mut rig, mut transform) in &mut q {
         rig.step(dt);

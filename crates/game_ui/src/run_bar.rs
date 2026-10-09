@@ -77,8 +77,8 @@ fn spawn_run_bar(mut commands: Commands) {
                 position_type: PositionType::Absolute,
                 top: Val::Px(50.0),
                 left: Val::Percent(50.0),
-                margin: UiRect::left(Val::Px(-400.0)),
-                width: Val::Px(800.0),
+                margin: UiRect::left(Val::Px(-460.0)),
+                width: Val::Px(920.0),
                 padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(5.0),
@@ -304,7 +304,7 @@ fn bar_buttons(
     }
     let now = time_real.elapsed_secs();
     // An armed abandon disarms after a few seconds.
-    if armed_at.is_some_and(|t| now - t > 4.0) {
+    if armed_at.is_some_and(|t| now - t > 6.0) {
         *armed_at = None;
         if let Ok(mut t) = abandon.single_mut() {
             t.0 = "Abandon run".into();
@@ -325,6 +325,9 @@ fn bar_buttons(
                     crate::army::send(&mut out, CommandKind::AbandonRun);
                     // The clock must run for the sim to take the command.
                     time.unpause();
+                    if let Ok(mut t) = abandon.single_mut() {
+                        t.0 = "Abandon run".into();
+                    }
                 } else {
                     *armed_at = Some(now);
                     if let Ok(mut t) = abandon.single_mut() {

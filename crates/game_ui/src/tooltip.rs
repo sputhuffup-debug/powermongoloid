@@ -26,7 +26,7 @@ impl Plugin for TooltipPlugin {
 
 /// A monument within this many tiles of the cursor's ground point counts
 /// as hovered.
-const HOVER_TILES: f32 = 7.0;
+const HOVER_TILES: f32 = 9.0;
 
 /// The monument under the cursor (UI-side only).
 #[derive(Resource, Default)]
@@ -42,6 +42,8 @@ struct TooltipText;
 #[derive(Default)]
 struct Hover {
     cursor: Option<Vec2>,
+    /// The camera's position at the last ray-cast.
+    eye: Vec3,
     monument: Option<Entity>,
 }
 
@@ -93,8 +95,12 @@ fn hover(
         vis.set_if_neq(Visibility::Hidden);
         return;
     }
-    if cursor != state.cursor {
+    let eye = camera
+        .single()
+        .map_or(Vec3::ZERO, |(_, gt)| gt.translation());
+    if cursor != state.cursor || eye.distance(state.eye) > 0.5 {
         state.cursor = cursor;
+        state.eye = eye;
         state.monument = None;
         if let (Some(map), Ok((cam, gt)), Some(c)) = (map, camera.single(), cursor)
             && let Some(hit) = cam
@@ -113,7 +119,13 @@ fn hover(
     hovered.0 = state.monument;
     match state.monument.zip(cursor) {
         Some((_, c)) => {
-            node.left = Val::Px(c.x + 16.0);
+            // Left of the cursor near the right edge, so it stays on screen.
+            let width = window.single().map_or(f32::MAX, |w| w.width());
+            node.left = Val::Px(if c.x > width - 360.0 {
+                c.x - 340.0
+            } else {
+                c.x + 16.0
+            });
             node.top = Val::Px(c.y + 16.0);
             vis.set_if_neq(Visibility::Inherited);
         }
