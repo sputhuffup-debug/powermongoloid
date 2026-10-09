@@ -115,6 +115,8 @@ enum Plan {
 pub struct Bot {
     seed: SimSeed,
     tasks: BTreeMap<u64, Task>,
+    /// The tick each captain's task began.
+    since: BTreeMap<u64, u64>,
     /// When each settlement was last recruited from.
     recruited: BTreeMap<u64, u64>,
     /// Failed attacks per settlement (raises its militia estimate).
@@ -382,6 +384,7 @@ impl Bot {
         Self {
             seed: SimSeed(seed),
             tasks: BTreeMap::new(),
+            since: BTreeMap::new(),
             recruited: BTreeMap::new(),
             failed: BTreeMap::new(),
             seen: BTreeMap::new(),
@@ -415,6 +418,19 @@ impl Bot {
         // Forget captains that are gone.
         self.tasks
             .retain(|id, _| view.caps.iter().any(|c| c.id == *id));
+        // A task that drags on (a captain that can't reach its goal) is
+        // dropped and thought again.
+        for cap in &view.caps {
+            let limit = match self.tasks.get(&cap.id) {
+                Some(Task::Hold(_) | Task::Stage(_)) | None => continue,
+                Some(Task::Attack(_) | Task::Assault(_)) => 3600,
+                Some(_) => 1200,
+            };
+            if self.since.get(&cap.id).is_some_and(|t| tick >= t + limit) {
+                let task = self.tasks.remove(&cap.id);
+                self.note(tick, format!("captain {}: gave up on {task:?}", cap.id));
+            }
+        }
         self.update_plan(&view);
         if let Some(cmd) = self.appoint(&view) {
             out.push(cmd);
@@ -557,7 +573,7 @@ impl Bot {
                     .all(|c| dist(c.at, at) <= 40.0);
                 let waited = v.tick - since;
                 if ready || waited >= 1000 {
-                    self.note(v.tick, format!("strike on the seat #{seat}"));
+                    self.note(v.tick, format!("strike on the seat #{seat} ({soldiers} soldiers, garrison {})", v.garrison));
                     self.plan = Plan::Strike { since: v.tick };
                 }
             }
@@ -565,7 +581,11 @@ impl Bot {
                 // An assault that is going nowhere: regroup.
                 let left = soldiers as f32;
                 if v.tick - since >= 2 * 2400 || left < need * 0.4 && v.day < 34.0 {
-                    self.note(v.tick, format!("assault called off ({left} soldiers left)"));
+                    let seen = self.seen.get(&seat).copied().unwrap_or(0);
+                    self.note(
+                        v.tick,
+                        format!("assault called off ({left} soldiers left, seat militia seen {seen}, garrison {})", v.garrison),
+                    );
                     self.failed.entry(seat).and_modify(|f| *f += 1).or_insert(1);
                     self.plan = Plan::Grow;
                 }
@@ -594,7 +614,10 @@ impl Bot {
             .iter()
             .filter(|s| s.owner == FactionId::PLAYER)
             .count() as u32;
-        if others >= v.slots || others >= held || main.people < 36 || main.days < 1.0 {
+        // The first captain early (an heir if the champion falls), later
+        // ones only from a big army.
+        let big = if others == 0 { 24 } else { 40 };
+        if others >= v.slots || others >= held || main.people < big || main.days < 1.0 {
             return None;
         }
         // Not in the middle of a fight or an attack.
@@ -675,9 +698,30 @@ impl Bot {
         if cap.days < 1.2 {
             return self.food(v, cap, current);
         }
+        // Recruits: enough for the assault (with the early margin),
+        // counting the other captains; a small army grows before it
+        // fights.
+        let others: u32 = v
+            .caps
+            .iter()
+            .filter(|c| !c.champion)
+            .map(|c| c.people)
+            .sum();
+        let target = ((self.seat_defence(v) * ASSAULT_MARGIN * 1.1) as u32).max(MIN_ARMY);
+        let recruit = if cap.people + others < target && cap.days >= 1.5 {
+            self.recruit_site(v, cap)
+        } else {
+            None
+        };
+        if let Some(s) = recruit.filter(|_| cap.people < 30) {
+            return Task::Recruit(s);
+        }
         // Weak settlements nearby.
         if let Some(s) = self.conquest_target(v, cap) {
             return Task::Attack(s);
+        }
+        if let Some(s) = recruit {
+            return Task::Recruit(s);
         }
         // Food requests it can spare.
         let keep = world.resource::<Army>().data.give_keep_days;
@@ -718,21 +762,6 @@ impl Bot {
             }
             if let Some((_, s)) = best {
                 return Task::Equip(s);
-            }
-        }
-        // Recruits.
-        // Enough for the assault (with the early margin), counting the
-        // other captains.
-        let others: u32 = v
-            .caps
-            .iter()
-            .filter(|c| !c.champion)
-            .map(|c| c.people)
-            .sum();
-        let target = (self.seat_defence(v) * ASSAULT_MARGIN * 1.1) as u32;
-        if cap.people + others < target.max(MIN_ARMY) && cap.days >= 2.0 {
-            if let Some(s) = self.recruit_site(v, cap) {
-                return Task::Recruit(s);
             }
         }
         // Monuments nobody holds, early on.
@@ -876,7 +905,7 @@ impl Bot {
             // Recruit at home when small, at most every half day.
             let home = v.site(s).expect("held");
             let rested = self.recruited.get(&s).is_none_or(|t| v.tick >= t + 1200);
-            if cap.people < 24 && home.pop >= 60 && rested && cap.orders <= 1 {
+            if cap.people < 16 && home.pop >= 60 && rested && cap.orders <= 1 {
                 return Task::Recruit(s);
             }
             return Task::Hold(s);
@@ -927,6 +956,9 @@ impl Bot {
     fn issue(&mut self, world: &mut World, v: &View, cap: &Cap, task: Task) -> Vec<SimCommand> {
         let prev = self.tasks.insert(cap.id, task);
         let fresh = prev != Some(task);
+        if fresh {
+            self.since.insert(cap.id, v.tick);
+        }
         let idle = cap.orders == 0;
         let at_center = |s: u64, r: f32| v.site(s).is_some_and(|s| dist(s.center, cap.at) <= r);
         let reissue = match task {
