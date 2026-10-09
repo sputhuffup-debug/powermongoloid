@@ -147,8 +147,17 @@ A modifier is a `Stat` in `crates/sim_core/src/modifiers.rs` that monuments, boo
 - **Why someone did something:** check the inspector in game, or `DecisionTrace` in code, before changing weights.
 - **After tuning,** re-run the scenario tests that guard the file ([DATA.md](DATA.md) lists them).
 
+## Tune run balance
+
+A run's balance (the rival's clock, the director's bands, boons, requests, forage) lives in `assets/data/progression.ron` and `assets/data/director.ron`. The scripted player in `crates/sim_headless/src/bot.rs` is the yardstick: it must win 3 of 5 fixed seeds within 40 days.
+
+1. **Watch one run:** `cargo run --release -p sim_headless -- --run --bot --seed 1 --ticks 96000` prints the outcome; stderr has the bot's notes (a status line every game day: army, food, captains, land held, the seat's estimated defence) and the chronicle by kind. Add `--difficulty harsh` for another row, `--chronicle` for the story.
+2. **Change data only** when the bot loses because the game is unbalanced (not because the bot plays badly: fix `bot.rs` then). Keep the developed and skirmish presets as they are.
+3. **Re-run** `cargo test --release -p integration_tests --test bot_run -- --ignored --nocapture` (`tests/tests/bot_run.rs`; about 5 minutes; per-seed outcome, day and numbers) and the tests CLAUDE.md names for the files you touched.
+4. **If the 3-of-5 bar turns flaky,** loosen the bar (`MIN_WINS` in `tests/tests/bot_run.rs`) rather than fudge the data, and note it with before/after numbers in a tuning log (step 11's is `docs/m4/PROGRESS_BOT.md`).
+
 ## Profile
 
 - **Per-stage tick cost:** `cargo run --release -p sim_headless -- --ticks 1500 --timings`. Add `--population 20000` or `--battle 7500` for heavy loads, and `--stats-every 250` to see the mean and worst tick and the costliest stages for each window of 250 ticks (spikes hide in a whole-run average).
 - **Per-system detail:** Tracy. `cargo run -p game_app --release --features tracy`, then connect the Tracy profiler; every system's span shows up.
-- **Benchmarks:** `cargo bench -p sim_headless` (`tick/agents/*`, `tick/army/2000`, `state_hash/*`). A nightly CI job fails on a slowdown over 10% (`scripts/check_bench_regression.py`).
+- **Benchmarks:** `cargo bench -p sim_headless` (`tick/agents/*`, `tick/army/2000`, `tick/run_island` (a run at day 10, the bot's commands replayed), `state_hash/*`). A nightly CI job fails on a slowdown over 10% (`scripts/check_bench_regression.py`).

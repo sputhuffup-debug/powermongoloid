@@ -36,6 +36,8 @@ M4 "Rise" (roguelite runs; docs/PROGRESSION_DESIGN.md), planned in docs/M4_PLAN.
                   with --stats-every 600 for army lines, --timings for per-stage cost
                   (--timings --stats-every 250: mean/worst tick per window)
 - Stress (RND-04): cargo run --release -p game_app -- --stress 20000
+- Bot run (M4):    cargo run --release -p sim_headless -- --run --bot --seed 1 --ticks 96000
+                  (balance: cargo test --release -p integration_tests --test bot_run -- --ignored)
 - Village stats:  cargo run --release -p sim_headless -- --ticks 7200 --stats-every 600
                   (STATS_DETAIL=1 adds who isn't working, restless sleepers, the hungriest villager)
 - Low-memory build (4-core cloud box): add `-j 3` to cargo build/test/clippy

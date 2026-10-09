@@ -16,14 +16,15 @@
 //! 4. takes the nearest monuments nobody holds early on, answers food
 //!    requests it can spare, and attacks weak settlements (independent or
 //!    the rival's, never the seat) once it outnumbers their estimated
-//!    militia by [`CONQUEST_MARGIN`];
+//!    militia by `CONQUEST_MARGIN` (1.6);
 //! 5. appoints captains up to the slots, each garrisoning an owned
 //!    settlement and recruiting there;
 //! 6. marches on the rival's seat with every captain once its soldiers
 //!    outnumber the seat's estimated defence (garrison plus militia,
-//!    times the seat's defence bonus) by [`ASSAULT_MARGIN`], or by less as
-//!    the clock runs on ([`assault_margin`]): first to a staging point,
-//!    then an `Attack` on the seat together.
+//!    times the seat's defence bonus) by `ASSAULT_MARGIN` (1.5), or by
+//!    less as the clock runs on (`assault_margin`: 1.25 from day 8, 1.0
+//!    from day 16, 0.75 from day 24, any army from day 32): first to a
+//!    staging point, then an `Attack` on the seat together.
 //!
 //! Tie-breaks draw from stream `sim_headless::bot` at the tick. Nothing in
 //! the bot depends on wall time or hash order, so a recorded bot run
@@ -323,7 +324,7 @@ impl View {
     }
 }
 
-/// The margin the assault needs on `day`: [`ASSAULT_MARGIN`] early, less
+/// The margin the assault needs on `day`: `ASSAULT_MARGIN` (1.5) early, less
 /// as the seat's defences grow and the clock runs out.
 fn assault_margin(day: f32) -> f32 {
     if day >= 32.0 {
@@ -502,7 +503,7 @@ impl Bot {
         self.note(v.tick, text);
     }
 
-    /// 1. Every offer waiting for the player.
+    /// Step 1: every offer waiting for the player.
     fn offers(&mut self, world: &World, v: &View) -> Vec<SimCommand> {
         let data = world.resource::<Progression>();
         let mut out = Vec::new();
@@ -560,7 +561,7 @@ impl Bot {
         (s.pop as f32 * MILITIA_SHARE).max(seen) * 1.5f32.powi(fails as i32)
     }
 
-    /// 6. Grow until strong enough, then stage, then strike.
+    /// Step 6: grow until strong enough, then stage, then strike.
     fn update_plan(&mut self, v: &View) {
         let Some(seat) = v.seat else { return };
         let soldiers: u32 = v
@@ -631,7 +632,7 @@ impl Bot {
         (seat + dir * 70.0).round().as_ivec2()
     }
 
-    /// 5. Appoint a captain when a slot is free and the main army is big
+    /// Step 5: appoint a captain when a slot is free and the main army is big
     /// enough to split.
     fn appoint(&mut self, v: &View) -> Option<SimCommand> {
         if self.plan != Plan::Grow {
@@ -673,7 +674,7 @@ impl Bot {
         }
     }
 
-    /// 2-6 for the champion's army.
+    /// Steps 2-6 for the champion's army.
     fn main_task(&mut self, world: &mut World, v: &View, cap: &Cap) -> Task {
         let current = self.tasks.get(&cap.id).copied();
         match self.plan {
