@@ -169,7 +169,9 @@ pub fn rank_ups(world: &mut World) {
             .map_or(FactionId::INDEPENDENT, |a| a.0);
         let points = world.get::<ChampionRank>(e).map_or(0, |r| r.points);
         let from = world.get::<ChampionRank>(e).map_or(0, |r| r.rank);
-        let at = world.get::<Position>(e).map_or_else(Default::default, |p| p.0);
+        let at = world
+            .get::<Position>(e)
+            .map_or_else(Default::default, |p| p.0);
         // One stream per champion and tick; several ranks reached in the
         // same hour draw their offers from it in turn.
         let mut rng = seed.stream(rng_key("sim_military::progression::traits") ^ id.0, tick);
@@ -437,13 +439,18 @@ mod tests {
         let second = draw_traits(&mut rng, &pool, held);
         println!("offers {:?} and {:?}", offers[0].choices, offers[1].choices);
         assert_eq!((&offers[0].choices, &offers[1].choices), (&first, &second));
-        let ups: Vec<i32> = world
+        let at = world.get::<Position>(start.champion).unwrap().0;
+        let ups: Vec<(i32, bevy_math::IVec2)> = world
             .resource::<Chronicle>()
             .entries()
             .iter()
             .filter(|e| e.event.kind == SimEventKind::RankUp)
-            .map(|e| e.event.amount)
+            .map(|e| (e.event.amount, e.event.at))
             .collect();
-        assert_eq!(ups, vec![1, 2]);
+        assert_eq!(
+            ups,
+            vec![(1, at), (2, at)],
+            "ranks 1 and 2, at the champion"
+        );
     }
 }
