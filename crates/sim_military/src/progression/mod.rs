@@ -687,6 +687,20 @@ impl Progression {
         for r in &d.rival {
             r.validate()?;
         }
+        // GP-16, GP-28: pace and strength factors divide and scale, so they
+        // must be positive.
+        let factors = d
+            .boons
+            .iter()
+            .flat_map(|b| b.effects.iter())
+            .chain(d.modifiers.iter().flat_map(|m| m.effects.iter()));
+        for effect in factors {
+            if let Effect::RaiderPace(x) | Effect::RivalStrength(x) = *effect
+                && !(x.is_finite() && x > 0.0)
+            {
+                return Err(format!("progression: {effect:?} needs a finite factor > 0"));
+            }
+        }
         Ok(())
     }
 
@@ -1286,6 +1300,9 @@ pub(crate) mod tests {
         );
         assert!(check(&|d| d.rival[0].start_loyalty = 1.5).is_err());
         assert!(check(&|d| d.rival[0].raid_size = 1).is_err());
+        assert!(check(&|d| d.modifiers[0].effects = vec![Effect::RivalStrength(0.0)]).is_err());
+        assert!(check(&|d| d.modifiers[0].effects = vec![Effect::RaiderPace(-1.0)]).is_err());
+        assert!(check(&|d| d.modifiers[0].effects = vec![Effect::RaiderPace(2.0)]).is_ok());
         assert!(
             check(&|d| d.champion.ranks.clear()).is_ok(),
             "no ranks, no offers"

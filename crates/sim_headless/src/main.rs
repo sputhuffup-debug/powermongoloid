@@ -466,8 +466,9 @@ fn main() -> ExitCode {
     let start = Instant::now();
 
     // The bot plays first; its recorded commands then drive the replay.
+    let mut played_checkpoints = Vec::new();
     let commands = if args.bot {
-        let played = sim_headless::bot::run_bot(config, args.ticks);
+        let played = sim_headless::bot::run_bot(config, args.ticks, args.checkpoint_every);
         for (tick, note) in &played.notes {
             eprintln!("bot @{tick}: {note}");
         }
@@ -478,6 +479,15 @@ fn main() -> ExitCode {
             played.cause,
             played.end_tick
         );
+        // What happened, by kind, with the first few ticks of each.
+        let mut kinds: std::collections::BTreeMap<&str, Vec<u64>> = Default::default();
+        for e in &played.chronicle {
+            kinds.entry(e.event.kind.name()).or_default().push(e.tick);
+        }
+        for (kind, ticks) in kinds {
+            let first: Vec<u64> = ticks.iter().take(8).copied().collect();
+            eprintln!("chronicle: {kind} x{} at {first:?}", ticks.len());
+        }
         if args.record.is_none() && args.stats_every == 0 && !args.timings {
             report_speed(played.end_tick, start);
             println!(
@@ -490,6 +500,7 @@ fn main() -> ExitCode {
             println!("state_hash=0x{:016x}", played.final_hash);
             return ExitCode::SUCCESS;
         }
+        played_checkpoints = played.checkpoints;
         played.log
     } else {
         commands
@@ -498,6 +509,18 @@ fn main() -> ExitCode {
     if let Some(path) = &args.record {
         let replay = record_replay(config, args.ticks, &commands, args.checkpoint_every);
         report_speed(args.ticks, start);
+        // The bot's own run and the replay of its commands must agree.
+        for c in &played_checkpoints {
+            if let Some(r) = replay.checkpoints.iter().find(|r| r.tick == c.tick)
+                && r.hash != c.hash
+            {
+                eprintln!(
+                    "the bot's commands did not reproduce its run at tick {}: 0x{:016x} vs 0x{:016x}",
+                    c.tick, c.hash, r.hash
+                );
+                return ExitCode::from(2);
+            }
+        }
         if let Err(e) = std::fs::write(path, replay.to_ron()) {
             eprintln!("{path}: {e}");
             return ExitCode::FAILURE;
@@ -583,6 +606,17 @@ fn main() -> ExitCode {
                 println!("    not working: {:?}", st.not_working);
                 println!("    restless: {:?}", st.restless);
                 println!("    hungriest: {}", st.hungriest);
+            }
+            // A run that has ended stands still: no more windows to report.
+            let state = *app.world().resource::<sim_core::RunState>();
+            if let Some(outcome) = state.outcome {
+                println!(
+                    "run ended: {} at tick {} ({:?})",
+                    outcome.name(),
+                    state.ended_at.unwrap_or(0),
+                    state.cause
+                );
+                break;
             }
         }
         let stats = sim_headless::stats::collect(&mut app);

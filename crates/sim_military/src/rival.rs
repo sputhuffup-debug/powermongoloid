@@ -425,8 +425,8 @@ fn levy(world: &mut World, seat: u64, size: u32, data: &RivalData) {
 /// Splits a raiding band of up to `size` people (at most half the
 /// garrison) off the seat's garrison, under a follower drawn from stream
 /// `sim_military::rival` at the tick, aggressive, with a [`RivalBand`].
-/// Reports `RivalRaid`. A garrison of fewer than two followers sends
-/// nobody.
+/// Reports `RivalRaid`. A garrison of fewer than four followers (a band
+/// of at least two at half the garrison) sends nobody.
 fn raid(world: &mut World, size: u32) {
     let Some(g) = garrison(world) else {
         return;

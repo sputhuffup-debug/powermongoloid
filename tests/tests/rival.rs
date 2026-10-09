@@ -122,6 +122,16 @@ fn the_rival_levies_raises_its_defences_and_raids_on_its_clock() {
     let state = app.world().resource::<RivalState>().clone();
     assert_eq!(state.seat, Some(seat));
     assert_eq!(state.seat_center, progress.seat_center);
+    // The shipped clock: the first levy after `levy_every_days`, the first
+    // raid on `raid_from_day` (about day 10 on steady), no bonus yet.
+    println!(
+        "shipped clock: first levy at {}, first raid at {} (day {}), defence +{:.2}",
+        state.next_levy, state.next_raid, shipped.raid_from_day, state.defence_bonus
+    );
+    assert_eq!(state.next_levy, cal.days(shipped.levy_every_days));
+    assert_eq!(state.next_raid, cal.days(shipped.raid_from_day));
+    assert!((8.0..=12.0).contains(&shipped.raid_from_day));
+    assert_eq!(state.defence_bonus, shipped.defence_on(0.0) * strength);
     assert_eq!(
         app.world().resource::<Factions>().seat(FactionId::RIVAL),
         Some(progress.seat_center)

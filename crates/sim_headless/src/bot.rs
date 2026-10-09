@@ -6,11 +6,11 @@
 //! [`Bot`]:
 //! 1. answers every offer waiting for the player with its first choice
 //!    (the start boon, traits, dominion boons) and accepts invitations;
-//! 2. answers a village's request for food with a `Give` when the
+//! 2. forages when its baggage holds less than a day (moving on to fresh
+//!    ground when a spot is bare), before anything else;
+//! 3. answers a village's request for food with a `Give` when the
 //!    champion's baggage can spare it, and marches to a village asking to
 //!    be rid of raiders when it outnumbers them half again;
-//! 3. forages when its baggage runs low (moving on to fresh ground when a
-//!    spot is bare);
 //! 4. otherwise takes the nearest monument nobody holds or guards (and no
 //!    guard camp stands near), by standing at it.
 //!
@@ -22,8 +22,9 @@ use bevy_math::{IVec2, Vec2};
 use rand::RngExt;
 use sim_core::rng::rng_key;
 use sim_core::{
-    Cause, CommandKind, CommandLog, FactionId, LoggedCommand, Offers, OrderSpec, Position,
-    RunOutcome, RunState, SimCommand, SimSeed, SimStepper, SimTick, SpawnId, compute_state_hash,
+    Cause, Checkpoint, Chronicle, ChronicleEntry, CommandKind, CommandLog, FactionId,
+    LoggedCommand, Offers, OrderSpec, Position, RunOutcome, RunState, SimCommand, SimSeed,
+    SimStepper, SimTick, SpawnId, compute_state_hash,
 };
 use sim_economy::{Economy, Stockpile};
 use sim_military::{
@@ -74,8 +75,14 @@ pub struct BotRun {
     pub end_tick: u64,
     /// Every player command applied, as recorded for a replay.
     pub log: Vec<LoggedCommand>,
+    /// State hashes every `checkpoint_every` ticks and at the end, as
+    /// [`crate::run`] takes them: replaying [`BotRun::log`] for the same
+    /// ticks gives the same checkpoints.
+    pub checkpoints: Vec<Checkpoint>,
     /// The state hash at the end.
     pub final_hash: u64,
+    /// The run's chronicle at the end.
+    pub chronicle: Vec<ChronicleEntry>,
     /// What the bot decided ([`Bot::notes`]).
     pub notes: Vec<(u64, String)>,
 }
@@ -162,7 +169,26 @@ impl Bot {
     /// The bot's priorities (module docs).
     fn choose(&mut self, world: &mut World, view: &Champion, tick: u64) -> Option<Intent> {
         let keep = world.resource::<Army>().data.give_keep_days;
-        // 2. Requests: food first, then raiders.
+        // 2. Food from the land first: a starving band can't help anyone.
+        let foraging = matches!(view.front, Some(OrderSpec::Forage { .. }));
+        let wandering = matches!(self.intent, Some(Intent::Wander(_))) && view.front.is_some();
+        if view.days < 1.0 {
+            if foraging || wandering {
+                return self.intent;
+            }
+            if self.intent == Some(Intent::Forage) {
+                // The last spot ran bare: fresh ground 48 tiles away.
+                let mut rng = self.seed.stream(rng_key("sim_headless::bot"), tick);
+                let a = rng.random_range(0.0..std::f32::consts::TAU);
+                let to = (view.at.as_vec2() + Vec2::from_angle(a) * 48.0)
+                    .round()
+                    .as_ivec2();
+                let to = passable(world, to).unwrap_or(view.at);
+                return Some(Intent::Wander(to));
+            }
+            return Some(Intent::Forage);
+        }
+        // 3. Requests: food first, then raiders.
         let board = world.resource::<RequestBoard>().clone();
         let mut asks: Vec<(f32, u64, Intent)> = Vec::new();
         for r in &board.open {
@@ -187,25 +213,6 @@ impl Bot {
         asks.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
         if let Some(&(_, _, intent)) = asks.first() {
             return Some(intent);
-        }
-        // 3. Food from the land.
-        let foraging = matches!(view.front, Some(OrderSpec::Forage { .. }));
-        let wandering = matches!(self.intent, Some(Intent::Wander(_))) && view.front.is_some();
-        if view.days < 1.0 {
-            if foraging || wandering {
-                return self.intent;
-            }
-            if self.intent == Some(Intent::Forage) {
-                // The last spot ran bare: fresh ground 48 tiles away.
-                let mut rng = self.seed.stream(rng_key("sim_headless::bot"), tick);
-                let a = rng.random_range(0.0..std::f32::consts::TAU);
-                let to = (view.at.as_vec2() + Vec2::from_angle(a) * 48.0)
-                    .round()
-                    .as_ivec2();
-                let to = passable(world, to).unwrap_or(view.at);
-                return Some(Intent::Wander(to));
-            }
-            return Some(Intent::Forage);
         }
         // 4. The nearest monument nobody holds (a guarded one is held by
         // its camp), away from guard camps.
@@ -314,23 +321,39 @@ pub fn step(bot: &mut Bot, app: &mut App) {
 }
 
 /// GP-16, GP-21: plays a run with a fresh [`Bot`] until the run ends or
-/// `max_ticks` ticks have passed. Its commands are ordinary recorded player
-/// commands: replaying [`BotRun::log`] (e.g. with [`crate::record_replay`])
-/// reproduces the run.
-pub fn run_bot(config: HeadlessConfig, max_ticks: u64) -> BotRun {
+/// `max_ticks` ticks have passed, taking a state-hash checkpoint every
+/// `checkpoint_every` ticks (0: only at the end). Its commands are
+/// ordinary recorded player commands: replaying [`BotRun::log`] (e.g. with
+/// [`crate::record_replay`]) reproduces the run and its checkpoints.
+pub fn run_bot(config: HeadlessConfig, max_ticks: u64, checkpoint_every: u64) -> BotRun {
     let mut app = headless_app(config);
     let mut bot = Bot::new(config.seed);
+    let mut checkpoints = Vec::new();
     while app.world().resource::<SimTick>().0 < max_ticks
         && app.world().resource::<RunState>().outcome.is_none()
     {
         step(&mut bot, &mut app);
+        let tick = app.world().resource::<SimTick>().0;
+        let ended = app.world().resource::<RunState>().outcome.is_some();
+        if tick == max_ticks
+            || ended
+            || (checkpoint_every > 0 && tick.is_multiple_of(checkpoint_every))
+        {
+            checkpoints.push(Checkpoint {
+                tick,
+                hash: compute_state_hash(app.world_mut()),
+            });
+        }
     }
+    let final_hash = compute_state_hash(app.world_mut());
     BotRun {
         outcome: app.world().resource::<RunState>().outcome,
         cause: app.world().resource::<RunState>().cause,
         end_tick: app.world().resource::<SimTick>().0,
         log: app.world().resource::<CommandLog>().0.clone(),
-        final_hash: compute_state_hash(app.world_mut()),
+        checkpoints,
+        final_hash,
+        chronicle: app.world().resource::<Chronicle>().entries().to_vec(),
         notes: bot.notes,
     }
 }
