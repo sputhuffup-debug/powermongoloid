@@ -1,5 +1,7 @@
 # M4 playtest: whole runs
 
+New to the game? Read [How to win your first run](PLAY_GUIDE.md) first: a beginner's plan for a first win on steady.
+
 M4 "Rise" turns the sandbox into roguelite runs (docs/PROGRESSION_DESIGN.md, docs/M4_PLAN.md): a band and a champion wake on the run island, grow by goodwill, conquest and monuments, and win by taking the rival warlord's seat. The scripted bot already wins every fixed seed it plays (docs/m4/PROGRESS_BOT.md), so the rules hold together. What needs you is the feel: is a run worth playing, and do two seeds feel different?
 
 Budget about an hour: two short looks at different seeds (10 minutes each), then one run played properly (about 40 minutes at 4x-8x with fast-forward).
@@ -48,6 +50,7 @@ For seed 1, then seed 3, play the first ten minutes (about two game days at 4x):
 - [ ] Food matters: you forage, ask a village, or give food for a request before the band starves.
 - [ ] You can take a monument by standing at it (two game hours) and see its bonus.
 - [ ] A village request (drive off raiders, bring food, clear a camp) can be answered and pays out.
+- [ ] Sellswords (seeds 5, 8, 15 or 25 draw it): 12 sellswords camp near the start and the game pauses on their offer. Hiring with too little food or from too far away is refused (a feed line says why) and the offer comes back; hiring adds 12 men to the champion for 11 food; *Decline*, or a day unanswered, sends them away.
 
 **Do the two seeds feel different in those ten minutes?** Band, boons, food pressure, where the villages and monuments are, how soon raiders come. Write one line per seed.
 
