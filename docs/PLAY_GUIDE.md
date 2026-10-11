@@ -60,7 +60,7 @@ If your pick isn't offered, go down this list: *Well fed* (three more days of fo
 ### Look around
 
 1. Click your champion (captains are a lighter blue than soldiers) and read **Food**.
-2. Read the feed before giving orders. "... far from the rival's seat at *Name*" names the town you must take. If that line is missing (after *Build it*, a new run or a load), press O: the seat is the biggest town (about 450 people) in the purple region, and its panel says "Owner: Rival".
+2. Read the feed before giving orders. "... far from the rival's seat at *Name*" names the town you must take. If that line isn't in the feed (after a load the feed shows only its latest lines, and saves of runs begun with *Build it*, *New run* or *Same seed again* before 11 October 2026 never had it), press O: the seat is the biggest town (about 450 people) in the purple region, and its panel says "Owner: Rival".
 3. Zoom out or pan from your band to find the villages near you. (N and Shift+N fly through every settlement on the island in a fixed order, not nearest first.)
 
 ### Recruit, then feed the new mouths

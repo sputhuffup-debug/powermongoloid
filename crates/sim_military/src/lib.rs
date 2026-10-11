@@ -2,21 +2,23 @@
 //! upkeep (GP-01..04, SIM-13, SIM-30..32). Design: ADR 0010 and ADR 0011.
 //!
 //! # Tick order ([`MilitarySet`])
-//! 1. **Orders** (Input): [`orders`] applies validated commands, then each
+//! 1. **Start** (Input, tick 0 of a run only): [`report_start`] tells the
+//!    run's start and its offers from state.
+//! 2. **Orders** (Input): [`orders`] applies validated commands, then each
 //!    captain works its first order and deals with settlements (the serial
 //!    logistics step).
-//! 2. **Index** (Knowledge): `index::build_index` builds the
+//! 3. **Index** (Knowledge): `index::build_index` builds the
 //!    [`ArmyIndex`] and [`FighterGrid`]; [`threat`] sets each settlement's
 //!    threat.
-//! 3. **Decide**: [`soldiers`] choose to follow, fight or rout, and aim
+//! 4. **Decide**: [`soldiers`] choose to follow, fight or rout, and aim
 //!    blows.
-//! 4. **Move**: captains walk the goal field; followers keep loose formation
+//! 5. **Move**: captains walk the goal field; followers keep loose formation
 //!    and descend the rally field when far away.
-//! 5. **Combat** (Act): [`combat`] resolves blows serially by SpawnId and
+//! 6. **Combat** (Act): [`combat`] resolves blows serially by SpawnId and
 //!    removes the fallen.
-//! 6. **Upkeep** (Needs): [`upkeep`] covers eating, morale, starvation and
+//! 7. **Upkeep** (Needs): [`upkeep`] covers eating, morale, starvation and
 //!    desertion.
-//! 7. **Progress** (Needs, hourly): [`progression::progress`] drives
+//! 8. **Progress** (Needs, hourly): [`progression::progress`] drives
 //!    settlement-level steps in a fixed order, such as
 //!    [`veterans::end_battles`], [`monuments::hold`],
 //!    [`conquest::revolts`], the daily [`wild::regrow`] and
@@ -54,8 +56,9 @@
 //! the playtest setup, the scripted [`raiders`] and the rival's
 //! [`rival::think`] (in `SimInputSet::Ai`, in that order), and
 //! runs ([`progression`], `progression.ron`, GP-21/27): the start draws,
-//! [`setup_run`], offers and the champion, and dominion boons and captain
-//! slots from the land held ([`progression::dominion`], GP-24/25).
+//! [`setup_run`] and the tick-0 [`report_start`], offers and the champion,
+//! and dominion boons and captain slots from the land held
+//! ([`progression::dominion`], GP-24/25).
 //!
 //! In a run, the rival warlord ([`rival`], GP-28) holds the region around
 //! its seat, levies men into the seat's garrison and, from mid-run, sends
@@ -120,7 +123,7 @@ pub use progression::{
     GoodwillDeeds, GuardData, GuardKind, HireData, Holding, Holdings, InvitationData,
     MonumentBonus, MonumentData, Progression, RegionTally, RequestData, RunProgress, RunStart,
     RunWorld, StartDraws, StartTerrain, Traits, captain_slots, champion_of, draw_start,
-    rebuild_modifiers, setup_run,
+    rebuild_modifiers, report_start, setup_run,
 };
 pub use requests::{Request, RequestBoard, RequestKind, Reward};
 pub use rival::{RivalBand, RivalData, RivalState};
@@ -132,6 +135,10 @@ pub use wild::WildFood;
 /// Military systems, in tick order within their `SimSet`s.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MilitarySet {
+    /// The run's start told from state on its first tick (tick 0 of a run
+    /// only): `progression::report_start` (`SimSet::Input`, before
+    /// `SimInputSet::Inject`).
+    Start,
     /// Commands applied, orders progressed (in `SimInputSet::Consume`).
     Orders,
     /// Army index, fighter grid, settlement threat (Knowledge).
@@ -184,6 +191,9 @@ impl Plugin for MilitaryPlugin {
             .configure_sets(
                 FixedUpdate,
                 (
+                    MilitarySet::Start
+                        .in_set(SimSet::Input)
+                        .before(SimInputSet::Inject),
                     MilitarySet::Orders.in_set(SimInputSet::Consume),
                     MilitarySet::Index.in_set(SimSet::Knowledge),
                     MilitarySet::Decide
@@ -209,6 +219,11 @@ impl Plugin for MilitaryPlugin {
             .add_systems(
                 FixedUpdate,
                 (
+                    // GP-21, GP-27: the run's start, told on its first tick.
+                    progression::report_start
+                        .run_if(sim_core::in_run)
+                        .run_if(sim_core::first_tick)
+                        .in_set(MilitarySet::Start),
                     // GP-16, GP-28: the scripted factions, in a fixed order.
                     (raiders::think, rival::think)
                         .chain()

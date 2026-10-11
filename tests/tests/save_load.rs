@@ -4,25 +4,31 @@
 //! a fresh app: the state hashes match, every entity has the same
 //! components, and the original and the loaded game keep agreeing for
 //! 1,000 more ticks of the same commands, with either executor. A
-//! coverage test fails if any hashed type isn't saved. See ADR 0016.
+//! coverage test fails if any hashed type isn't saved. A run saved before
+//! its first tick (an in-place new run, `--save-at 0`) starts exactly like
+//! a fresh one, its start and offers told on tick 0. See ADR 0016 and
+//! ADR 0017.
 
 mod common;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
+use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
 use common::{owner_of, spawn_id};
 use sim_core::{
-    CommandKind, CommandLog, Offers, OrderSpec, RunConfig, SaveRegistry, SimStepper, SimTick,
-    SpawnId, compute_state_hash,
+    Chronicle, CommandKind, CommandLog, Difficulty, EventFeed, FeedEntry, LoggedCommand, Offer,
+    OfferKind, Offers, OrderSpec, RunConfig, SaveRegistry, SimCommand, SimEvent, SimEventKind,
+    SimStepper, SimTick, SpawnId, compute_state_hash, read_header,
 };
 use sim_core::{FactionId, hash::HashRegistry};
 use sim_headless::bot::Bot;
 use sim_headless::{
-    App, HeadlessConfig, SimPlugins, Threading, headless_app, load_app, resume_commands, save_app,
+    App, HeadlessConfig, SimPlugins, Threading, continue_run, headless_app, load_app,
+    record_replay, resume_commands, save_app, start_boon_pick, verify_replay_saving,
 };
-use sim_military::{ArmySpec, Captain, RunProgress, spawn_army};
+use sim_military::{ArmySpec, Captain, RunProgress, champion_of, spawn_army};
 use sim_world::{Settlement, SettlementSize, SizeTier};
 
 const SEED: u64 = 42;
@@ -294,4 +300,184 @@ fn every_hashed_type_is_saved() {
         .filter(|n| hashed_names.contains(n))
         .collect();
     assert_eq!(saved_names, hashed_names);
+}
+
+/// The feed's entries, oldest first.
+fn feed(app: &App) -> Vec<FeedEntry> {
+    app.world()
+        .resource::<EventFeed>()
+        .iter()
+        .copied()
+        .collect()
+}
+
+/// GP-12, GP-21, GP-27, UI-05, UI-09, NFR-08: an in-place new run in the
+/// game, `--save-at 0` and an F5 before the first tick all load a save
+/// taken before tick 0; that save must start exactly like a fresh run. The
+/// fresh run, the save loaded into a new app (either executor), over a run
+/// in progress and over a run just set up (the game's *Build it*) keep the
+/// same state hash for 300 ticks and end with the same Chronicle and feed:
+/// the start told (`RunStarted`, "far from the rival's seat") and every
+/// offer setup posted reported on tick 0. Seed 5 draws the Sellswords, so
+/// the feed holds the `Hire` offer that pauses the game (seed 1 does not).
+#[test]
+fn a_run_saved_before_its_first_tick_starts_like_a_fresh_one() {
+    for seed in [5, 1] {
+        let mut fresh = headless_app(HeadlessConfig::run(seed, RunConfig::default()));
+        // Asserted last, so a regression reports its symptom first.
+        let setup_events = fresh.world().resource::<Messages<SimEvent>>().len();
+        let setup_offers: Vec<Offer> = fresh.world().resource::<Offers>().pending.clone();
+        let hire = setup_offers
+            .iter()
+            .find(|o| matches!(o.kind, OfferKind::Hire { .. }))
+            .map(|o| o.id);
+        if seed == 5 {
+            assert!(
+                hire.is_some(),
+                "seed 5 draws Sellswords; if data changes, pick a seed that does"
+            );
+        }
+        let progress = fresh.world().resource::<RunProgress>().clone();
+        let champion = champion_of(fresh.world_mut(), FactionId::PLAYER).expect("a champion");
+        let champion = spawn_id(&fresh, champion);
+
+        let bytes = save_app(&mut fresh);
+        assert_eq!(read_header(&bytes).expect("a header").tick, 0);
+        let pick = start_boon_pick(&fresh, 0).expect("a start boon offer");
+        let hash0 = compute_state_hash(fresh.world_mut());
+
+        let mut variants: Vec<(&str, App)> = Vec::new();
+        let mut multi = load_app(&bytes, Threading::Multi).expect("the save loads");
+        assert_eq!(
+            save_app(&mut multi),
+            bytes,
+            "seed {seed}: saving the loaded game gives the same bytes"
+        );
+        variants.push(("loaded", multi));
+        if seed == 5 {
+            let single = load_app(&bytes, Threading::Single).expect("the save loads");
+            variants.push(("loaded, single-threaded", single));
+        }
+        let harsh = RunConfig {
+            difficulty: Difficulty::Harsh,
+        };
+        let mut running = headless_app(HeadlessConfig::run(seed + 1, harsh));
+        running.step(30);
+        sim_core::load_world(running.world_mut(), &bytes).expect("the save loads");
+        variants.push(("loaded over a run in progress", running));
+        let mut built = headless_app(HeadlessConfig::run(seed + 2, RunConfig::default()));
+        sim_core::load_world(built.world_mut(), &bytes).expect("the save loads");
+        variants.push(("loaded over a new run", built));
+        for (name, app) in &mut variants {
+            assert_eq!(
+                compute_state_hash(app.world_mut()),
+                hash0,
+                "seed {seed}, {name}: the hash at tick 0"
+            );
+        }
+
+        // Everyone picks the first start boon on tick 0, then plays on.
+        let play = |name: &str, app: &mut App| {
+            resume_commands(app, std::slice::from_ref(&pick));
+            app.step(1);
+            // What `read_feed` pauses on: the Hire offer, reported and open.
+            if let Some(hire) = hire {
+                assert!(
+                    app.world().resource::<Offers>().get(hire).is_some(),
+                    "seed {seed}, {name}: the Hire offer stands after tick 0"
+                );
+            }
+            let mut out = vec![(1, compute_state_hash(app.world_mut()))];
+            out.extend(hashes(app, 300));
+            out
+        };
+        let expected = play("fresh", &mut fresh);
+        let world = fresh.world();
+        let tick0: Vec<SimEvent> = world
+            .resource::<EventFeed>()
+            .iter()
+            .filter(|f| f.tick == 0)
+            .map(|f| f.event)
+            .collect();
+        for (name, app) in &mut variants {
+            let got = play(name, app);
+            assert_same(&format!("seed {seed}, {name}"), &expected, &got);
+            let world = app.world();
+            assert_eq!(
+                *world.resource::<Chronicle>(),
+                *fresh.world().resource::<Chronicle>(),
+                "seed {seed}, {name}: the Chronicle"
+            );
+            assert_eq!(
+                feed(app),
+                feed(&fresh),
+                "seed {seed}, {name}: the event feed"
+            );
+            assert_eq!(
+                world.resource::<EventFeed>().next_seq(),
+                fresh.world().resource::<EventFeed>().next_seq(),
+                "seed {seed}, {name}: the feed's next entry"
+            );
+        }
+
+        // The fresh run told its start and its offers on tick 0.
+        let first = world.resource::<Chronicle>().entries()[0];
+        assert_eq!(first.tick, 0);
+        assert_eq!(
+            first.event,
+            SimEvent::new(SimEventKind::RunStarted, FactionId::PLAYER)
+                .subject(champion)
+                .other(progress.rival_seat.expect("a rival seat"))
+                .at(progress.start)
+                .amount(progress.band as i32),
+            "seed {seed}: RunStarted"
+        );
+        let mut offers: Vec<SimEvent> = setup_offers.iter().map(Offer::posted_event).collect();
+        offers.sort_by_key(SimEvent::sort_key);
+        let told: Vec<SimEvent> = tick0
+            .iter()
+            .copied()
+            .filter(|e| e.kind == SimEventKind::OfferPosted)
+            .collect();
+        assert_eq!(told, offers, "seed {seed}: every offer reported on tick 0");
+        assert_eq!(setup_events, 0, "seed {seed}: setup writes no SimEvents");
+    }
+}
+
+/// GP-12, NFR-08: a replay saved before its first tick (`--replay R --save
+/// X --save-at 0`) resumes from that save (`--load X --replay R`) with
+/// every checkpoint matching, on either executor.
+#[test]
+fn a_replay_resumes_from_a_save_before_its_first_tick() {
+    let config = HeadlessConfig::run(5, RunConfig::default());
+    // The start offer is always the run's first offer, id 0.
+    let pick = LoggedCommand {
+        tick: 0,
+        command: SimCommand::player(
+            FactionId::PLAYER,
+            CommandKind::ChooseOffer {
+                offer: 0,
+                choice: 0,
+            },
+        ),
+    };
+    let replay = record_replay(config, 300, &[pick], 100);
+    let (ok, saved) = verify_replay_saving(&replay, Threading::Multi, Some(0));
+    ok.expect("the replay reproduces");
+    let bytes = saved.expect("saved before tick 1");
+    for threading in [Threading::Multi, Threading::Single] {
+        let mut app = load_app(&bytes, threading).expect("the save loads");
+        let (result, _) = continue_run(
+            &mut app,
+            replay.ticks,
+            &replay.commands,
+            replay.checkpoint_every,
+            None,
+        );
+        assert_eq!(
+            replay.first_divergence(&result.checkpoints),
+            None,
+            "{threading:?}: the replay from the save at tick 0"
+        );
+    }
 }

@@ -94,7 +94,9 @@ M4 "Rise" built 2026-10-09 (roguelite runs; docs/PROGRESSION_DESIGN.md, plan doc
   `RunState::finish(outcome, cause)` (first caller wins); `settle_outcome` records `RunEnded`.
   After that `SimTick` and the hash freeze, so frontends keep stepping and never special-case it.
 - Offers (`Offers`, `post_offer`) live in sim_core. A pick is the recorded player command
-  `ChooseOffer`, taken once. Setup writes state directly or `SimCommand::ai`, never player commands.
+  `ChooseOffer`, taken once. Setup writes state directly or `SimCommand::ai`, never player commands
+  and never `SimEvent`s: offers via `Offers::post`; `report_start` (`MilitarySet::Start`, tick 0)
+  tells the start from state, so a save before the first tick keeps it.
 - `sim_military::progression::progress` (`MilitarySet::Progress`) is the hourly driver of run
   state: a fixed list of serial steps (end_battles, monument hold, revolts, requests, dominion
   tally, champion ranks, `rebuild_modifiers`, rival clock, director). Add a step at the end and
@@ -135,8 +137,9 @@ M4 "Rise" built 2026-10-09 (roguelite runs; docs/PROGRESSION_DESIGN.md, plan doc
 
 ## Saves and events (ADR 0016, ADR 0017)
 - Saves are serde + postcard + zstd behind a versioned `SaveHeader` (`sim_core::save_world`,
-  `load_world`, `SAVE_FORMAT`). Never bincode. Save between ticks; `load_world` validates
-  everything before it changes the world.
+  `load_world`, `SAVE_FORMAT`). Never bincode. Save between ticks (tick 0 before the first step
+  counts, except for a battle: `setup_battle` leaves AI orders in flight, which a save then loses,
+  ADR 0016); `load_world` validates everything before it changes the world.
 - Every hashed type is also saved: implement `SaveState` (`save_fields!`, `save_newtype!`,
   `save_unit!`, `save_serde!`) and register it with `register_saved` next to `register_hashed`.
   `every_hashed_type_is_saved` fails otherwise. Exempt types the next tick reads before

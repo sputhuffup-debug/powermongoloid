@@ -56,7 +56,7 @@
 | **Morale** | 0..1. Low morale routs, and unfed or routed men may desert |
 | **NoUpkeep** | A marker on soldiers who never get hungry and never eat: monument guards (GP-23). `soldier_upkeep` leaves their hunger alone and `eat` skips them |
 | **Occupation** | A villager's trade (farmer, fisher, ...), tied to a workplace kind |
-| **Offer** (`Offers`) | A choice waiting for the player: the starting boon, a dominion boon, a trait, an invitation. Answered with a recorded `ChooseOffer` command, so picks replay (GP-27) |
+| **Offer** (`Offers`) | A choice waiting for the player: the starting boon, a dominion boon, a trait, an invitation, a band for hire. Posted with `post_offer` inside a tick; run setup queues them quietly and the first tick reports them. Answered with a recorded `ChooseOffer` command, so picks replay (GP-27) |
 | **Overlay** (`Overlay`, `OverlayMode`) | A terrain tint around settlements or monuments, cycled with O: ownership, goodwill and loyalty toward you, food security, monument holders (with rings at their hold radius). Recomputed twice a second; terrain chunks rebuild only when a quantised colour changes (`game_render::overlay`) |
 | **Owner** (`Owner`) | The faction holding a settlement and since when (GP-05): `FactionId::INDEPENDENT` until conquest or invitation. Changed only by `sim_agents::set_owner`, which also sets the residents' allegiance and loyalty and calls off their militia |
 | **Posture** | Passive, neutral or aggressive. How an army treats villages: buy, ask, or take and frighten |
