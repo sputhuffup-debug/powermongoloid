@@ -15,8 +15,11 @@
 //!   structs, newtypes, markers and serde types (postcard, which stores enum
 //!   variants by index: enums that are saved are append only).
 //! - [`save_world`] and [`load_world`] write and restore a whole world.
-//!   Save only between ticks: messages in flight are not saved. Caches are
-//!   not saved; [`AppSaveExt::on_load`] hooks rebuild them.
+//!   Save only between ticks: messages in flight are not saved. Tick 0
+//!   before the first step counts: setup leaves no events or commands in
+//!   flight, except a battle's (`sim_military::setup_battle` queues AI
+//!   orders for the first tick, so a battle saved then diverges). Caches
+//!   are not saved; [`AppSaveExt::on_load`] hooks rebuild them.
 //!
 //! Never bincode (unmaintained): serde, postcard and zstd only (CLAUDE.md).
 

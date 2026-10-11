@@ -15,7 +15,9 @@
 //!   independents falling nearby (`upkeep::soldier_upkeep`), frightens no
 //!   settlement (`threat::update_threats`) and gives the independents no
 //!   seat. A `Hire { captain, men, price }` offer
-//!   (choices `[0 = hire, 1 = decline]`) goes to the player and stands for
+//!   (choices `[0 = hire, 1 = decline]`) is queued for the player
+//!   (`Offers::post`), reported on tick 0 by
+//!   [`crate::progression::report_start`], and stands for
 //!   `hire.expiry_hours`; `price` ([`price`]) is `hire.price_days` of
 //!   food per man.
 //! - **Hiring** (`answer` with choice 0, from `progression::choose`):
@@ -39,8 +41,8 @@ use rand::RngExt;
 use sim_agents::{CombatStats, Villagers};
 use sim_core::rng::rng_key;
 use sim_core::{
-    Allegiance, Calendar, FactionId, OfferKind, Position, Posture, SimSeed, SimTick, SpawnId,
-    post_offer,
+    Allegiance, Calendar, FactionId, OfferKind, Offers, Position, Posture, SimSeed, SimTick,
+    SpawnId,
 };
 use sim_economy::{Economy, Stockpile};
 use sim_world::{FlowField, WorldMap};
@@ -73,9 +75,10 @@ pub fn price(hire: &HireData, hunger_per_day: f32, men: u32) -> u16 {
 }
 
 /// GP-27, run setup: camps a band for hire near `start` for each run
-/// modifier in `cards` (draw order) with `Sellswords` effects, and posts
-/// its `Hire` offer (see the module docs). Called last by `setup_run`,
-/// after every other spawn. Span `sim_military::sellswords::setup`.
+/// modifier in `cards` (draw order) with `Sellswords` effects, and queues
+/// its `Hire` offer (see the module docs; reported on tick 0). Called last
+/// by `setup_run`, after every other spawn. Span
+/// `sim_military::sellswords::setup`.
 pub fn setup(world: &mut World, data: &Progression, cards: &[u16], start: IVec2) {
     let _span = tracing::info_span!("sim_military::sellswords::setup").entered();
     let hire = data.data.hire;
@@ -132,8 +135,8 @@ pub fn setup(world: &mut World, data: &Progression, cards: &[u16], start: IVec2)
             world.entity_mut(m).insert(NoUpkeep);
         }
         let price = price(&hire, per_day, n);
-        post_offer(
-            world,
+        // Queued quietly: `report_start` reports it on tick 0.
+        world.resource_mut::<Offers>().post(
             FactionId::PLAYER,
             OfferKind::Hire {
                 captain: id,
@@ -141,6 +144,7 @@ pub fn setup(world: &mut World, data: &Progression, cards: &[u16], start: IVec2)
                 price,
             },
             vec![0, 1],
+            tick,
             Some(expires),
         );
         let who = faction_name(world, FactionId::PLAYER);

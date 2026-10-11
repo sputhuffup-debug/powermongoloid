@@ -7,8 +7,12 @@
 //!   run modifiers and the three starting boons on offer.
 //! - [`setup_run`]: before the first tick of a run, spawns the band and its
 //!   champion, applies one-off run modifiers, sets up monuments, the rival
-//!   ([`crate::rival::setup`]) and the director, posts the start offer, and
+//!   ([`crate::rival::setup`]) and the director, queues the start offer, and
 //!   camps a band for hire near the start ([`crate::sellswords::setup`]).
+//!   It writes no `SimEvent`s.
+//! - [`report_start`]: on the run's first tick, tells its start
+//!   (`RunStarted`) and every pending offer from that state, so a save
+//!   taken before the first tick tells them too.
 //! - [`HireData`]: the band for hire's tuning (`hire`, GP-27).
 //! - [`offers`]: answering offers ([`choose`]) and abandoning the run
 //!   ([`abandon`]), both reached only through `SimCommand`s.
@@ -33,8 +37,8 @@ use bevy_math::IVec2;
 use serde::{Deserialize, Serialize};
 use sim_agents::{CombatStats, Deed, Villagers};
 use sim_core::{
-    Allegiance, Difficulty, FactionId, FactionModifiers, ModifierSource, OfferKind, RunState,
-    SimEvent, SimEventKind, SimSeed, SpawnId, Stat, StateHash, StateHasher, post_offer,
+    Allegiance, Difficulty, FactionId, FactionModifiers, ModifierSource, OfferKind, Offers,
+    RunState, SimEvent, SimEventKind, SimSeed, SimTick, SpawnId, Stat, StateHash, StateHasher,
 };
 use sim_economy::{Economy, SettlementEconomy, Stockpile};
 use sim_world::{Monument, MonumentKind, RegionId};
@@ -960,10 +964,11 @@ pub struct RunStart {
 /// applies one-off run modifiers, gives every monument a holder and some a
 /// guard camp, hands the rival its lands and seat garrison (GP-28,
 /// [`crate::rival::setup`]), sets the pacing director's spacing
-/// ([`crate::director::setup`]), posts the start boon offer, camps the
+/// ([`crate::director::setup`]), queues the start boon offer, and camps the
 /// `Sellswords` modifier's band for hire near the start with its `Hire`
-/// offer ([`crate::sellswords::setup`], after every other spawn) and
-/// reports [`SimEventKind::RunStarted`].
+/// offer ([`crate::sellswords::setup`], after every other spawn). It writes
+/// no `SimEvent`s: the run's first tick tells its start and offers from
+/// this state ([`report_start`]).
 ///
 /// Returns `None` (and changes nothing) outside a run, or if the world has
 /// no settlements to draw from. Edits state directly and writes no player
@@ -1025,11 +1030,13 @@ pub fn setup_run(world: &mut World) -> Option<RunStart> {
     crate::rival::setup(world, draws.seat, draws.seat_center, draws.rival_region);
     // GP-16: the pacing director's first low-tension band waits its spacing.
     crate::director::setup(world);
-    let offer = post_offer(
-        world,
+    // Queued quietly: `report_start` reports it on tick 0 (GP-27).
+    let tick = world.resource::<SimTick>().0;
+    let offer = world.resource_mut::<Offers>().post(
         FactionId::PLAYER,
         OfferKind::StartBoon,
         draws.boon_choices.to_vec(),
+        tick,
         None,
     );
     // draw_start drew the choices from `boons ^ 0`: the run's first offer.
@@ -1037,19 +1044,51 @@ pub fn setup_run(world: &mut World) -> Option<RunStart> {
     // GP-27: a band for hire camps near the start. Spawned last, from its
     // own stream, so no earlier SpawnId or draw moves.
     crate::sellswords::setup(world, &data, &draws.modifiers, draws.start);
-    let champion_id = world.get::<SpawnId>(champion).expect("spawned").0;
-    world.write_message(
-        SimEvent::new(SimEventKind::RunStarted, FactionId::PLAYER)
-            .subject(champion_id)
-            .other(draws.seat)
-            .at(draws.start)
-            .amount(draws.band as i32),
-    );
     Some(RunStart {
         champion,
         start: draws.start,
         offer,
     })
+}
+
+/// GP-21, GP-27, UI-05: tells the run's start on its first tick, from
+/// saved state: [`SimEventKind::RunStarted`] (the player's champion, the
+/// rival's seat, the start, the band) and an `OfferPosted`
+/// ([`Offer::posted_event`](sim_core::Offer::posted_event)) for every
+/// pending offer (setup's start boon and any `Hire`).
+///
+/// Setup writes no `SimEvent`s because a save before the first tick (an
+/// in-place new run, `--save-at 0`, F5) keeps state, not messages
+/// (ADR 0017). Runs first in the tick (`MilitarySet::Start`, before
+/// `SimInputSet::Inject`), only on tick 0 of a run, so no offer has been
+/// answered, posted or expired yet and `record_events` records the same
+/// tick-0 batch a run always had. Span
+/// `sim_military::progression::report_start`.
+pub fn report_start(
+    progress: Res<RunProgress>,
+    offers: Res<Offers>,
+    champions: Query<(&SpawnId, &Allegiance), With<Champion>>,
+    mut events: MessageWriter<SimEvent>,
+) {
+    let _span = tracing::info_span!("sim_military::progression::report_start").entered();
+    // The player's champion, as `champion_of` finds it.
+    let champion = champions
+        .iter()
+        .filter(|(_, a)| a.0 == FactionId::PLAYER)
+        .map(|(id, _)| id.0)
+        .min();
+    if let (Some(seat), Some(champion)) = (progress.rival_seat, champion) {
+        events.write(
+            SimEvent::new(SimEventKind::RunStarted, FactionId::PLAYER)
+                .subject(champion)
+                .other(seat)
+                .at(progress.start)
+                .amount(progress.band as i32),
+        );
+    }
+    for offer in &offers.pending {
+        events.write(offer.posted_event());
+    }
 }
 
 /// Gives the band's followers their group's stats and gear, group by group
@@ -1680,6 +1719,68 @@ pub(crate) mod tests {
         app.world_mut()
             .write_message(sim_core::SimCommand::player(issuer, kind));
         app.step(1);
+    }
+
+    /// GP-21, GP-27, UI-05: setup writes no `SimEvent`s; the run's first
+    /// tick tells its start (`RunStarted` first in the feed) and reports
+    /// every offer setup queued (the start boon and, on seed 5, the
+    /// Sellswords' `Hire`) from state, and the start is never told twice.
+    #[test]
+    fn the_start_is_told_on_the_first_tick_from_state() {
+        use bevy_ecs::message::Messages;
+        use sim_core::{Chronicle, CommandKind, EventFeed, SimStepper};
+        let (mut app, start) = run_app(5);
+        assert!(
+            app.world().resource::<Messages<SimEvent>>().is_empty(),
+            "setup writes no SimEvents"
+        );
+        let offers = app.world().resource::<Offers>().pending.clone();
+        assert!(
+            offers
+                .iter()
+                .any(|o| matches!(o.kind, OfferKind::Hire { .. })),
+            "seed 5 draws Sellswords; if data changes, pick a seed that does"
+        );
+        let progress = app.world().resource::<RunProgress>().clone();
+        let champion = app.world().get::<SpawnId>(start.champion).unwrap().0;
+        let mut expected = vec![
+            SimEvent::new(SimEventKind::RunStarted, FactionId::PLAYER)
+                .subject(champion)
+                .other(progress.rival_seat.unwrap())
+                .at(progress.start)
+                .amount(progress.band as i32),
+        ];
+        expected.extend(offers.iter().map(|o| o.posted_event()));
+        expected.sort_by_key(SimEvent::sort_key);
+
+        command(
+            &mut app,
+            FactionId::PLAYER,
+            CommandKind::ChooseOffer {
+                offer: start.offer,
+                choice: 0,
+            },
+        );
+        let feed = app.world().resource::<EventFeed>();
+        let told: Vec<SimEvent> = feed
+            .iter()
+            .filter(|f| f.tick == 0)
+            .map(|f| f.event)
+            .filter(|e| matches!(e.kind, SimEventKind::RunStarted | SimEventKind::OfferPosted))
+            .collect();
+        assert_eq!(told, expected);
+        let first = feed.iter().next().unwrap();
+        assert_eq!((first.seq, first.event.kind), (0, SimEventKind::RunStarted));
+
+        app.step(200);
+        let started = app
+            .world()
+            .resource::<Chronicle>()
+            .entries()
+            .iter()
+            .filter(|e| e.event.kind == SimEventKind::RunStarted)
+            .count();
+        assert_eq!(started, 1, "the start is told once");
     }
 
     /// GP-21, GP-27: setup spawns the drawn band under a champion with one

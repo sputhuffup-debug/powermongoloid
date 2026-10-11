@@ -24,8 +24,10 @@
 //! **New runs** are built on a worker thread exactly as a fresh process
 //! would build them (`sim_headless::headless_app` with
 //! `HeadlessConfig::run`), saved to memory and loaded the same way, so the
-//! window stays open. If the worker or the load fails, the game restarts
-//! itself with the new run's arguments, as before M4 step 10b.
+//! window stays open. The run's start and offers are told on its first tick
+//! from the saved state, as in a fresh process. If the worker or the load
+//! fails, the game restarts itself with the new run's arguments, as before
+//! M4 step 10b.
 
 use std::fs;
 use std::io::Read;
@@ -337,17 +339,7 @@ fn start_new_run(world: &mut World, r: NewRunRequest) {
     );
     let worker = std::thread::Builder::new()
         .name("new-run".into())
-        .spawn(move || {
-            let started = Instant::now();
-            let mut app = sim_headless::headless_app(config);
-            let bytes = sim_headless::save_app(&mut app);
-            info!(
-                "new run: island for seed {} built in {:.2} s",
-                config.seed,
-                started.elapsed().as_secs_f32()
-            );
-            bytes
-        });
+        .spawn(move || build_island(config));
     match worker {
         Ok(handle) => {
             world.resource_mut::<Building>().0 = Some((r, handle));
@@ -366,6 +358,22 @@ fn start_new_run(world: &mut World, r: NewRunRequest) {
             restart(world, r);
         }
     }
+}
+
+/// Builds a new run exactly as a fresh process would
+/// (`sim_headless::headless_app`) and saves it before its first tick: the
+/// worker's job. The save holds state only; the run's start and offers are
+/// told on its first tick from that state.
+fn build_island(config: HeadlessConfig) -> Vec<u8> {
+    let started = Instant::now();
+    let mut app = sim_headless::headless_app(config);
+    let bytes = sim_headless::save_app(&mut app);
+    info!(
+        "new run: island for seed {} built in {:.2} s",
+        config.seed,
+        started.elapsed().as_secs_f32()
+    );
+    bytes
 }
 
 /// Loads the new run once its island is built.
@@ -450,6 +458,88 @@ mod tests {
         assert_eq!(
             compute_state_hash(a.world_mut()),
             compute_state_hash(b.world_mut())
+        );
+    }
+
+    /// GP-12, UI-05: a new run built in place (the new-game screen's *Build
+    /// it*, *Same seed again*: `build_island` on the worker, then
+    /// `load_bytes` over the run being played) starts exactly like a fresh
+    /// process: the same state hash, Chronicle and feed, the start told on
+    /// tick 0 and the Sellswords' `Hire` offer reported while it stands, so
+    /// the feed pauses on it (seed 5 draws them).
+    #[test]
+    fn a_new_run_built_in_place_starts_like_a_fresh_one() {
+        use sim_core::{
+            Chronicle, EventFeed, OfferKind, Offers, SimEventKind, SimStepper, compute_state_hash,
+        };
+        use sim_military::DirectorData;
+        let harsh = RunConfig {
+            difficulty: Difficulty::Harsh,
+        };
+        let mut live = sim_headless::headless_app(HeadlessConfig::run(6, harsh));
+        live.step(10);
+        // What the game's world has besides the sim. The save directory is
+        // never created: nothing is written and `refresh_saved` finds nothing.
+        let dir = std::env::temp_dir().join(format!("warlord-no-saves-{}", std::process::id()));
+        live.world_mut().insert_resource(SaveDir(dir));
+        live.world_mut().insert_resource(Notice::default());
+        live.world_mut().insert_resource(WorldEpoch::default());
+        live.world_mut().insert_resource(Time::<Real>::default());
+        live.world_mut().insert_resource(Time::<Virtual>::default());
+
+        let bytes = build_island(HeadlessConfig::run(5, RunConfig::default()));
+        load_bytes(live.world_mut(), &bytes, "the new run").expect("the new run loads");
+        assert!(live.world().resource::<Time<Virtual>>().is_paused());
+        assert_eq!(live.world().resource::<WorldEpoch>().0, 1);
+
+        let mut fresh = sim_headless::headless_app(HeadlessConfig::run(5, RunConfig::default()));
+        let pick = sim_headless::start_boon_pick(&fresh, 0).expect("a start boon offer");
+        for app in [&mut fresh, &mut live] {
+            sim_headless::resume_commands(app, std::slice::from_ref(&pick));
+        }
+        for n in [1, 50, 50, 50, 50] {
+            fresh.step(n);
+            live.step(n);
+            assert_eq!(
+                compute_state_hash(live.world_mut()),
+                compute_state_hash(fresh.world_mut()),
+                "tick {}",
+                live.world().resource::<SimTick>().0
+            );
+        }
+        let (fresh, live) = (fresh.world(), live.world());
+        assert_eq!(
+            *live.resource::<Chronicle>(),
+            *fresh.resource::<Chronicle>()
+        );
+        let feed = |w: &World| -> Vec<_> { w.resource::<EventFeed>().iter().copied().collect() };
+        assert_eq!(feed(live), feed(fresh));
+        let first = live.resource::<Chronicle>().entries()[0];
+        assert_eq!(
+            first.event.kind,
+            SimEventKind::RunStarted,
+            "the start is told"
+        );
+        let hire = live
+            .resource::<Offers>()
+            .pending
+            .iter()
+            .find(|o| matches!(o.kind, OfferKind::Hire { .. }))
+            .expect("seed 5 draws Sellswords; if data changes, pick a seed that does")
+            .id;
+        assert!(
+            feed(live).iter().any(|f| f.tick == 0
+                && f.event.kind == SimEventKind::OfferPosted
+                && f.event.subject == hire),
+            "the Hire offer is reported on tick 0"
+        );
+        let steady = DirectorData::default_data();
+        let steady = steady
+            .personality(Difficulty::Steady)
+            .expect("a steady personality");
+        assert!(
+            steady.auto_pause.contains(&SimEventKind::OfferPosted),
+            "the feed pauses on offers"
         );
     }
 

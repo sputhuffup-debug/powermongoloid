@@ -8,7 +8,7 @@ NFR-08: the same seed and the same command stream give a bit-identical state has
 | --- | --- |
 | **The sim changes state only in `FixedUpdate`.** | Frame rate varies between machines; ticks don't. |
 | **Input arrives only as `SimCommand` messages,** consumed in `SimInputSet::Consume`. The sim's own AI writes its commands in `SimInputSet::Ai`, after scripted input. | A replay is just the recorded command stream. Anything else that changes the sim (a UI writing to a component, say) wouldn't be replayed. The fixed sub-set order fixes the order commands arrive in. |
-| **Events (`SimEvent`) are messages, not state.** `record_events` sorts each tick's events before appending them to the hashed `Chronicle`. | Writers in one set run in executor order. Messages live two ticks, so tests read the `Chronicle` or `EventFeed`. |
+| **Events (`SimEvent`) are messages, not state.** `record_events` sorts each tick's events before appending them to the hashed `Chronicle`. Setup writes none (messages aren't saved, so a save before the first tick would lose them): a run's first tick tells its start from state (`report_start`). | Writers in one set run in executor order. Messages live two ticks, so tests read the `Chronicle` or `EventFeed`. |
 | **All randomness comes from `SimRng` or `SimSeed::stream(key, tick)`.** Never `rand::rng()`, the thread RNG (`clippy.toml` forbids it). | Parallel systems take their own stream per agent and tick (`seed.stream(rng_key("crate::system") ^ id.0, tick)`), so results never depend on which thread runs first. |
 | **No iteration over a `HashMap` or `HashSet` in sim logic.** Lookups are fine. Use `BTreeMap`, or collect and sort. | Hash iteration order is random per process. |
 | **Order-dependent work is sorted by `SpawnId`.** | `Entity` ids are reused after despawns; `SpawnId`s are allocated in spawn order and never reused. |
@@ -43,12 +43,12 @@ NFR-08: the same seed and the same command stream give a bit-identical state has
   cargo run --release -p sim_headless -- --run --difficulty harsh --ticks 2000 --commands 200 --record run.ron
   ```
 
-- **`tests/tests/save_load.rs`:** a run saved after a day and loaded with either executor hashes the same and plays 1,000 more ticks identically; every hashed type is saved.
+- **`tests/tests/save_load.rs`:** a run saved after a day and loaded with either executor hashes the same and plays 1,000 more ticks identically; a run saved before its first tick starts exactly like a fresh one (hash, Chronicle, feed), and a replay resumes from such a save; every hashed type is saved.
 - **`tests/tests/determinism.rs`:** 10,000-tick runs, parallel vs serial, recorded vs live commands, dropped-command detection, hash coverage (the skirmish, and a run with its start boon picked), armies with random orders, and a run's replay with its `RunConfig`.
 
 ## Saves
 
-`sim_core::save_world` writes a header and a zstd payload of every saved resource and component (entity references as SpawnIds); `load_world` restores them into an app built without a world (`sim_headless::load_app`), regenerating the map from the seed, and runs the load hooks. Save between ticks: pending commands aren't saved, so after a load schedule the rest of a session's commands with `sim_headless::resume_commands`. To check a resume against a replay:
+`sim_core::save_world` writes a header and a zstd payload of every saved resource and component (entity references as SpawnIds); `load_world` restores them into an app built without a world (`sim_headless::load_app`), regenerating the map from the seed, and runs the load hooks. Save between ticks (tick 0 before the first step counts, except for a battle, whose setup leaves AI orders in flight): pending commands aren't saved, so after a load schedule the rest of a session's commands with `sim_headless::resume_commands`. To check a resume against a replay (also with `--save-at 0`, before the first tick, for any replay but a battle's):
 
 ```sh
 cargo run --release -p sim_headless -- --run --ticks 3000 --commands 50 --record run.ron

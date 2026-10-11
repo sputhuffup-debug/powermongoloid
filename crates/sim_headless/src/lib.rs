@@ -194,7 +194,11 @@ pub enum ScenarioSetup {
 /// Sets up `scenario` before the first tick, after `prepare_sim`. Shared by
 /// [`headless_app`] and `game_app`, so the game and the headless runs start
 /// identically. Setup edits state directly and writes no player commands,
-/// so a replay that re-runs it applies everything once (guide G1).
+/// so a replay that re-runs it applies everything once (guide G1), and no
+/// SimEvents (a save before the first tick keeps state, not messages; a
+/// run's start is told on tick 0). The one exception to "nothing in
+/// flight": a battle's setup queues `SimCommand::ai` orders for the first
+/// tick, which a save before it loses (ADR 0016, follow-up).
 pub fn set_up_scenario(world: &mut bevy_ecs::world::World, scenario: Scenario) -> ScenarioSetup {
     let setup = match scenario {
         Scenario::Villages => None,
@@ -202,6 +206,13 @@ pub fn set_up_scenario(world: &mut bevy_ecs::world::World, scenario: Scenario) -
         Scenario::Battle(n) => sim_military::setup_battle(world, n).map(ScenarioSetup::Battle),
         Scenario::Run(_) => sim_military::setup_run(world).map(ScenarioSetup::Run),
     };
+    debug_assert!(
+        world
+            .get_resource::<bevy_ecs::message::Messages<sim_core::SimEvent>>()
+            .is_none_or(|m| m.is_empty()),
+        "setup writes no SimEvents: a save before the first tick would lose them; \
+         tell them on tick 0 from state (sim_military::progression::report_start)"
+    );
     setup.unwrap_or(ScenarioSetup::Nothing)
 }
 
@@ -305,7 +316,8 @@ pub fn run(
 }
 
 /// [`run`], also saving the game (GP-12) after `save_at` ticks (0: before
-/// the first tick). The run carries on to `ticks` either way.
+/// the first tick; resumes like a fresh run, except a battle, which loses
+/// its setup's orders). The run carries on to `ticks` either way.
 pub fn run_saving(
     config: HeadlessConfig,
     ticks: u64,

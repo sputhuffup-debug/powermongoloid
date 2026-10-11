@@ -309,6 +309,8 @@ impl StateHash for Cause {
 
 /// Something notable happened (UI-05). A message: not hashed, gone after two
 /// ticks. [`record_events`] turns it into feed and chronicle entries.
+/// Written inside ticks: run setup writes none, because messages are not
+/// saved (a save before the first tick would lose them).
 /// Each [`SimEventKind`] documents what `subject`, `other` and `amount` mean.
 #[derive(Message, Debug, Clone, Copy, PartialEq)]
 pub struct SimEvent {

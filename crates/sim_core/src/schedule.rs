@@ -88,6 +88,12 @@ pub fn on_day(tick: Res<SimTick>, cal: Res<Calendar>) -> bool {
     cal.on_day(tick.0)
 }
 
+/// Run condition: the first tick (tick 0), before any tick has run. For
+/// what a tick tells once about what setup built (a run's start).
+pub fn first_tick(tick: Res<SimTick>) -> bool {
+    tick.0 == 0
+}
+
 /// Chains the nine [`SimSet`]s and [`BookkeepingSet`], and gates every
 /// `SimSet` on [`run_in_progress`]: once a run has ended, ticks do nothing,
 /// so [`SimTick`] and the state hash freeze (GP-21).

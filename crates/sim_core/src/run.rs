@@ -11,7 +11,8 @@
 //!   [`SimSet`](crate::SimSet) is gated off by [`run_in_progress`], so the tick
 //!   counter and the state hash freeze.
 //! - [`Offers`] holds the pending offers. sim_military posts them (with
-//!   [`post_offer`]) and resolves `ChooseOffer` commands against them.
+//!   [`post_offer`] inside a tick, [`Offers::post`] in run setup) and
+//!   resolves `ChooseOffer` commands against them.
 
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -308,6 +309,17 @@ pub struct Offer {
     pub expires: Option<u64>,
 }
 
+impl Offer {
+    /// The [`SimEventKind::OfferPosted`] event that reports this offer
+    /// (GP-27): its id, what it concerns and how many choices it has.
+    pub fn posted_event(&self) -> SimEvent {
+        SimEvent::new(SimEventKind::OfferPosted, self.faction)
+            .subject(self.id)
+            .other(self.kind.subject())
+            .amount(self.choices.len() as i32)
+    }
+}
+
 impl StateHash for Offer {
     fn hash_state(&self, h: &mut StateHasher) {
         h.u64(self.id);
@@ -338,8 +350,10 @@ pub struct Offers {
 }
 
 impl Offers {
-    /// Queues an offer posted at `tick` and returns its id. Emits no event:
-    /// exclusive code should call [`post_offer`], which also reports it.
+    /// Queues an offer posted at `tick` and returns its id. Emits no event.
+    /// Inside a tick, exclusive code calls [`post_offer`], which also
+    /// reports it; run setup calls this, and the run's first tick reports
+    /// it (`sim_military::progression::report_start`).
     pub fn post(
         &mut self,
         faction: FactionId,
@@ -400,9 +414,14 @@ impl StateHash for Offers {
     }
 }
 
-/// GP-27: posts an offer at the current tick and reports it with an
-/// [`SimEventKind::OfferPosted`] event. For exclusive steps and setup code
-/// (before the first tick, the event is recorded at tick 0). Returns the id.
+/// GP-27: posts an offer at the current tick and reports it with its
+/// [`Offer::posted_event`]. For exclusive steps inside a tick (recorded with
+/// that tick's events). Run setup posts with [`Offers::post`] instead: a
+/// message written before the first tick does not survive a save taken
+/// then, so the run's first tick reports every pending offer
+/// (`sim_military::progression::report_start`). Never call this in a run
+/// before its first tick (setup, or a test's extra setup): `report_start`
+/// would tell the offer a second time; use [`Offers::post`]. Returns the id.
 pub fn post_offer(
     world: &mut World,
     faction: FactionId,
@@ -411,16 +430,15 @@ pub fn post_offer(
     expires: Option<u64>,
 ) -> u64 {
     let tick = world.resource::<SimTick>().0;
-    let count = choices.len() as i32;
     let id = world
         .resource_mut::<Offers>()
         .post(faction, kind, choices, tick, expires);
-    world.write_message(
-        SimEvent::new(SimEventKind::OfferPosted, faction)
-            .subject(id)
-            .other(kind.subject())
-            .amount(count),
-    );
+    let event = world
+        .resource::<Offers>()
+        .get(id)
+        .expect("just posted")
+        .posted_event();
+    world.write_message(event);
     id
 }
 
@@ -469,8 +487,8 @@ mod tests {
         assert_eq!(o.next_id, 2, "ids are never reused");
     }
 
-    /// GP-27: an offer posted before the first tick is reported at tick 0,
-    /// in the feed only.
+    /// GP-27: an offer posted with `post_offer` is reported, as its
+    /// `posted_event`, in the next tick's batch, in the feed only.
     #[test]
     fn posting_an_offer_reports_it() {
         use crate::{SimCorePlugin, SimStepper};
@@ -493,6 +511,14 @@ mod tests {
         assert_eq!(
             (e.kind, e.subject, e.amount),
             (SimEventKind::OfferPosted, id, 3)
+        );
+        assert_eq!(
+            e,
+            app.world()
+                .resource::<Offers>()
+                .get(id)
+                .unwrap()
+                .posted_event()
         );
         assert!(app.world().resource::<Chronicle>().is_empty());
         assert_eq!(app.world().resource::<Offers>().get(id).unwrap().posted, 0);

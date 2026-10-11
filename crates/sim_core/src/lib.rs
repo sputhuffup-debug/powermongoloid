@@ -16,11 +16,12 @@
 //!   resource is registered in the hash or exempted with a reason.
 //! - [`Replay`] and [`CommandScript`]: recorded sessions.
 //! - [`Calendar`]: day length, phases and seasons (`calendar.ron`), and game
-//!   hours ([`on_hour`], [`on_day`]).
+//!   hours ([`on_hour`], [`on_day`]), and the first tick ([`first_tick`]).
 //! - [`RunState`] and [`RunConfig`] (GP-21): a run's settings and outcome.
 //!   Once a run ends, [`run_in_progress`] gates every [`SimSet`] off and the
 //!   clock stops. [`Offers`] queues the player's pending choices (GP-27).
-//! - [`SimEvent`]: typed events from any sim crate, recorded each tick by
+//! - [`SimEvent`]: typed events from any sim crate, written inside ticks
+//!   (setup writes none), recorded each tick by
 //!   [`events::record_events`] into the [`EventFeed`] and the [`Chronicle`]
 //!   (UI-05, UI-09).
 //! - [`FactionModifiers`]: per-faction [`Stat`] bonuses, read by every crate.
@@ -75,7 +76,7 @@ pub use save::{
     AppSaveExt, SAVE_FORMAT, SAVE_MAGIC, SaveError, SaveHeader, SaveReader, SaveRegistry,
     SaveState, SaveWriter, load_world, read_header, save_world,
 };
-pub use schedule::{BookkeepingSet, SIM_TICK_HZ, SimSet, SimTick, on_day, on_hour};
+pub use schedule::{BookkeepingSet, SIM_TICK_HZ, SimSet, SimTick, first_tick, on_day, on_hour};
 pub use step::{SimStepper, run_sim_tick};
 pub use timing::SimTimings;
 
