@@ -85,6 +85,8 @@ pub(crate) fn eat(
 /// (GP-23; exactly the base with no modifiers), plus the soldier's veteran
 /// rank gain (SIM-36). The desertion chance is scaled by the faction's
 /// `Stat::Desertion` multiplier and cut by the rank's `desertion` share.
+/// A band for hire (independent and [`NoUpkeep`], GP-27) takes no
+/// casualty shock: the independents dying near it are not its allies.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // Bevy system parameters.
 pub(crate) fn soldier_upkeep(
     tick: Res<SimTick>,
@@ -171,8 +173,12 @@ pub(crate) fn soldier_upkeep(
                 };
             }
             let mut shock = 0.0;
+            // A band for hire (GP-27: unfed independents) is nobody's ally:
+            // the independents falling near its camp don't shake it, or it
+            // could rout and desert while its offer still names every man.
+            let for_hire = no_upkeep && allegiance.0 == FactionId::INDEPENDENT;
             for (q, f, _) in &fallen.fallen {
-                if *f == allegiance.0 && q.distance(p) <= c.casualty_radius {
+                if !for_hire && *f == allegiance.0 && q.distance(p) <= c.casualty_radius {
                     shock += c.casualty_morale;
                 }
             }

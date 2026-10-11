@@ -3,8 +3,10 @@
 //!
 //! Once a game hour, in a run, the progress driver calls [`step`]:
 //!
-//! 1. Offers past their `expires` tick are dropped (`Offers::expire`); a
-//!    lapsed invitation starts its settlement's cooldown.
+//! 1. Offers past their `expires` tick are dropped (`Offers::expire`, the
+//!    one place offers lapse); a lapsed invitation starts its settlement's
+//!    cooldown, and a lapsed hire's band for hire moves on
+//!    ([`crate::sellswords`], GP-27).
 //! 2. Every populated settlement, in SpawnId order, offers lordship to the
 //!    player (an `OfferKind::Invitation`, choices `[0 = accept, 1 =
 //!    decline]`, expiring after `invitations.expiry_hours`) when all hold:
@@ -49,14 +51,19 @@ pub fn step(world: &mut World) {
     let data = world.resource::<Progression>().data.invitations;
     let cooldown = cal.days(data.cooldown_days);
     for o in world.resource_mut::<Offers>().expire(tick) {
-        if let OfferKind::Invitation { settlement } = o.kind {
-            world
-                .resource_mut::<RunProgress>()
-                .set_invite_cooldown(settlement, tick + cooldown);
-            if let Some(s) = find_settlement(world, settlement) {
-                let name = settlement_name(world, s);
-                log(world, format!("{name}'s invitation lapsed"));
+        match o.kind {
+            OfferKind::Invitation { settlement } => {
+                world
+                    .resource_mut::<RunProgress>()
+                    .set_invite_cooldown(settlement, tick + cooldown);
+                if let Some(s) = find_settlement(world, settlement) {
+                    let name = settlement_name(world, s);
+                    log(world, format!("{name}'s invitation lapsed"));
+                }
             }
+            // GP-27: unhired, the sellswords leave.
+            OfferKind::Hire { captain, .. } => crate::sellswords::lapsed(world, captain),
+            OfferKind::StartBoon | OfferKind::DominionBoon { .. } | OfferKind::Trait { .. } => {}
         }
     }
     let pending: Vec<u64> = world

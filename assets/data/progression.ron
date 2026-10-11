@@ -98,7 +98,7 @@
         (id: 1, name: "Bumper harvest", text: "Crops yield 15% more.", group: Some("harvest"), weight: 1.0, effects: [Stat(FoodYield, 0.15)]),
         (id: 2, name: "Rats in the stores", text: "Every storehouse has lost a tenth of its food.", group: None, weight: 1.0, effects: [Stores(0.1)]),
         (id: 3, name: "Restless roads", text: "Raiders come sooner.", group: None, weight: 1.0, effects: [RaiderPace(1.5)]),
-        (id: 4, name: "Sellswords", text: "A band for hire waits near the start.", group: None, weight: 0.7, effects: [Sellswords(12)]),
+        (id: 4, name: "Sellswords", text: "A band of twelve sellswords camps near the start, for hire.", group: None, weight: 0.7, effects: [Sellswords(12)]),
         (id: 5, name: "Stronger rival", text: "The rival levies more men and builds faster.", group: Some("rival"), weight: 0.8, effects: [RivalStrength(1.25)]),
         (id: 6, name: "Weaker rival", text: "The rival levies fewer men.", group: Some("rival"), weight: 0.8, effects: [RivalStrength(0.8)]),
     ],
@@ -190,6 +190,21 @@
         goodwill: 0.25,
         per_settlement: (0, 2),
         max_per_day: 3,
+    ),
+
+    // GP-27, the Sellswords run modifier: `Sellswords(n)` camps n armed
+    // men (captain included) near the start, for hire. They are an army of
+    // the independents, at peace with everyone, who never eat and hold
+    // their camp. The player hires them with a Hire offer (all of them,
+    // into the champion's army) for food from the champion's baggage, or
+    // declines; either way, or when the offer lapses, the camp is gone.
+    hire: (
+        distance: 16.0,      // tiles from the start to their camp, seeded direction
+        unit: (health: 110.0, attack: 14.0, defense: 4.0, morale: 0.8),
+        armed: true,
+        price_days: 1.0,     // days of food each, paid from the champion's baggage
+        radius: 40.0,        // the champion must be this close to hire them
+        expiry_hours: 24.0,  // then they move on
     ),
 
     // GP-23: monuments. Once a game hour, soldiers (not militia, not

@@ -92,7 +92,7 @@ pub fn nearest_passable(map: &WorldMap, costs: &TravelCosts, at: IVec2) -> Optio
 }
 
 /// The tile nearest `at` that the field reaches (ties: row-major).
-fn nearest_reachable(field: &FlowField, at: IVec2) -> Option<IVec2> {
+pub(crate) fn nearest_reachable(field: &FlowField, at: IVec2) -> Option<IVec2> {
     for r in 0i32..48 {
         let mut best: Option<(i32, i32, i32, IVec2)> = None;
         for dy in -r..=r {

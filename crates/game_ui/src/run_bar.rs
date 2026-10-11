@@ -243,6 +243,7 @@ fn offer_buttons(
     mut commands: Commands,
     offers: Option<Res<Offers>>,
     sent: Res<SentOffers>,
+    tick: Option<Res<SimTick>>,
     names: Option<Res<NameTable>>,
     settlements: Query<(&SpawnId, &Settlement)>,
     row: Query<Entity, With<OfferRow>>,
@@ -257,9 +258,10 @@ fn offer_buttons(
     let (Some(offers), Some(names), Ok(row)) = (offers, names, row.single()) else {
         return;
     };
+    let tick = tick.map_or(0, |t| t.0);
     let waiting: Vec<&sim_core::Offer> = offers
         .for_faction(FactionId::PLAYER)
-        .filter(|o| !sent.0.contains(&o.id))
+        .filter(|o| !sent.hides(o.id, tick))
         .collect();
     let ids: Vec<u64> = waiting.iter().map(|o| o.id).collect();
     if shown.as_ref() == Some(&ids) {
@@ -360,11 +362,13 @@ fn bar_buttons(
 
 /// The open offer's cards, centred on screen; closes once the offer is
 /// answered or gone.
+#[allow(clippy::too_many_arguments)] // Bevy system parameters.
 fn draw_card_popup(
     mut commands: Commands,
     mut open: ResMut<OpenOffer>,
     offers: Option<Res<Offers>>,
     sent: Res<SentOffers>,
+    tick: Option<Res<SimTick>>,
     progression: Option<Res<Progression>>,
     names: Option<Res<NameTable>>,
     settlements: Query<(&SpawnId, &Settlement)>,
@@ -373,9 +377,10 @@ fn draw_card_popup(
     let (Some(offers), Some(progression), Some(names)) = (offers, progression, names) else {
         return;
     };
+    let tick = tick.map_or(0, |t| t.0);
     let offer = open
         .offer
-        .filter(|id| !sent.0.contains(id))
+        .filter(|id| !sent.hides(*id, tick))
         .and_then(|id| offers.get(id).cloned());
     if offer.is_none() && open.offer.is_some() {
         open.offer = None;

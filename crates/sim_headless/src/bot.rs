@@ -7,7 +7,10 @@
 //! rival's seat; every query sorted by SpawnId) and:
 //! 1. answers every offer: boons and traits by a fixed score of their
 //!    effects (food and arms early, captain slots, attack, defence and
-//!    recruiting later), invitations and hired bands accepted;
+//!    recruiting later), invitations accepted; a band for hire (GP-27) is
+//!    hired once the champion stands within `hire.radius` of it and can
+//!    pay with [`HIRE_RESERVE_DAYS`] of food left for everyone, else asked
+//!    again next hour (it never declines; an unaffordable band lapses);
 //! 2. keeps the champion's army (the main army) fed: supplies from owned
 //!    settlements, asks independents, forages when nothing else is near;
 //! 3. grows it: recruits in non-rival settlements (owned ones first, at
@@ -72,6 +75,10 @@ const ASSAULT_MARGIN: f32 = 1.5;
 
 /// The main army keeps growing to at least this many people.
 const MIN_ARMY: u32 = 40;
+
+/// GP-27: hire a band only if, after paying, the baggage still holds this
+/// many days of food for the main army and the newcomers.
+pub const HIRE_RESERVE_DAYS: f32 = 0.5;
 
 /// The bot's own record of what each of its captains is doing.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -519,8 +526,20 @@ impl Bot {
                         score(&effects, v.day)
                     })
                 }),
-                // Accept lordship and hired bands.
-                OfferKind::Invitation { .. } | OfferKind::Hire { .. } => 0,
+                // Accept lordship.
+                OfferKind::Invitation { .. } => 0,
+                // GP-27: hire a band the main army can reach and feed; ask
+                // again next hour.
+                OfferKind::Hire {
+                    captain,
+                    men,
+                    price,
+                } => {
+                    if !can_hire(world, v, captain, men, price) {
+                        continue;
+                    }
+                    0
+                }
             };
             out.push(SimCommand::player(
                 FactionId::PLAYER,
@@ -1088,6 +1107,33 @@ impl Bot {
             })
             .collect()
     }
+}
+
+/// GP-27: whether the main army can hire the band led by `captain` (a
+/// SpawnId; `men` for `price` food value) now: the champion within
+/// progression.ron `hire.radius` of the band's captain, with the price in
+/// its baggage and [`HIRE_RESERVE_DAYS`] of food left for everyone after.
+fn can_hire(world: &World, v: &View, captain: u64, men: u16, price: u16) -> bool {
+    let Some(main) = v.main() else {
+        return false;
+    };
+    let Some(at) = world
+        .try_query::<(&SpawnId, &Captain, &Position)>()
+        .and_then(|mut q| {
+            q.iter(world)
+                .find(|(id, ..)| id.0 == captain)
+                .map(|(.., p)| p.0)
+        })
+    else {
+        return false;
+    };
+    if dist(main.at, at) > world.resource::<Progression>().data.hire.radius {
+        return false;
+    }
+    let per_day = world.resource::<Villagers>().data.needs.hunger_per_day;
+    let food = main.days * per_day * main.people as f32;
+    let people = (main.people + men as u32) as f32;
+    food >= price as f32 + per_day * people * HIRE_RESERVE_DAYS
 }
 
 /// The index of the choice scoring highest (the first on ties).

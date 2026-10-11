@@ -1,9 +1,11 @@
 //! Offer cards (GP-27): one card per choice of an offer, shown on the
 //! new-game screen (the start boon) and from the run bar (dominion boons,
-//! traits, invitations). Clicking a card sends `ChooseOffer` through
-//! [`crate::army::send`]; the sim validates it.
+//! traits, invitations, sellswords for hire). Clicking a card sends
+//! `ChooseOffer` through [`crate::army::send`]; the sim validates it, and
+//! an offer whose pick it refused (a hire the champion can't make yet)
+//! shows again a tick later ([`SentOffers`]).
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use bevy::prelude::*;
 use sim_core::{CommandKind, Offer, OfferKind, Stat};
@@ -34,10 +36,21 @@ fn forget_sent(mut sent: ResMut<SentOffers>) {
     sent.0.clear();
 }
 
-/// Offers the player has answered this session, so the UI hides them until
-/// the sim takes them (a double click sends one command, not two).
+/// Offers the player has answered this session, with the `SimTick` at
+/// which the answer was sent, so the UI hides them until the sim takes them
+/// (a double click sends one command, not two). The sim applies the answer
+/// on that tick; if it refused it (GP-27: a hire too far away or too dear),
+/// the offer is still pending afterwards and shows again.
 #[derive(Resource, Default)]
-pub struct SentOffers(pub BTreeSet<u64>);
+pub struct SentOffers(pub BTreeMap<u64, u64>);
+
+impl SentOffers {
+    /// Whether offer `offer` is hidden at `tick`: answered, and the tick
+    /// that applies the answer hasn't run yet.
+    pub fn hides(&self, offer: u64, tick: u64) -> bool {
+        self.0.get(&offer).is_some_and(|&t| tick <= t)
+    }
+}
 
 /// A clickable card.
 #[derive(Component, Clone, Copy)]
@@ -62,7 +75,7 @@ pub fn offer_title(offer: &Offer, place: &dyn Fn(u64) -> String) -> String {
         OfferKind::DominionBoon { region, .. } => format!("Boon (region {region})"),
         OfferKind::Trait { .. } => "New trait".into(),
         OfferKind::Invitation { settlement } => format!("Invitation: {}", place(settlement)),
-        OfferKind::Hire { .. } => "Sellswords".into(),
+        OfferKind::Hire { men, .. } => format!("Sellswords ({men})"),
     }
 }
 
@@ -100,7 +113,29 @@ pub fn card_text(
                 ("Decline".into(), "Leave them be, for now.".into())
             }
         }
-        OfferKind::Hire { .. } => ("Hire".into(), "Not available yet.".into()),
+        OfferKind::Hire { men, price, .. } => {
+            if choice == 0 {
+                let r = progression.data.hire.radius;
+                let armed = if progression.data.hire.armed {
+                    "armed "
+                } else {
+                    ""
+                };
+                (
+                    "Hire".into(),
+                    format!(
+                        "{men} {armed}sellswords join your champion's army for {price} food \
+                         from its baggage. Your champion must be within {r:.0} tiles of \
+                         their camp. Then they eat with you."
+                    ),
+                )
+            } else {
+                (
+                    "Decline".into(),
+                    "Send them on their way. They leave at once.".into(),
+                )
+            }
+        }
     }
 }
 
@@ -153,14 +188,17 @@ fn choice_buttons(
     screen: Res<State<UiScreen>>,
     mut next: ResMut<NextState<UiScreen>>,
     mut sent: ResMut<SentOffers>,
+    tick: Option<Res<sim_core::SimTick>>,
     mut time: ResMut<Time<Virtual>>,
     mut out: MessageWriter<sim_core::SimCommand>,
 ) {
     let _span = info_span!("game_ui::cards::choice_buttons").entered();
+    let tick = tick.map_or(0, |t| t.0);
     for (interaction, b) in &buttons {
-        if *interaction != Interaction::Pressed || !sent.0.insert(b.offer) {
+        if *interaction != Interaction::Pressed || sent.hides(b.offer, tick) {
             continue;
         }
+        sent.0.insert(b.offer, tick);
         crate::army::send(
             &mut out,
             CommandKind::ChooseOffer {
@@ -203,5 +241,38 @@ mod tests {
         let (t, b) = card_text(OfferKind::Invitation { settlement: 3 }, 0, 0, &p, &place);
         assert_eq!(t, "Accept");
         assert!(b.contains("Ashmere"));
+        // GP-27: the hire card says how many, for how much, and how near.
+        let hire = OfferKind::Hire {
+            captain: 9,
+            men: 12,
+            price: 11,
+        };
+        let (t, b) = card_text(hire, 0, 0, &p, &place);
+        assert_eq!(t, "Hire");
+        assert!(
+            b.contains("12 armed sellswords") && b.contains("11 food") && b.contains("40 tiles"),
+            "{b}"
+        );
+        assert_eq!(card_text(hire, 1, 1, &p, &place).0, "Decline");
+        // Unarmed in the data, unarmed on the card.
+        let mut bare = p.clone();
+        bare.data.hire.armed = false;
+        let (_, b) = card_text(hire, 0, 0, &bare, &place);
+        assert!(b.starts_with("12 sellswords"), "{b}");
+    }
+
+    /// GP-27: an answered offer hides until the tick that applies the
+    /// answer has run; refused, it shows again.
+    #[test]
+    fn a_refused_offer_shows_again_after_its_tick() {
+        let mut sent = SentOffers::default();
+        assert!(!sent.hides(4, 10));
+        sent.0.insert(4, 10);
+        assert!(sent.hides(4, 10), "paused: not applied yet");
+        assert!(
+            !sent.hides(4, 11),
+            "the tick ran and the offer is still there"
+        );
+        assert!(!sent.hides(5, 10));
     }
 }

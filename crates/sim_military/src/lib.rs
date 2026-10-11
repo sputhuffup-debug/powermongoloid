@@ -38,7 +38,10 @@
 //! `sim_agents::GoodwillLedger`, with deltas from progression.ron
 //! `goodwill_deeds` (GP-22). In a run, settlements post [`requests`] the
 //! sim checks off, liked settlements send [`drifters`] and offer lordship
-//! ([`invitations`]).
+//! ([`invitations`]). The `Sellswords` run modifier camps a band of the
+//! independents near the start, at peace with all and never eating, which
+//! the player may hire into the champion's army for food from its baggage
+//! ([`sellswords`], GP-27).
 //!
 //! In a run, [`monuments`] are held by whoever stands at them alone long
 //! enough; some start guarded by raider camps or beasts (GP-23). Held
@@ -85,6 +88,7 @@ pub mod raiders;
 pub mod requests;
 pub mod rival;
 mod save;
+pub mod sellswords;
 pub mod soldiers;
 pub mod spawn;
 pub mod threat;
@@ -113,10 +117,10 @@ pub use monuments::{Guard, Holder, NoUpkeep};
 pub use orders::{CommandInbox, arm_followers, enlist, enlist_into, find_settlement, provoke};
 pub use progression::{
     Champion, ChampionData, ChampionPoints, ChampionRank, DominionData, DriftersData, ForageData,
-    GoodwillDeeds, GuardData, GuardKind, Holding, Holdings, InvitationData, MonumentBonus,
-    MonumentData, Progression, RegionTally, RequestData, RunProgress, RunStart, RunWorld,
-    StartDraws, StartTerrain, Traits, captain_slots, champion_of, draw_start, rebuild_modifiers,
-    setup_run,
+    GoodwillDeeds, GuardData, GuardKind, HireData, Holding, Holdings, InvitationData,
+    MonumentBonus, MonumentData, Progression, RegionTally, RequestData, RunProgress, RunStart,
+    RunWorld, StartDraws, StartTerrain, Traits, captain_slots, champion_of, draw_start,
+    rebuild_modifiers, setup_run,
 };
 pub use requests::{Request, RequestBoard, RequestKind, Reward};
 pub use rival::{RivalBand, RivalData, RivalState};

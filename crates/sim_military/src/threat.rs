@@ -2,7 +2,8 @@
 //! read their settlement's `Threat` through the safety need. A settlement's
 //! own owner's armies don't frighten it (GP-05), unless it has risen
 //! against them (GP-06). The radius is army.ron `threat.radius` plus the
-//! owner's `ThreatRadius` modifier (watchtowers, GP-23).
+//! owner's `ThreatRadius` modifier (watchtowers, GP-23). An independent
+//! army (a band for hire, GP-27) frightens nobody.
 
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
@@ -33,6 +34,11 @@ pub(crate) fn update_threats(
         let center = s.center.as_vec2() + Vec2::splat(0.5);
         let mut level = 0.0f32;
         for a in &index.armies {
+            // The independents' only army is a band for hire (GP-27), at
+            // peace with everyone: it frightens nobody.
+            if a.faction == FactionId::INDEPENDENT {
+                continue;
+            }
             // A garrison guards its own settlement; it frightens it only
             // when the settlement rises against it.
             if owner.is_some_and(|o| o.faction == a.faction) && t.provoked_by != Some(a.faction) {
