@@ -1163,11 +1163,14 @@ fn attack(
 /// faction owns supplies it instead (GP-05): whenever the baggage holds
 /// less than `gather_target_days`, at most once a day, never provoking.
 /// A settlement the army is holding after breaking its defenders (`Attack`
-/// step 2) is left alone. Monument guards ([`crate::monuments::Guard`])
-/// never gather.
+/// step 2) is left alone. Soldiers who never eat
+/// ([`crate::monuments::NoUpkeep`]: guard camps, a band for hire) never
+/// gather.
 fn forage(world: &mut World, e: Entity, tick: u64) {
-    // GP-23: a monument's guard camp never eats, so never gathers.
-    if world.get::<crate::monuments::Guard>(e).is_some() {
+    // GP-23, GP-27: a monument's guard camp or a band for hire never eats,
+    // so never gathers (a band of the independents would otherwise draw on
+    // an independent village as its owner's supplies).
+    if world.get::<crate::monuments::NoUpkeep>(e).is_some() {
         return;
     }
     let tpd = world.resource::<Calendar>().ticks_per_day;

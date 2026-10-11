@@ -20,9 +20,14 @@ use crate::orders::log;
 /// removed, so a second pick (a double click) is refused.
 ///
 /// Refusals: "no run" outside a run, "no such offer" (unknown, already
-/// answered, or past its `expires` tick), "not your offer", "no such choice", and "not available yet"
-/// for hires (M4 step 7). An invitation (GP-22) is answered by
-/// [`crate::invitations::answer`]: choice 0 accepts, 1 declines.
+/// answered, or past its `expires` tick), "not your offer", "no such
+/// choice", and for a hire (choice 0 of a `Hire` offer) the refusals of
+/// `sellswords::check` ("no champion", "the sellswords are gone", "too far
+/// from the sellswords", "too little food to pay the sellswords"). A
+/// refused pick leaves the offer standing. An invitation (GP-22) is
+/// answered by [`crate::invitations::answer`]: choice 0 accepts, 1
+/// declines. A band for hire (GP-27) by [`crate::sellswords`]: choice 0
+/// hires it, 1 sends it away.
 pub fn choose(
     world: &mut World,
     issuer: FactionId,
@@ -47,8 +52,12 @@ pub fn choose(
         return Err("not your offer");
     }
     let card = *o.choices.get(choice as usize).ok_or("no such choice")?;
-    if matches!(o.kind, OfferKind::Hire { .. }) {
-        return Err("not available yet");
+    // GP-27: a hire the champion can't make now is refused, and the offer
+    // stands until it lapses.
+    if let OfferKind::Hire { captain, price, .. } = o.kind
+        && card == 0
+    {
+        crate::sellswords::check(world, issuer, captain, price)?;
     }
     world.resource_mut::<Offers>().take(offer);
     let what = match o.kind {
@@ -57,7 +66,11 @@ pub fn choose(
         OfferKind::Invitation { settlement } => {
             crate::invitations::answer(world, issuer, settlement, card)
         }
-        OfferKind::Hire { .. } => unreachable!("refused above"),
+        OfferKind::Hire {
+            captain,
+            men,
+            price,
+        } => crate::sellswords::answer(world, issuer, captain, men, price, card),
     };
     world.write_message(
         SimEvent::new(SimEventKind::OfferChosen, issuer)
@@ -147,8 +160,9 @@ fn apply_boon(world: &mut World, faction: FactionId, card: u16) -> String {
             | Effect::CaptainSlots(_)
             | Effect::Stores(_)
             | Effect::RaiderPace(_)
-            | Effect::RivalStrength(_)
-            | Effect::Sellswords(_) => {}
+            | Effect::RivalStrength(_) => {}
+            // Run modifiers only; `Progression::validate` rejects it on boons.
+            Effect::Sellswords(_) => {}
         }
     }
     world.resource_mut::<RunProgress>().boons.push(card);

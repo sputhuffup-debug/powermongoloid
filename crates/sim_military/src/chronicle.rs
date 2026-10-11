@@ -308,6 +308,20 @@ impl<'w> Teller<'w> {
                         format!("{who} declined an invitation")
                     }
                 }
+                t if t
+                    == (OfferKind::Hire {
+                        captain: 0,
+                        men: 0,
+                        price: 0,
+                    })
+                    .tag() as i32 =>
+                {
+                    if ev.other == 0 {
+                        format!("{who} hired a band of sellswords")
+                    } else {
+                        format!("{who} sent the sellswords away")
+                    }
+                }
                 _ => format!("{who} answered an offer"),
             },
             SimEventKind::MonumentTaken => {
@@ -796,6 +810,28 @@ mod tests {
             text.contains(&format!("{champ_name} became Elite")),
             "{text}"
         );
+
+        // GP-27: a band for hire, hired or sent away.
+        let hire = OfferKind::Hire {
+            captain: 0,
+            men: 0,
+            price: 0,
+        }
+        .tag() as i32;
+        let answered = |choice: u64| {
+            entry(
+                11,
+                SimEvent::new(SimEventKind::OfferChosen, FactionId::PLAYER)
+                    .subject(1)
+                    .other(choice)
+                    .amount(hire)
+                    .cause(Cause::Player),
+            )
+        };
+        let text = describe(world, &answered(0));
+        assert_eq!(text, "Day 1: Your warband hired a band of sellswords.");
+        let text = describe(world, &answered(1));
+        assert_eq!(text, "Day 1: Your warband sent the sellswords away.");
     }
 
     /// UI-05: the military log numbers its lines, so the feed can read

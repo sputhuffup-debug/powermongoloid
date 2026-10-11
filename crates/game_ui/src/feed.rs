@@ -21,7 +21,7 @@ use bevy::prelude::*;
 use game_render::{CameraRig, WorldEpoch};
 use sim_core::{
     Calendar, ChronicleEntry, EventFeed, FactionId, FeedEntry, Offers, RunState, SimEvent,
-    SimEventKind,
+    SimEventKind, SimTick,
 };
 use sim_military::{Army, DirectorData, MilitaryLog, Progression};
 
@@ -237,7 +237,8 @@ fn read_feed(world: &mut World, mut cur: Local<Cursors>) {
     let mut pause = false;
     let mut told: Vec<ChronicleEntry> = Vec::new();
     {
-        let sent = &world.resource::<SentOffers>().0;
+        let sent = world.resource::<SentOffers>();
+        let tick = world.get_resource::<SimTick>().map_or(0, |t| t.0);
         let offers = world.get_resource::<Offers>();
         for entry in &entries {
             let e = &entry.event;
@@ -245,7 +246,7 @@ fn read_feed(world: &mut World, mut cur: Local<Cursors>) {
             // boon is posted before tick 0 and answered on the new-game screen).
             let waiting = e.kind == SimEventKind::OfferPosted
                 && e.faction == FactionId::PLAYER
-                && !sent.contains(&e.subject)
+                && !sent.hides(e.subject, tick)
                 && offers.is_some_and(|o| o.get(e.subject).is_some());
             let counts = e.kind != SimEventKind::OfferPosted || waiting;
             if !quiet && run.in_run() && counts && pause_on.contains(&e.kind) {

@@ -528,6 +528,7 @@ fn army_panel(
         Option<&Villager>,
         Option<&Soldier>,
         Option<&Equipment>,
+        Has<sim_military::NoUpkeep>,
     )>,
     members: Query<MemberQuery>,
     settlements: Query<(&SpawnId, &Settlement)>,
@@ -566,7 +567,7 @@ fn army_panel(
         *vis = Visibility::Hidden;
         return;
     };
-    let Ok((c, cs, baggage, villager, soldier, cap_eq)) = captains.get(e) else {
+    let Ok((c, cs, baggage, villager, soldier, cap_eq, never_eats)) = captains.get(e) else {
         *vis = Visibility::Hidden;
         return;
     };
@@ -674,7 +675,10 @@ fn army_panel(
         let day = calendar.at(*tick).day + 1;
         s += &format!("  day {day}: {line}\n");
     }
-    if c.faction != FactionId::PLAYER {
+    if c.faction == FactionId::INDEPENDENT && never_eats {
+        // GP-27: a band for hire (the Sellswords run modifier).
+        s += "Sellswords for hire: see the run bar\n(not yours: no orders)";
+    } else if c.faction != FactionId::PLAYER {
         s += "(not yours: no orders)";
     } else {
         s += "Right-click: move / village orders (Shift queues)";

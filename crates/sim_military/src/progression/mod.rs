@@ -7,7 +7,9 @@
 //!   run modifiers and the three starting boons on offer.
 //! - [`setup_run`]: before the first tick of a run, spawns the band and its
 //!   champion, applies one-off run modifiers, sets up monuments, the rival
-//!   ([`crate::rival::setup`]) and the director, and posts the start offer.
+//!   ([`crate::rival::setup`]) and the director, posts the start offer, and
+//!   camps a band for hire near the start ([`crate::sellswords::setup`]).
+//! - [`HireData`]: the band for hire's tuning (`hire`, GP-27).
 //! - [`offers`]: answering offers ([`choose`]) and abandoning the run
 //!   ([`abandon`]), both reached only through `SimCommand`s.
 //! - [`RunProgress`]: what the run has drawn and picked so far.
@@ -145,7 +147,8 @@ pub enum Effect {
     /// The rival's starting garrison, levies and seat defence scale by this
     /// (GP-28, [`crate::rival::strength`]).
     RivalStrength(f32),
-    /// A band of this many sellswords for hire near the start (later step).
+    /// A band of this many sellswords (captain included) camps near the
+    /// start, for hire ([`crate::sellswords`]). Run modifiers only.
     Sellswords(u32),
     /// This many more captain slots for the picker (GP-25), from the pick
     /// on (see [`captain_slots`]).
@@ -324,6 +327,46 @@ pub struct DriftersData {
     pub max_per_day: u32,
 }
 
+/// A band for hire (GP-27, the `Sellswords` run modifier): `hire` in
+/// progression.ron. See [`crate::sellswords`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct HireData {
+    /// Tiles from the start to the band's camp, in a seeded direction.
+    pub distance: f32,
+    /// Every sellsword's fighting stats, the captain's included.
+    pub unit: UnitStats,
+    /// They carry weapons.
+    pub armed: bool,
+    /// Days of food per sellsword the hire costs, paid from the champion's
+    /// baggage (times villagers.ron `needs.hunger_per_day`, rounded up).
+    pub price_days: f32,
+    /// The champion must stand within this many tiles of the band's
+    /// captain to hire them.
+    pub radius: f32,
+    /// Game hours the Hire offer stands; then the band moves on.
+    pub expiry_hours: f32,
+}
+
+impl Default for HireData {
+    /// The shipped values, so a save made before `hire` existed (whose
+    /// progression text lacks it) still loads.
+    fn default() -> Self {
+        Self {
+            distance: 16.0,
+            unit: UnitStats {
+                health: 110.0,
+                attack: 14.0,
+                defense: 4.0,
+                morale: 0.8,
+            },
+            armed: true,
+            price_days: 1.0,
+            radius: 40.0,
+            expiry_hours: 24.0,
+        }
+    }
+}
+
 /// One monument kind's bonus (GP-23): an entry of `monuments.kinds` in
 /// progression.ron. See [`rebuild_modifiers`].
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -438,6 +481,11 @@ pub struct ProgressionData {
     pub invitations: InvitationData,
     /// Drifters (GP-22).
     pub drifters: DriftersData,
+    /// A band for hire (GP-27, the `Sellswords` run modifier). Optional:
+    /// progression text saved before it existed loads with the shipped
+    /// values.
+    #[serde(default)]
+    pub hire: HireData,
     /// Monuments: holding, guards and bonuses (GP-23).
     pub monuments: MonumentData,
     /// Dominion boons and captain slots (GP-24, GP-25).
@@ -632,6 +680,20 @@ impl Progression {
                     .into(),
             );
         }
+        // GP-27: the band camps within reach of the champion's start.
+        let h = &d.hire;
+        if !non_negative(h.distance)
+            || !non_negative(h.price_days)
+            || !h.radius.is_finite()
+            || h.radius <= h.distance
+            || !weight_ok(h.expiry_hours)
+            || !weight_ok(h.unit.health)
+        {
+            return Err(
+                "progression: hire needs distance and price_days >= 0, radius > distance, expiry_hours > 0 and unit health > 0"
+                    .into(),
+            );
+        }
         let m = &d.monuments;
         if !weight_ok(m.hold_radius)
             || !non_negative(m.hold_hours)
@@ -702,6 +764,27 @@ impl Progression {
                 && !(x.is_finite() && x > 0.0)
             {
                 return Err(format!("progression: {effect:?} needs a finite factor > 0"));
+            }
+        }
+        // GP-27: a band for hire is a run modifier's (it is spawned at
+        // setup), and has at least its captain.
+        for b in &d.boons {
+            if b.effects.iter().any(|e| matches!(e, Effect::Sellswords(_))) {
+                return Err(format!(
+                    "progression: boon {:?}: Sellswords is for run modifiers only",
+                    b.name
+                ));
+            }
+        }
+        for m in &d.modifiers {
+            if m.effects.contains(&Effect::Sellswords(0))
+                || crate::sellswords::band_size(&m.effects) > u16::MAX as u32
+            {
+                return Err(format!(
+                    "progression: modifier {:?}: Sellswords(n) needs n >= 1 (at most {} in all)",
+                    m.name,
+                    u16::MAX
+                ));
             }
         }
         Ok(())
@@ -877,8 +960,10 @@ pub struct RunStart {
 /// applies one-off run modifiers, gives every monument a holder and some a
 /// guard camp, hands the rival its lands and seat garrison (GP-28,
 /// [`crate::rival::setup`]), sets the pacing director's spacing
-/// ([`crate::director::setup`]), posts the start boon offer and reports
-/// [`SimEventKind::RunStarted`].
+/// ([`crate::director::setup`]), posts the start boon offer, camps the
+/// `Sellswords` modifier's band for hire near the start with its `Hire`
+/// offer ([`crate::sellswords::setup`], after every other spawn) and
+/// reports [`SimEventKind::RunStarted`].
 ///
 /// Returns `None` (and changes nothing) outside a run, or if the world has
 /// no settlements to draw from. Edits state directly and writes no player
@@ -949,6 +1034,9 @@ pub fn setup_run(world: &mut World) -> Option<RunStart> {
     );
     // draw_start drew the choices from `boons ^ 0`: the run's first offer.
     debug_assert_eq!(offer, 0, "the start boon is the run's first offer");
+    // GP-27: a band for hire camps near the start. Spawned last, from its
+    // own stream, so no earlier SpawnId or draw moves.
+    crate::sellswords::setup(world, &data, &draws.modifiers, draws.start);
     let champion_id = world.get::<SpawnId>(champion).expect("spawned").0;
     world.write_message(
         SimEvent::new(SimEventKind::RunStarted, FactionId::PLAYER)
@@ -989,7 +1077,8 @@ fn outfit_groups(world: &mut World, captain: Entity, band: &BandData) {
 /// GP-27: applies the one-off start effects of run modifier `cards`, in
 /// draw order. Only `Stores` acts here; the others are read where they
 /// apply (`Stat` in [`rebuild_modifiers`], `RaiderPace` by the director,
-/// `RivalStrength` by the rival).
+/// `RivalStrength` by the rival, `Sellswords` by
+/// [`crate::sellswords::setup`], after every other spawn).
 fn apply_start_modifiers(world: &mut World, data: &Progression, cards: &[u16]) {
     for &card in cards {
         let Some(m) = data.modifier(card) else {
@@ -1309,6 +1398,24 @@ pub(crate) mod tests {
         assert!(check(&|d| d.modifiers[0].effects = vec![Effect::RivalStrength(0.0)]).is_err());
         assert!(check(&|d| d.modifiers[0].effects = vec![Effect::RaiderPace(-1.0)]).is_err());
         assert!(check(&|d| d.modifiers[0].effects = vec![Effect::RaiderPace(2.0)]).is_ok());
+        // GP-27: a band for hire.
+        assert!(check(&|d| d.modifiers[0].effects = vec![Effect::Sellswords(0)]).is_err());
+        assert!(
+            check(&|d| d.modifiers[0].effects = vec![Effect::Sellswords(70_000)]).is_err(),
+            "the offer counts men in a u16"
+        );
+        assert!(check(&|d| d.modifiers[0].effects = vec![Effect::Sellswords(1)]).is_ok());
+        assert!(
+            check(&|d| d.boons[0].effects = vec![Effect::Sellswords(5)]).is_err(),
+            "run modifiers only"
+        );
+        assert!(check(&|d| d.hire.distance = -1.0).is_err());
+        assert!(check(&|d| d.hire.radius = d.hire.distance).is_err());
+        assert!(check(&|d| d.hire.expiry_hours = 0.0).is_err());
+        assert!(check(&|d| d.hire.price_days = -0.5).is_err());
+        assert!(check(&|d| d.hire.price_days = f32::NAN).is_err());
+        assert!(check(&|d| d.hire.unit.health = 0.0).is_err());
+        assert!(check(&|d| d.hire.price_days = 0.0).is_ok(), "free is fine");
         assert!(
             check(&|d| d.champion.ranks.clear()).is_ok(),
             "no ranks, no offers"
@@ -1325,6 +1432,39 @@ pub(crate) mod tests {
             .is_ok(),
             "no thresholds, no Dominion boons needed"
         );
+    }
+
+    /// GP-27: `HireData::default()` is the shipped `hire`, so a save made
+    /// before the section existed loads with the same tuning; and the
+    /// section may be left out of the text.
+    #[test]
+    fn hire_defaults_match_the_shipped_data() {
+        let p = Progression::default_data();
+        assert_eq!(HireData::default(), p.data.hire);
+        let mut d = p.data.clone();
+        d.hire.radius = 1.0;
+        let text = ron::to_string(&d).unwrap();
+        let start = text.find("hire:").expect("hire is written");
+        // Through the section's closing parenthesis and comma.
+        let mut depth = 0;
+        let mut end = start;
+        for (i, c) in text[start..].char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = start + i + 2;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let without = format!("{}{}", &text[..start], &text[end..]);
+        assert!(!without.contains("hire:"), "{without}");
+        let back = Progression::from_ron(&without).expect("parses without hire");
+        assert_eq!(back.data.hire, HireData::default());
     }
 
     /// GP-23: the shipped monument data lists every kind once, and a

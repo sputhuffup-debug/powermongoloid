@@ -235,8 +235,10 @@ pub enum OfferKind {
     Trait { person: u64 },
     /// `settlement` offers lordship (GP-22). Choices are `[0 = accept, 1 = decline]`.
     Invitation { settlement: u64 },
-    /// A band for hire led by `captain`. Choices are `[0 = hire, 1 = decline]`.
-    Hire { captain: u64 },
+    /// A band of `men` sellswords led by `captain` (a SpawnId), for `price`
+    /// food value from the champion's baggage (GP-27, the Sellswords run
+    /// modifier). Choices are `[0 = hire, 1 = decline]`.
+    Hire { captain: u64, men: u16, price: u16 },
 }
 
 impl OfferKind {
@@ -259,7 +261,7 @@ impl OfferKind {
             OfferKind::DominionBoon { region, .. } => region as u64,
             OfferKind::Trait { person } => person,
             OfferKind::Invitation { settlement } => settlement,
-            OfferKind::Hire { captain } => captain,
+            OfferKind::Hire { captain, .. } => captain,
         }
     }
 }
@@ -275,7 +277,15 @@ impl StateHash for OfferKind {
             }
             OfferKind::Trait { person } => h.u64(person),
             OfferKind::Invitation { settlement } => h.u64(settlement),
-            OfferKind::Hire { captain } => h.u64(captain),
+            OfferKind::Hire {
+                captain,
+                men,
+                price,
+            } => {
+                h.u64(captain);
+                h.u16(men);
+                h.u16(price);
+            }
         }
     }
 }

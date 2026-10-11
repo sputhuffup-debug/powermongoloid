@@ -13,7 +13,7 @@
 use std::process::ExitCode;
 use std::time::Instant;
 
-use sim_core::{Difficulty, Replay, RunConfig};
+use sim_core::{Difficulty, OfferKind, Replay, RunConfig};
 use sim_headless::{
     HeadlessConfig, Scenario, Threading, record_replay, sample_commands, verify_replay_saving,
 };
@@ -357,7 +357,18 @@ fn print_run_summary(app: &bevy_app::App) {
         .pending
         .iter()
         .map(|o| {
-            let choices: Vec<String> = o.choices.iter().map(|&c| card(&boon_names, c)).collect();
+            let choices: Vec<String> = match o.kind {
+                OfferKind::StartBoon | OfferKind::DominionBoon { .. } => {
+                    o.choices.iter().map(|&c| card(&boon_names, c)).collect()
+                }
+                OfferKind::Trait { .. } => {
+                    o.choices.iter().map(|&c| card(&trait_names, c)).collect()
+                }
+                OfferKind::Invitation { .. } => vec!["accept".into(), "decline".into()],
+                OfferKind::Hire { men, price, .. } => {
+                    vec![format!("hire {men} for {price} food"), "decline".into()]
+                }
+            };
             format!("#{} {:?}: {}", o.id, o.kind, choices.join(" / "))
         })
         .collect();
