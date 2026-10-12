@@ -66,6 +66,7 @@ The player interacts only through captains, settlements and the map. Requirement
 | GP-26 | Meta-progression between runs unlocks origins, trait choices and cards, never raw power | Should | M6 |
 | GP-27 | Start draws: a starting boon picked from three, the band's make-up, and one or two run modifiers, all from the seed | Must | M4 |
 | GP-28 | A rival warlord's seat grows on a clock and raids from mid-run; taking it wins the run | Must | M4 (scripted), M5 (rules-based) |
+| GP-29 | A finished run leaves a record of its legends (names, epithets, deeds, fates) for the legends book of past runs; nothing in it changes a later run | Should | M4c (record), M6 (book) |
 
 ## Simulation requirements
 
@@ -117,11 +118,14 @@ The simulation must run 250,000 people across a full world, with up to 20,000 at
 | SIM-31 | Each follower consumes food daily; unfed followers lose morale, then desert, then starve | Must | M3 |
 | SIM-32 | Combat resolves per individual with simple stats (health, attack, defense, equipment) and morale-driven routing | Must | M3 |
 | SIM-33 | Battles in aggregate regions resolve with a statistical model that produces the same expected outcome as per-agent combat | Must | M5 |
-| SIM-34 | Captains, heroes and long-serving soldiers earn traits from what they live through (brave, cruel, beloved, shaken); traits change their AI and morale, and veterans gain ranks | Must | M4 |
+| SIM-34 | Captains, heroes and long-serving soldiers earn traits from what they live through (brave, cruel, beloved, shaken); traits change their AI and morale, and veterans gain ranks | Must | M4 (champion traits), M4c (earned traits) |
 | SIM-35 | The champion ranks up from deeds and picks one of three traits per rank; once per run, a captain succeeds a fallen champion | Must | M4 |
 | SIM-36 | Soldiers rank up by battles survived; ranks change stats and desertion | Must | M4 |
 | SIM-37 | Equipment tiers are goods made by settlements of a sufficient tier; gear sets combat stats; bows are ranged | Must | M4b |
 | SIM-38 | Wild foraging feeds a landless band at a small rate, from wild food that depletes and regrows | Must | M4 |
+| SIM-39 | Every death in battle records who killed whom and how; notable deaths are told one by one, and the rest are counted into the battle's report | Must | M4c |
+| SIM-53 | Soldiers keep a service record (kills, battles, wounds, deeds) that outlives desertion and, on death, is kept for anyone told or named; they earn one epithet by rule, which says why | Must | M4c |
+| SIM-54 | A few soldiers of great fame in each faction become legends: a legend steadies nearby men a little and their death shakes the army; legends gain no stats and are not heroes | Must | M4c |
 
 ### Information
 
@@ -267,6 +271,7 @@ The look is a clean, low-poly 3D isometric-style world that stays readable with 
 | RND-06 | Render positions interpolate between the last two sim ticks so motion is smooth at any sim speed | Must | M2 |
 | RND-07 | Each settlement has a town style drawn from a world building tradition (see docs/TOWNS_DESIGN.md), assigned per seed among styles that suit its site; a style sets layout and building looks, never building purpose | Must | M4b |
 | RND-08 | Follow-cam on any person, time-lapse of a settlement's growth, and a photo mode | Should | M4b |
+| RND-09 | Living legends are marked on the map; a cairn stands where a legend fell, and a memorial stone in their home village | Should | M4c |
 | UI-01 | Captain panel: orders, posture slider, follower count, food carried, morale | Must | M3 |
 | UI-02 | Settlement panel: population by occupation, stockpiles, food security in days, loyalty, owner | Must | M2 |
 | UI-03 | Click any villager to see name, job, needs, current action and memories ("why is this person doing that") | Must | M2 |
@@ -275,7 +280,8 @@ The look is a clean, low-poly 3D isometric-style world that stays readable with 
 | UI-06 | Strategic map view at max zoom-out showing regions, settlements and known armies as icons | Should | M5 |
 | UI-07 | Debug UI (egui): tick time per system set, entity counts by detail level, region LOD state, RNG seed | Must | M0 |
 | UI-08 | Settlement panel shows faith and piety; heroes are visibly distinct and their inspector explains their decisions | Must | M4 |
-| UI-09 | Chronicle: an automatic history of the island, short biographies of settlements and named characters, end-of-battle reports and an end-of-campaign timeline | Must | M4 |
+| UI-09 | Chronicle: an automatic history of the island, short biographies of settlements and named characters, end-of-battle reports and an end-of-campaign timeline | Must | M4, M4c (biographies) |
+| UI-10 | Kill lines, battle reports and biographies are told from phrase banks in data, brutal by default and mild by choice; the choice is a viewer setting the game remembers, and it never changes the simulation | Must | M4c |
 
 ## Non-functional requirements
 
@@ -293,6 +299,7 @@ Reference machine: 8-core desktop CPU from 2022 or later, 16 GB RAM, a mid-range
 | NFR-06 | Memory at full world | ≤ 4 GB |
 | NFR-07 | Save or load full world | ≤ 3 seconds |
 | NFR-08 | Determinism | Same seed + same command stream → bit-identical state hash after N ticks, on the same build and platform |
+| NFR-09 | Saga bookkeeping (kill records, service records, legends) | At most +2% on the median (of three runs) mean tick of the `--battle 7500` clash, with and without the saga's run effects forced on (`--saga-bench`), over an M4 baseline recorded in docs/m4c/; no allocation per blow |
 
 ### Determinism rules
 
@@ -312,7 +319,7 @@ Reference machine: 8-core desktop CPU from 2022 or later, 16 GB RAM, a mid-range
 
 ## Milestone roadmap
 
-Seven milestones, plus M3b "Developer handbook" and M4b "Living towns" (added 2026-10-06), take the project from an empty repo to a playable campaign; M3 is the go/no-go point for the core fantasy. Each milestone ends only when every acceptance criterion passes and the build is green.
+Seven milestones, plus M3b "Developer handbook" and M4b "Living towns" (added 2026-10-06) and M4c "Saga" (added 2026-10-12), take the project from an empty repo to a playable campaign; M3 is the go/no-go point for the core fantasy. Each milestone ends only when every acceptance criterion passes and the build is green.
 
 ### M0: Skeleton
 
@@ -368,8 +375,23 @@ One complete, playable hour: a roguelite run from a wandering band to the rival 
 - [x] The champion ranks up and picks traits, soldiers rank up, and a captain succeeds a fallen champion once (`tests/champion.rs`)
 - [x] The rival grows on its clock and raids from mid-run; taking its seat wins; a scripted bot wins most fixed seeds (`tests/rival.rs`; `tests/bot_run.rs`, ignored in the normal suite and run in release by CI: 5 of 5 seeds won on days 18-31, 2026-10-09; again 5 of 5, on days 15.5-26.3, after ADR 0018, 2026-10-12)
 - [x] Save and load restore an identical state hash (`tests/save_load.rs`, which also checks NFR-07's 3 s; `every_hashed_type_is_saved`)
-- [x] The chronicle tells the run with causes; the pacing director keeps runs free of long dead stretches (`tests/chronicle.rs`, `tests/director.rs`, and the quiet limit checked over every `bot_run` seed). UI-09's short biographies, and UI-04's knowledge-age and supply-route overlays, are not built in M4
+- [x] The chronicle tells the run with causes; the pacing director keeps runs free of long dead stretches (`tests/chronicle.rs`, `tests/director.rs`, and the quiet limit checked over every `bot_run` seed). UI-09's short biographies, and UI-04's knowledge-age and supply-route overlays, are not built in M4 (the biographies are planned for M4c)
 - [ ] **Playtest:** a run takes about an hour, and two seeds feel different in their first ten minutes (playtest: `docs/M4_PLAYTEST.md`)
+
+### M4c: Saga
+
+Combat gets its stories, after the M4 playtest and before M4b: brutal kill lines (mild on request) where only notable deaths are told and the rest are summed up, battle reports with their moments, service records and epithets earned by deeds, the traits soldiers earn from what they live through (SIM-34's triggers), and a few legends per faction who steady nearby men, shake their army when they fall and leave a cairn. It also builds UI-09's biographies and the end screen's legends, and writes each run's legends down for M6's book, with no power carried between runs. Design: `docs/SAGA_DESIGN.md`, plan: `docs/M4C_PLAN.md`.
+
+- [ ] Every death by a blow names its killer and how it happened (armed or bare-handed, fleeing, last stand, one blow), and a rebel's kill is credited to the rebels (`tests/saga.rs`)
+- [ ] Captains, the champion and legends are always told; any other death is told only if it clears its battle's rising bar, at most 10 a battle and 8 told deaths a tick; at 8x the feed shows only lines about your people or a legend (at most 8 a battle over every `bot_run` seed); a report's "more died" equals its losses minus its named dead (`tests/saga.rs`)
+- [ ] Both sides' reports of a fight share its battle number and name; reports name first blood, who ran first, when the army broke, the told deaths and the best killer, and in a run an army killed to the last man still gets its report (`tests/saga.rs`)
+- [ ] In a run, deeds earn one epithet by rule, and Brave, Shaken, Cruel and Beloved are earned from what a soldier lived through; each acts only through its holder (their own morale, aim and desertion, and a captain's own dealings), and a person without one, under a captain without one, behaves exactly as before (`tests/saga_traits.rs`)
+- [ ] Legends rise by fame, at most three enlisted per faction; they steady men within 8 tiles, and their death shakes their army once and pauses the game for your own (`tests/legends.rs`; a `game_ui` test of the pause; `tests/bot_run.rs`: still 3 of 5 seeds won, and a player legend on at least 3 of them)
+- [ ] Brutal and mild banks have the same keys; every line names its key's facts (killer, victim, place or count) and uses only its key's slots, though mild may leave out flavour such as the wound; no gendered words; feed lines fit one feed row; the tone never changes the state hash or a replay (`tests/saga_words.rs`)
+- [ ] The inspector shows the biographies of soldiers and settlements, the end screen lists the run's legends, foes remembered and the fallen, and cairns mark where legends fell (UI-09, RND-09)
+- [ ] A finished run writes its legends record (facts and names, no sentences), and no sim crate reads it (`tests/saga.rs`)
+- [ ] NFR-09 holds against the M4 baseline in docs/m4c/, with and without `--saga-bench`; developed, skirmish and `--battle` stdout are byte-identical to M4's; saves and determinism hold (`tests/save_load.rs`, `tests/determinism.rs`)
+- [ ] **Playtest:** after a run you can name a legend and say how they fell, at least one death landed, brutal reads grim without numbing and mild reads sober without being dry (playtest: `docs/M4C_PLAYTEST.md`)
 
 ### M4b: Living towns
 

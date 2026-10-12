@@ -7,7 +7,8 @@ in commits, tests and comments.
 
 ## Current milestone
 M4 "Rise" built 2026-10-09 (roguelite runs; docs/PROGRESSION_DESIGN.md, plan docs/M4_PLAN.md), awaiting the playtest in docs/M4_PLAYTEST.md.
-(M0 complete 2026-10-05, M1, M2 and M3b complete 2026-10-06, M3 complete 2026-10-07, M4 built 2026-10-09; update this line as milestones complete)
+Next: M4c "Saga" (kill lines, battle moments, epithets, earned traits, legends; design docs/SAGA_DESIGN.md) is planned in docs/M4C_PLAN.md, awaiting go; it follows the M4 playtest and comes before M4b.
+(M0 complete 2026-10-05, M1, M2 and M3b complete 2026-10-06, M3 complete 2026-10-07, M4 built 2026-10-09, M4c planned 2026-10-12; update this line as milestones complete)
 
 ## Hard rules
 - sim_* crates never depend on rendering, windowing, audio or asset crates.
