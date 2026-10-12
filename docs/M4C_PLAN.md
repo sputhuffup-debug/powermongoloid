@@ -1,18 +1,18 @@
 # M4c Plan: Saga
 
-Status: **planned 2026-10-12 (revised the same day after review, and again the same day for your follow-up decisions), awaiting your go.** M4c starts after the M4 playtest (`docs/M4_PLAYTEST.md`) and comes before M4b.
+Status: **planned 2026-10-12 (revised the same day after review, again for your follow-up decisions, and once more after a second review of those against the code), awaiting your go.** M4c starts after the M4 playtest (`docs/M4_PLAYTEST.md`) and comes before M4b.
 Design: `docs/SAGA_DESIGN.md` (draft 2026-10-12; all your decisions are recorded there). Spec: `docs/SEED.md` § "M4c: Saga".
 
 M4c gives combat its stories, and every run its oddities. Every death names its killer and how it happened. Notable deaths get a brutal line, or a mild one if you choose, and the rest are summed up in the battle's report. Every villager in a run has a quirk or two, and the pacing director lets small things go wrong. Soldiers keep a record, earn an epithet (flattering or not), and sometimes die in ways people retell. Captains and long-serving soldiers earn Brave, Shaken, Cruel or Beloved. A few become legends who steady the men near them, and whose death shakes an army, pauses your game and leaves a cairn. Weapons that kill someone who matters get names and change hands; households march together, grieve and avenge; feuds start at dice. Everything is told in one voice, deadpan dark. The end screen remembers it all, and a small record of each run is kept for M6's book.
 
-**The milestone is bigger now.** Your follow-up (quirks, mishaps, mocking epithets and absurd deaths, named weapons, kin and moods) adds about half again to the first plan: the first plan's whole is about two thirds of this one. **A split is sensible:**
-- **Part 1, "Deaths and oddities"** (steps 1–8, about 57%): kill lines in the game, quirks, mishaps, battle moments, deeds and epithets (honourable and mocking), absurd deaths and rescue records. It ends with a short playtest of its own. Every run is already different, and the feed already speaks.
-- **Part 2, "Legends and kin"** (steps 9–15, about 43%): earned traits, legends, named weapons, kin, friends, rivals and moods, biographies and the end screen, the run record, docs and the full playtest.
+**The milestone is bigger now.** Your follow-up (quirks, mishaps, mocking epithets and absurd deaths, named weapons, kin and moods) makes it about **1.6 times** the first plan: the four new steps (quirks, mishaps, weapons, kin) are a third of the whole, and the additions folded into existing steps (mocking epithets, ironies and rescues in step 8, the odd in step 7, the voice and feed forms in step 3, richer biographies in step 13) are the rest. **A split is sensible:**
+- **Part 1, "Deaths and oddities"** (steps 1–8, about 60%): kill lines in the game, quirks, mishaps, battle moments, deeds and epithets (honourable and mocking), absurd deaths and rescue records. It ends with a short playtest of its own. Every run is already different, and the feed already speaks.
+- **Part 2, "Legends and kin"** (steps 9–15, about 40%): earned traits, legends, named weapons, kin, friends, rivals and moods, biographies and the end screen, the run record, docs and the full playtest.
 
 You can stop after part 1 for a look, and part 2 can slip without leaving anything half-built.
 
 The steps are ordered to deliver value early:
-- **The kill lines you asked for reach the game at step 4,** about 27% of the way in.
+- **The kill lines you asked for reach the game at step 4,** about a quarter of the way in (26%).
 - **Quirks (step 5) and mishaps (step 6) come next,** because they make every run different soonest. From step 6, no two runs read alike.
 - **Steps that change how a run plays, by design:** 5 (quirks), 6 (mishaps), 8 (the Vain quirk's epithet effects), 9 (earned traits), 10 (legends), 11 (looting named weapons) and 12 (kin and moods). Each is gated by `bot_run`.
 - **Steps 1 and 7 may shift a run slightly,** and are gated by `bot_run`. Step 1's rebel kill credit changes the player's kill count, which weights dominion boon offers. Step 7 makes a wiped army's `Battle` notable, which the pacing director sees.
@@ -25,7 +25,7 @@ The steps are ordered to deliver value early:
 | SIM-53 | Service records, deeds and epithets, honourable and mocking | `sim_military::saga`, `sim_military::veterans` (`end_battles`), `sim_military::orders` |
 | SIM-34 | Earned traits; the champion's picked traits stay as built | `sim_military::saga`, consumers in `soldiers`, `upkeep`, `combat` and `orders` |
 | SIM-54 | Legends: rise, aura, death shock | `sim_military::saga`, `index` (`LegendIndex`), `soldiers`, `upkeep`, `combat` |
-| SIM-55 | Quirks dealt per person, acting through their holder | new `sim_agents::quirks`, `sim_agents::ai`, `sim_agents::act`, `sim_military::veterans` (cached nudges), `soldiers`, `upkeep`, `spawn`, `progression::setup_run` |
+| SIM-55 | Quirks dealt per person, acting through their holder | new `sim_agents::quirks` (the deck in `villagers.ron`), `sim_agents::ai`, `sim_agents::act`, `sim_military::veterans` (cached nudges, from `progression.ron` `saga.quirks`), `soldiers`, `upkeep`, `spawn`, `progression::setup_run` |
 | GP-30 | Mishaps from the pacing director | `sim_military::director`, new `sim_military::mishaps`, `sim_military::saga` (`Mood`) |
 | SIM-56 | Named weapons and their fates | `sim_military::saga`, `combat` (`casualties`), `orders` (`arm_followers`, barter, `equip`, `enlist`), `upkeep` (`apply_desertions`) |
 | SIM-57 | Kin, friends, rivals and moods | `sim_military::saga`, `combat`, `veterans` (`end_battles`), `soldiers` (the vengeance aim), `mishaps` (the brawl) |
@@ -33,7 +33,7 @@ The steps are ordered to deliver value early:
 | UI-09 | Battle-report moments; biographies of people and settlements | `sim_core::events` (`BattleReport`), `sim_military::saga` (words), `game_ui` panels and end screen |
 | RND-09 | Legend marks, cairns, memorial stones | `game_render` |
 | GP-29 | The run record for M6's legends book | `sim_military::saga::run_record`, `game_app` (writes it), `sim_headless` (`--legends-out`) |
-| NFR-09 | The saga's cost in big battles and on the run island | `sim_headless --timings` (`--battle 7500` with and without `--saga-bench`, and `--run`), `cargo bench -p sim_headless` |
+| NFR-09 | The saga's cost in big battles and on the run island | `sim_headless --timings` (`--battle 7500` with and without `--saga-bench`; a run's live ticks, `--run --ticks 7200`; a bot run's live windows, with the saga's own spans), `cargo bench -p sim_headless` |
 
 **Not in M4c:**
 - **M4b:** heroes (SIM-51, SIM-52), which may reuse the legend aura; hero memorials raised by saved villages (SIM-58), which read M4c's rescue records; animals with names (which make Fears geese literal); weather quirks such as Hates rain; stale food in mood notes; weapon kinds and named injuries, which come with the equipment tiers; and healing.
@@ -48,18 +48,18 @@ The steps are ordered to deliver value early:
 | Every death by a blow names its killer and how it happened, and a rebel's kill is credited to the rebels | **Test `kill_records_name_the_killer`** (sim_military unit, hand-built world): a killing blow records victim, killer, credited side and one-blow. A second swing at the dead records nothing. The manner bits (armed, fleeing, last stand) are set in `casualties`. **Scenario `rebels_kill_for_themselves`** (`tests/tests/saga.rs`, run preset): a conquered village with a small garrison revolts. Every rebel kill counts for faction 0 in `ArmyStats`, the garrison's report lists faction 0 among its foes, and a champion slain by rebels is told as killed by the villagers. |
 | Captains, the champion and legends are always told; any other death only if it clears its battle's rising bar, at most 10 a battle and 8 told deaths a tick; the feed at 8x shows only lines about your people or a legend; the report's "more died" matches | **Scenario `notable_deaths_follow_the_rules`** (1,000 a side, seed 42, 3,000 ticks). Every captain's death is told. Per battle, at most 10 tier-B deaths are told, and at seed 42 the big battle tells between 4 and 10. No tick tells more than 8 deaths unless they're all tier A. Every told line raised the bar. Told plus untold equals deaths, and every named person's death is kept. Each report's "more died" equals its losses minus its named dead. **Scenario `battles_share_a_number`:** two armies meeting get one battle number, place and ordinal; a third army striking one of them joins it. **`bot_run`:** over every seed, at most 8 deaths a battle pass `saga::feed_filter` at 8x. |
 | In a run, every person has one or two quirks from their own stream; each acts only through its holder; nobody without one changes | **`tests/tests/quirks.rs`:** `quirks_are_dealt_per_person`, `quirks_act_through_their_holder` and `sweetheart_walks_home`, as in step 5. `village_day` and `famine` pass unchanged. |
-| The director's mishaps come from real state, do what their lines say, never touch the champion, a captain or a legend, never kill more than the rules allow, never empty a baggage or delay a march toward a fight, and never reset the quiet clock | **`tests/tests/mishaps.rs`:** `each_mishap_does_what_it_says`, `mishaps_never_wipe_a_run` and `mishaps_are_not_notable`, as in step 6. **`bot_run`:** the guards hold over every seed; mishap counts by kind per seed in the step notes. |
+| The director's mishaps come from real state, do what their lines say, never touch the champion, a captain or a legend, never kill more than the rules allow, never empty a baggage, never override an order or delay a march toward a fight, and never count as notable events | **`tests/tests/mishaps.rs`:** `each_mishap_does_what_it_says`, `mishaps_never_wipe_a_run` (all three personalities, compressed data) and `mishaps_are_not_notable` (a unit test and a stubbed-effects scenario), as in step 6. **`bot_run`:** the guards hold over every seed; mishap counts by kind per seed in the step notes. |
 | Battle reports name first blood, who ran first, when the army broke, the told deaths, the best killer and anything odd; in a run, an army killed to the last man still gets its report | **Scenario `moments_reach_the_report`** (two squads of 20, seed 42): both armies' reports carry one battle number and name, and the same first blood. Who ran first is the soldier whose rout set the turning point. The broke tick is the first with 30% of the living members routing. The best killer is the top killer even if killed later. **Scenario `wiped_army_gets_a_report`** (run preset, a band of 5 against 40): a report marked wiped, with a `Battle` entry. |
-| In a run, deeds earn one epithet by rule, honourable or mocking, and a mocking one never replaces an honourable one; absurd deaths are told only for causes the sim produced; answered drive-off requests record their heroes | **`tests/tests/saga.rs`:** `deeds_are_recorded_once`, `epithets_follow_rank`, `mocking_epithets_follow_rank`, `absurd_deaths_are_real` and `rescues_are_recorded`, as in step 8. |
+| In a run, deeds earn one epithet by rule, honourable or mocking, and a mocking one never replaces an honourable one; absurd deaths are told only for causes the sim produced; an answered drive-off request records its heroes only when they fought raiders there | **`tests/tests/saga.rs`:** `deeds_are_recorded_once`, `epithets_follow_rank`, `mocking_epithets_follow_rank`, `absurd_deaths_are_real` and `rescues_are_recorded`, as in step 8. |
 | In a run, Brave, Shaken, Cruel and Beloved are earned from experience; each acts only through its holder (their own morale, aim and desertion, and a captain's own dealings), and anyone without one behaves exactly as before | **`tests/tests/saga_traits.rs`:** `brave_and_shaken`, `cruel_and_beloved`, `picked_and_earned_are_separate` and `earned_traits_are_exact_no_ops`, as in step 9. |
 | Legends rise by fame, at most three enlisted per faction; they steady men within 8 tiles; their death shakes their army once and pauses your game for your own | **`tests/tests/legends.rs`:** `legend_rises_at_fame`, `legend_steadies_men` and `legend_death_shakes_once`, as in step 10. **A `game_ui` test** (`legend_fell_pauses_for_your_own`): the feed pauses for your legend's `LegendFell` and not for an enemy's. **`bot_run`:** still wins 3 of 5 seeds, and a player legend rises on at least 3 of them. It prints legends, epithets and earned traits per seed. |
 | A weapon that kills a captain, the champion, a legend or a monument's beast is named, and is always in exactly one place as it is looted, passed on, put in the baggage, sold, taken home or lost | **`tests/tests/weapons.rs`:** `a_weapon_is_named_by_a_notable_kill` and `named_weapons_change_hands`, as in step 11. |
 | Kin grieve and avenge; friends and rivals form by rule and feuds end; moods are bounded, expire and act only through their holder; the inspector explains a soldier's mood | **`tests/tests/kin.rs`:** `kin_grieve_and_avenge`, `friends_and_rivals_form_by_rule`, `moods_are_bounded_and_expire` and `moods_are_exact_no_ops`, as in step 12. A `game_ui` unit test of the mood note's wording from a hand-built record. |
 | Brutal and mild banks have the same keys; every line names its key's facts and uses only its key's slots; no gendered words; the deadpan lint passes; feed lines fit the feed; the tone never changes the simulation | **`tests/tests/saga_words.rs`:** a lint of the real `saga.ron` (with the voice rules) and a golden test on a small fixture bank (both in step 3, extended as banks are added). **Test `tone_is_not_state`:** a bot run's chronicle, told in both tones, reads differently, while its state hash and a recorded replay are identical. |
-| The feed stays readable at 8x | **`bot_run`:** over every seed, at most 8 deaths a battle and at most 2 mishap, weapon, kin and feud lines a game day pass the 8x filter. **A `game_ui` test** that the throttle drops tier-B and saga-note lines at 8x and folds the overflow. |
+| The feed stays readable at 8x | **A `game_ui` test** that the throttle drops tier-B and saga-note lines at 8x, folds the overflow, and never passes more than 2 saga lines a game day at 8x, whatever comes in (a hard cap, on every difficulty). **`bot_run`:** over every seed, at most 8 deaths a battle pass the 8x filter, and the saga lines it passes are counted. |
 | The inspector shows the biographies of soldiers and settlements; the end screen lists legends, foes remembered, the fallen and the run's oddities; cairns mark where legends fell | **Unit tests** of the biography words: a dead legend, a living soldier, a spawned soldier and a settlement, in both tones; nobody named is ever told as "a soldier". **Screenshots** of each surface in the step notes. |
 | A finished run writes its legends record, and no sim crate reads it | **Test `run_record_lists_legends`** (`tests/tests/saga.rs`): the bot plays seed 1 to the end of its run. Its record round-trips through RON, names every legend and gives each a fate, lists its named weapons and rescues, with names written as strings. An abandoned run writes one with outcome `Abandoned`. |
-| NFR-09 holds; developed, skirmish and `--battle` stdout are unchanged; saves and determinism hold | `--battle 7500 --timings --stats-every 250` and, from step 9, the same with `--saga-bench`; from step 5, `--run --seed 7 --difficulty steady --ticks 24000 --timings`. For each, the median of three runs of the mean tick rises at most 2% over the M4 baselines recorded at step 1. The bench. The stdout comparisons in "What stays unchanged". **`save_load`:** records, quirks, moods, bonds, weapons, legends and moments round-trip, `every_hashed_type_is_saved` covers the new types, and a format-1 save is refused. The determinism tests, single- and multi-threaded. |
+| NFR-09 holds; developed, skirmish and `--battle` stdout are unchanged; saves and determinism hold | `--battle 7500 --timings --stats-every 250` and, from step 9, the same with `--saga-bench`; from step 5, the run island's live window, `--run --seed 7 --difficulty steady --ticks 7200 --timings --stats-every 2400` (no `run ended` before its end). For each, the median of three runs of the mean tick rises at most 2% over the M4 baselines recorded at step 1. A bot run's live windows (`--run --bot --seed 42 --ticks 96000 --timings --stats-every 250`, before the win) at steps 6, 12 and 15: the saga's own spans at most 2% of the mean tick. Never a whole-run mean that includes frozen ticks after a run ended. The bench. The stdout comparisons in "What stays unchanged". **`save_load`:** records, quirks, moods, bonds, weapons, legends and moments round-trip, `every_hashed_type_is_saved` covers the new types, and a format-1 save is refused. The determinism tests, single- and multi-threaded. |
 | **Playtest:** you can name a legend after a run and say how they fell; a death landed; a mishap or an odd death made you laugh or wince, and none felt unfair; brutal reads grim, not numbing; mild reads sober, not dry; the deadpan reads dry, not silly | You play two runs, one in each tone (checklist `docs/M4C_PLAYTEST.md`; part 1's checklist is written in step 8, the whole in step 15). |
 
 ## What stays unchanged
@@ -68,11 +68,12 @@ The steps are ordered to deliver value early:
   - developed: `sim_headless --seed 42 --ticks 4801 --stats-every 600`
   - skirmish: `--skirmish --seed 42 --ticks 6000 --stats-every 2000`
   - battle: `--battle 1000 --seed 42 --ticks 3000 --stats-every 600`
-- **The M2 and M3 tests** pass unchanged, with today's tuning: `village_day`, `famine`, `army_march`, `posture`, `starving_army` and `orders`. Every saga effect is run-only, and is an exact no-op without a trait, quirk, mood, bond or legend. Outside a run nobody has a quirk, so the villager AI scores exactly as today. `villagers.ron` gains `quirks` and `director.ron` gains mishap sections: their data text is hashed, so the developed world's state hash changes once at steps 5 and 6, and its behaviour doesn't.
+- **The M2 and M3 tests** pass unchanged, with today's tuning: `village_day`, `famine`, `army_march`, `posture`, `starving_army` and `orders`. Every saga effect is run-only, and is an exact no-op without a trait, quirk, mood, bond or legend. Outside a run nobody has a quirk, so the villager AI scores exactly as today. `villagers.ron` and `director.ron` hash their data text, so the developed world's state hash changes whenever either gains a section (steps 5, 6, 10 and 12: quirks, mishaps, `LegendFell` in `auto_pause`, the brawl's row), and its behaviour doesn't.
+- **The run-preset tests** (`champion`, `chronicle`, `conquest`, `director`, `dominion`, `gather`, `invitation`, `monuments`, `rival`, `run_start`, `save_load`, `sellswords`, `wanderers`) can move once quirks (step 5) and mishaps (step 6) act in every run. They're re-run in both steps. Where one's tuning moves only because the run took another path, it opts out through data it already loads (an empty `quirks.deck` and an empty `mishap_kinds` both deal nothing) instead of being retuned, and the dedicated `quirks` and `mishaps` tests run with both on. `conquest` and `invitation` guard loyalty drift (CLAUDE.md), which Pious changes: they're re-run after step 5 with quirks on, and opt out only if the drift they guard is what moved.
 - **Replays.** The replay format (`REPLAY_FORMAT` 5) and the command kinds don't change: M4c adds no command, and the tone is never an input.
   - Old replay files still parse, but their checkpoint hashes stop matching after step 2, as after every M4 step. Step 1 already changes those in which rebels fought. Re-record any you want to keep.
   - In every step, a fresh run replay records and verifies, multi- and single-threaded.
-- **Pacing.** The director's quiet clock sees only `LegendFell` and a wiped army's `Battle` as new notable events. Mishaps are chronicled but not notable, and fast-forward stops on nothing else new. The raider schedule is unchanged by mishaps (tested in step 6).
+- **Pacing.** The director's quiet clock sees only `LegendFell` and a wiped army's `Battle` as new notable events. Mishaps are chronicled but never notable, and fast-forward stops on nothing else new (tested in step 6). Mishaps do change a run's state, so a run with them unfolds differently, as any change to a run does.
 - **`FactionModifiers` is untouched.** Nothing personal goes into it, and the champion's picked traits still act faction-wide.
 - **The chronicle's existing entries keep their words, with two exceptions.** The `Battle` line gains faction nouns ("against the rival's band" instead of "against Rival") and the battle's name (steps 3 and 7), and `RequestDone` names the hero of a rescue (step 8). `chronicle.causes` gains one phrase.
 - **`populate`'s draws are untouched** (`docs/m4/BUILD_GUIDE.md` G10): quirks come from their own stream per SpawnId, after population.
@@ -83,7 +84,7 @@ The steps are ordered to deliver value early:
 1. **Build and lint:** `cargo fmt --check`; `cargo clippy -j 2 --workspace -- -D warnings`; `cargo test -j 2 --workspace`; `RUSTDOCFLAGS="-D warnings" cargo doc -j 2 --workspace --no-deps`.
 2. **Determinism:** the determinism tests, plus a run replay. Record `--run --seed 42 --ticks 3000 --commands 50 --record run.ron`, then verify it with `--replay run.ron` and `--replay run.ron --single-threaded`.
 3. **Invariance:** the three stdout comparisons above.
-4. **Cost, for sim steps:** `--battle 7500 --seed 42 --timings --stats-every 250`, three runs, against the baseline in `docs/m4c/` (NFR-09). From step 5, also `--run --seed 7 --difficulty steady --ticks 24000 --timings`, three runs, against its baseline. From step 9, also `--battle 7500` with `--saga-bench`.
+4. **Cost, for sim steps (NFR-09), on live ticks only:** `--battle 7500 --seed 42 --timings --stats-every 250`, three runs, against the baseline in `docs/m4c/`. From step 5, also the run island's live window, `--run --seed 7 --difficulty steady --ticks 7200 --timings --stats-every 2400`, three runs, against its baseline, after checking stderr has no `run ended` line before tick 7,200 (if it does, compare up to the last full window before the end, and say so). From step 9, also `--battle 7500` with `--saga-bench`. At steps 6, 12 and 15, also a bot run's live windows (`--run --bot --seed 42 --ticks 96000 --timings --stats-every 250`, the windows before the win): the saga's own spans at most 2% of the mean tick, with the whole-tick mean and stage times recorded beside it. A whole-run mean that includes frozen ticks after a run ended is never a measurement.
 5. **Docs in the same commit** (CLAUDE.md "Developer handbook"):
    - `docs/dev/DATA.md` for data;
    - `docs/dev/ARCHITECTURE.md` for systems and slots;
@@ -97,7 +98,7 @@ Step notes go in `docs/m4c/`, as M4's went in `docs/m4/`.
 
 ## Build order
 
-Sizes are shares of the enlarged milestone: S is up to 3%, M about 6–8%, L about 10–11%. The first plan's steps keep their relative sizes, scaled to two thirds.
+Sizes are shares of the enlarged milestone: S is 2–3%, M 6–8%, L 9–10%. The first plan's steps keep their relative sizes, scaled to about 0.6, except where the follow-up added work to them (steps 3, 7, 8 and 13, which grew).
 
 ### Part 1: Deaths and oddities
 
@@ -105,7 +106,8 @@ Sizes are shares of the enlarged milestone: S is up to 3%, M about 6–8%, L abo
 - **What.**
   - **The baselines first.** Three runs each, recorded in `docs/m4c/baseline.md` with the spread between runs:
     - `--battle 7500 --seed 42 --timings --stats-every 250` on the M4 build: deaths a tick, the clash window's mean tick, and the Act, Decide and Needs stage times;
-    - `--run --seed 7 --difficulty steady --ticks 24000 --timings`: the mean tick and the Decide and Needs stage times on the run island, where 4,000 to 5,000 villagers live.
+    - the run island's live window, `--run --seed 7 --difficulty steady --ticks 7200 --timings --stats-every 2400`: the mean tick and the Decide and Needs stage times, where 4,000 to 5,000 villagers live. Not `--ticks 24000`: without a bot the run ends on day 3.7 (tick 8,969), and the frozen ticks after it (0.03 ms each, 63% of that command) would swamp the mean;
+    - a bot run's live windows, the M4 convention (`docs/m4/PROGRESS_BOT.md`): `--run --bot --seed 42 --ticks 96000 --timings --stats-every 250`, averaging the windows before the win, with the stage times.
   - `Casualties.slain_by` becomes `kills`, a list of `Kill`: victim, killer, the credited side, and one blow (the victim was at full health).
   - A rebel's kill is credited to the independents, matching how `casualties` already treats rebel victims. A rebel is militia whose `against` is its own allegiance. The credit applies in `ArmyStats.kills`, in the garrison's `battle_foes`, and in the champion's cause of death.
 - **Where.** `crates/sim_military/src/combat.rs` (`Casualties`, the kill branch of `resolve_strikes`); `crates/sim_military/src/progression/champion.rs` (`cause_of_death` reads the kills through a small helper); `crates/sim_military/src/veterans.rs` (its unit test asserts on the scratch); `crates/sim_military/src/save.rs` (`after_load` clears the scratch).
@@ -115,17 +117,18 @@ Sizes are shares of the enlarged milestone: S is up to 3%, M about 6–8%, L abo
 - **Gate note.** The player's kills weight the dominion boon offers, so the fix can change a run: re-run `bot_run`.
 - **Ships as:** a fix. When rebels fight, the run summary's kills and the champion's cause of death come out right.
 
-### Step 2: Battle numbers, service records and told deaths (L, 10%)
+### Step 2: Battle numbers, service records and told deaths (L, 9%)
 - **What.**
   - **Battle numbers.** The strike loop's battle bookkeeping, in striker SpawnId order, joins two armies into one battle: an army with a number keeps it, one without takes the other's or a new `Saga.next_battle`. A militia blow joins the army it fights. `Captain` gains `battle`, which passes to an heir with `battle_since`. The first blow fixes the battle's place (nearest settlement), ordinal there and terrain, in `Saga`.
   - **Broke.** `build_index` sets `Captain::battle_broke` at the first tick with `saga.broke_share` (0.3) of the army's living members routing, beside `battle_rout`.
-  - **`Veteran` gains three fields:**
+  - **`Veteran` gains four fields:**
+    - `joined`: the tick they enlisted or were spawned, set in `enlist` and at spawn (irony 1 reads it in step 8);
     - `routed`: ran in this battle, set in `soldier_upkeep` on the soldier's own component;
     - `hurt`: the share of health lost to blows this battle, a saturating byte added in the strike loop on the victim's `Veteran`, which is already borrowed;
     - `trade`: the occupation before enlisting, captured in `enlist`.
   - **New module `sim_military::saga`:**
     - `Service`, stored as a sparse-set component so that inserting one never moves a soldier's table row. It has the fields of the design's section 6: trade, home, kills, streak, battles and wounds here, and the rest from steps 6, 8 and 9;
-    - `Saga`: kept deaths (`Fall`, with a `told` flag), battles, per-settlement battle counts, an untold count, `next_battle` and a running digest;
+    - `Saga`: kept deaths (`Fall`, with a `told` flag), battles, per-settlement battle counts, an untold count, `next_battle` and a running digest. **Its hash has two parts:** the append-only parts (`Fall`s, and battles once closed) as lengths and the running digest, folded in when pushed or closed; the parts changed in place (open battles with their lines told and first blood, the counts, `next_battle`) hashed in full. Later steps put their in-place state (weapons, grudges, pending mishap deaths) in the second part and their append-only lists (notes, rescues) in the first;
     - `SagaDeed` ids.
   - **`casualties` gains a first pass** over the kills, in strike order, before anything is despawned. It snapshots each killer, starts or updates their record, counts the streak, and updates the army's best killer (`Captain.battle_best`).
   - **The existing loop** (victim SpawnId order) classifies each death:
@@ -141,6 +144,7 @@ Sizes are shares of the enlarged milestone: S is up to 3%, M about 6–8%, L abo
   - `battles_share_a_number`;
   - `starving_is_not_a_kill`: a starving captain gets a told death with no killer and cause `Starvation`;
   - `records_survive_desertion`: a soldier with kills deserts and re-enlists, and the record keeps its kills;
+  - `saga_hash_sees_every_change`: changing an open battle's lines told or first blood, a per-settlement count or `next_battle` changes the state hash (so does pushing a `Fall`);
   - `save_load`, with the new state round-tripped;
   - the determinism coverage tests.
 - **Docs.**
@@ -148,20 +152,20 @@ Sizes are shares of the enlarged milestone: S is up to 3%, M about 6–8%, L abo
   - ARCHITECTURE: row 5 (the battle bookkeeping and `casualties`' two passes), row 2 (`battle_broke`) and row 6 (`routed`).
   - GLOSSARY: Battle number; Broke, Lost and Held; Service record; Told death and Kept death; Tier; Rising bar. The existing **Battle** entry gains the number.
   - TESTING.
-  - ADR 0019: records hold ids, and the words come late; battles get a number; told deaths live in `Saga`, not in the event feed.
+  - ADR 0019: records hold ids, and the words come late; battles get a number; told deaths live in `Saga`, not in the event feed; `Saga`'s hash has an append-only part (digest) and an in-place part (hashed in full).
 - **Done when.** A battle of any size keeps its told deaths bounded, every death is told, kept or counted, both sides of a fight share its number, the hashes cover the new state, and saves round-trip.
 - **Ships as:** `sim_headless --saga` lists the told deaths in a plain debug form, until step 3 puts words to them.
 
 ### Step 3: Words, tone and the voice (M, 8%)
 - **What.**
-  - **`assets/data/saga.ron`**, embedded at compile time like `worldgen.ron`. The brutal and mild banks share one type, so a key missing from one tone fails to parse. Each key declares its fact slots and flavour slots.
+  - **`assets/data/saga.ron`**, embedded at compile time like `worldgen.ron`. The brutal and mild banks share one type, so a key missing from one tone fails to parse. Each key declares its fact slots and flavour slots, and has its feed variants, a `terse` form (facts only) and, where it wants two sentences, a long form for reports, the inspector and biographies (the design's section 3).
   - **`SagaWords`**, exempt from the hash ("words only; the sim never reads it") and not saved.
   - **`Tone`** as a parameter of `describe`, `describe_entries` and the new words functions. Game call sites pass Brutal until step 4.
   - **The `Teller`:**
     - names the dead from `Saga`'s kept deaths;
     - picks keys most specific first, with militia and rebel victims always on their grave keys and first blood or a streak carried by `{moment}`;
     - fills the slots: the per-person weapon word, the old trade's tool, ground by terrain, `{daypart}` and `{then}` from ticks, beast nouns and faction nouns;
-    - chooses variants by told-death index, never by RNG;
+    - chooses variants by told-death index, never by RNG, and **fits the feed at read time**: a feed variant that, filled with the real names, runs over 72 characters gives way to the next in the stepped order that fits, and to the key's `terse` form if none does;
     - names battles from their number's facts ("the Second Battle of Loweby Fields").
   - **The voice** (the design's section 4): every bank is written deadpan dark, and DATA.md carries its do and don't table.
   - **Headless:** `--saga` prints told deaths and legends after the run, or with `--chronicle`; `--mild` switches the tone.
@@ -173,8 +177,8 @@ Sizes are shares of the enlarged milestone: S is up to 3%, M about 6–8%, L abo
     - at least 6 brutal and 4 mild variants, and every bank shorter than 37;
     - no he, she, his, her, him or hers, and none of the design's gendered nouns;
     - a short deny-list of content;
-    - **the voice:** no `!` or `?`, no word in capitals, no ellipsis outside the fold line, and none of the design's winking and pitying words;
-    - every line that can reach the feed, filled with the longest given name, family name, epithet, weapon name and place in the data, fits 72 characters (one feed row after the "Day N: " prefix); report-only lines fit 110;
+    - **the voice:** no `!` or `?`, no word in capitals, no ellipsis outside the fold line, and none of the design's winking and pitying words, checked after stripping `{slot}` tokens (so `{irony}` isn't the banned word);
+    - **the fit:** every feed variant fits 72 characters (one feed row after the "Day N: " prefix) filled with the data's median given name, family name, epithet, weapon name and place; every key's `terse` form fits 72 filled with the longest; long forms and report-only lines fit 110;
     - every epithet id, deed and earned-trait id has words in both tones (and, as later steps add them, every quirk, mishap kind, irony, mood cause and note kind).
   - **`saga_words_golden`:** a fixture bank inside the test and a scripted duel give exact lines in both tones, so edits to the real bank don't churn it.
   - **`tone_is_not_state`.**
@@ -197,7 +201,7 @@ Sizes are shares of the enlarged milestone: S is up to 3%, M about 6–8%, L abo
   - **Colour** by kind.
   - **Clicking a line** selects the killer if alive, through a UI-side SpawnId lookup, or else moves the camera there.
   - **The tone setting:** "Words: Brutal / Mild" on the new-game screen and as a switch on the feed. `WordsTone` is a game_ui resource, kept in a preferences file next to the saves (game_app does the file IO). The game also takes `--mild`.
-  - **The feed's width.** If 72 characters proves too tight for good lines, widen the feed here, and raise the lint's limit with it.
+  - **The feed's width stays** at 520 px and one row a line: the fit is settled in step 3 (feed variants, the `terse` fallback chosen at read time), not left to a widening here.
   - **Two log-line fixes:** the military log lines that print a SpawnId where a name belongs (a captain's heir, and the champion's successor). `log_line_shown` is kept in step.
 - **Where.** `crates/sim_military/src/saga.rs` (`feed_filter`), `crates/game_ui/src/feed.rs`, `crates/game_ui/src/screens.rs`, `crates/game_app/src/main.rs`, `crates/game_app/src/saves.rs`, `crates/sim_military/src/combat.rs` (`succeed`'s line), `crates/sim_military/src/progression/champion.rs`.
 - **Tests.**
@@ -210,56 +214,60 @@ Sizes are shares of the enlarged milestone: S is up to 3%, M about 6–8%, L abo
 
 ### Step 5: Quirks (M, 7%; run only; bot_run)
 - **What.**
-  - **New module `sim_agents::quirks`:** the `Quirks` component (one or two ids, two bytes), the deck from `villagers.ron` `quirks` (`two_chance`, rows of id, key, weight, `excludes` and effects; `#[serde(default)]`), and `deal`, drawing from `SimSeed::stream(rng_key("sim_agents::quirks") ^ SpawnId, 0)`. A deal depends only on the seed, the deck and the SpawnId.
+  - **New module `sim_agents::quirks`:** the `Quirks` component (one or two ids, two bytes), the deck from `villagers.ron` `quirks` (`two_chance`, rows of id, key, weight, `excludes` and the villager effects; `#[serde(default)]`), and `deal`, drawing from `SimSeed::stream(rng_key("sim_agents::quirks") ^ SpawnId, 0)`. A deal depends only on the seed, the deck and the SpawnId.
   - **Who is dealt, in a run only:** everyone alive at the end of `setup_run` (after `sellswords::setup`, the last setup spawn), and the people `spawn_army` spawns later in the run. Never beasts; Sweetheart is skipped for anyone without a home. `populate` is untouched (G10).
   - **Villager effects** in `ai::decide` (work by phase, farm and pasture work, idle by phase, militia courage, flee radius), `update_needs` (hunger, rest gained asleep), `drift_loyalty` (Pious) and the recruit dealing's willingness (Sweetheart, compared against the same draw as today). Each is skipped entirely when the villager has no `Quirks`. `Factors` grows from four slots to five, so a quirk shows as its own factor in the `DecisionTrace`.
-  - **`Veteran` gains the cached nudges** (break-point offset, morale-target offset, desertion multiplier, hunger multiplier, and the glutton's fed-morale rule), written only by serial steps: the deal, and `enlist` (rebuilt from `Quirks`). `soldiers::decide` reads the break point; `soldier_upkeep` reads the rest. Earned traits (step 9) and moods (step 6) write the same cache later. The sums are clamped as the design's section 8 says.
-  - **New progress slot 13, `saga::settle`** (hourly, every preset, after `director::step`). Here it runs the Sweetheart's walk home (out of battle, within 12 tiles of home: 5% a day, from `sim_military::saga::homesick ^ SpawnId` at the tick, through the ordinary desertion step).
+  - **The soldier side of the deck** lives in `progression.ron` `saga.quirks` (soldier effects and mishap invitations, keyed by quirk id and checked against the deck when the data loads), so sim_agents holds no sim_military id and a soldier-side tweak never edits villagers.ron.
+  - **`Veteran` gains the cached nudges** (break-point offset, morale-target offset, desertion multiplier, hunger multiplier, and the glutton's fed-morale rule), **fixed-point** (`i8` hundredths, `i16` thousandths) so `Veteran` keeps `Eq` and stays small, written only by serial steps: the deal, and `enlist` (rebuilt from `Quirks`). `soldiers::decide` gains a read of `Veteran` for the break point (its query doesn't hold one today); `soldier_upkeep`, which already reads it, takes the rest. Earned traits (step 9) and moods (step 6) write the same cache later. The sums are clamped as the design's section 8 says.
+  - **New progress slot 13, `saga::settle`** (hourly, every preset, after `director::step`). Here it runs the Sweetheart's walk home (a follower out of battle, within 12 tiles of home: 5% a day, from `sim_military::saga::homesick ^ SpawnId` at the tick). Slot 13 runs after this tick's `apply_desertions`, and `tally` clears `Deserters` (exempt, reset on load) at the start of the next tick, so the walk home **sets the hashed, saved `Follower.deserting`** and records the cause; the next tick's `tally` and `apply_desertions` send them home like any deserter.
   - **Acting from later steps:** Fears geese's near-farm mood and Pious's plunder mood need moods (step 6); Vain needs epithets (step 8); the mishap invitations need mishaps (step 6).
   - **Inspector:** the quirk line with tooltips, for villagers and soldiers.
   - **`bot_run`** prints quirk counts per seed.
-- **Where.** `crates/sim_agents/src/quirks.rs` (new), `crates/sim_agents/src/ai.rs`, `crates/sim_agents/src/act.rs` (`update_needs`), `crates/sim_agents/src/loyalty.rs` (`drift_loyalty`), `crates/sim_agents/src/components.rs` (`Factors`), `crates/sim_agents/src/data.rs`, `crates/sim_agents/src/lib.rs` (registration); `assets/data/villagers.ron`; in `crates/sim_military/src/`: `progression/mod.rs` (`setup_run`, slot 13), `spawn.rs`, `veterans.rs` (the nudges), `soldiers.rs`, `upkeep.rs`, `orders.rs` (`enlist`), `saga.rs` (`settle`); `assets/data/saga.ron` (quirk words); `crates/game_ui/src/panels.rs`.
+- **Where.** `crates/sim_agents/src/quirks.rs` (new), `crates/sim_agents/src/ai.rs`, `crates/sim_agents/src/act.rs` (`update_needs`), `crates/sim_agents/src/loyalty.rs` (`drift_loyalty`), `crates/sim_agents/src/components.rs` (`Factors`), `crates/sim_agents/src/data.rs`, `crates/sim_agents/src/lib.rs` (registration); `assets/data/villagers.ron`; in `crates/sim_military/src/`: `progression/mod.rs` (`setup_run`, slot 13, the `saga.quirks` rows), `spawn.rs`, `veterans.rs` (the nudges), `soldiers.rs`, `upkeep.rs`, `orders.rs` (`enlist`), `saga.rs` (`settle`); `assets/data/progression.ron` (`saga.quirks`); `assets/data/saga.ron` (quirk words); `crates/game_ui/src/panels.rs`.
 - **Tests (`tests/tests/quirks.rs`).**
   - `quirks_are_dealt_per_person`: the same seed deals the same quirks; dealing all at once, in reverse order or at spawn gives the same result; one or two each; exclusions hold; beasts, the developed world, the skirmish and `--battle` have none.
   - `quirks_act_through_their_holder`: each row's effect on a hand-built world (a glutton's hunger 1.15× exactly, a coward's break point, a drunkard's morning work score, and so on), and a person without quirks bit-identical to today.
-  - `sweetheart_walks_home`: near home, out of battle, the walk home happens at the documented rate over many hours; far from home, or in battle, never.
+  - `sweetheart_walks_home`: near home, out of battle, the walk home happens at the documented rate over many hours; far from home, or in battle, never; a walk home drawn at slot 13 survives a save and load before the next tick, and the loaded game matches the original.
   - Re-run `village_day`, `famine`, `army_march`, `posture`, `starving_army` and `orders`; `save_load`; the determinism coverage tests.
-- **Docs.** DATA.md (`villagers.ron` `quirks`, and the quirk words); ARCHITECTURE: slot 13, the deal in setup and spawn, the cached nudges; GLOSSARY: Quirk, Cached nudges; TESTING; HOWTO: "Add a quirk"; ADR 0019: quirks dealt per SpawnId, and the amendment to "no new RNG" with the stream keys.
+  - Re-run the run-preset tests ("What stays unchanged"): `champion`, `chronicle`, `conquest`, `director`, `dominion`, `gather`, `invitation`, `monuments`, `rival`, `run_start`, `sellswords` and `wanderers`. One that moves only because the run took another path opts out with an empty `quirks.deck`; `conquest` and `invitation`, which guard loyalty drift, run with Pious on.
+- **Docs.** DATA.md (`villagers.ron` `quirks`, `progression.ron` `saga.quirks`, and the quirk words); ARCHITECTURE: slot 13, the deal in setup and spawn, the cached nudges; GLOSSARY: Quirk, Cached nudges; TESTING; HOWTO: "Add a quirk"; ADR 0019: quirks dealt per SpawnId, and the amendment to "no new RNG" with the stream keys.
 - **Done when.** Every person in a run has one or two quirks, the same for a seed whatever the order; each effect is measured; the guarded stdout is unchanged; `village_day` and `famine` pass unchanged; the run-island cost is within NFR-09; `bot_run` still wins 3 of 5.
 - **Ships as:** villagers who differ. The inspector shows their quirks, and they act on them.
 
 ### Step 6: Mishaps (M, 8%; run only; bot_run)
 - **What.**
-  - **The mishap clock** in `director::step` (slot 12), after the raider check: nothing in the first 24 hours or while a run end is pending; `spacing_hours`, `chance_per_hour`, `max_per_day` and `tension_below` per personality; the battle kinds ignore tension and are capped at one per battle; the player's armies weigh 2 and armies at war with the player 1; beasts, guards and bands for hire are never subjects.
-  - **New module `sim_military::mishaps`** with the kinds of the design's section 11, except the camp brawl (step 12): drunk before battle, bad mutton, a dog at the rations, a wedding on the road, a slip in the shield wall, the victory feast, wandered off, dice, and the goose rout. Each has its condition, its effect, and its guards, enforced in code: never the champion, a captain or a legend as subject; deaths only from the slip and the feast, one ordinary soldier, in armies of 10 or more, one a game day; food never below a day of the army's need; delays only for marches with no foe near; one mishap a day per army.
+  - **The mishap clock** in `director::step` (slot 12), after the raider check: nothing in the first 24 hours or while a run end is pending; `spacing_hours`, `chance_per_hour`, `max_per_day` and `tension_below` per personality; the battle kinds ignore tension and are capped at one per battle; **the side is drawn first** (the player's with `player_share`, 2 in 3, else the side at war with the player; the only side with a candidate if one has none), then an army within it by kind weight and quirk holders; beasts, guards and bands for hire are never subjects.
+  - **New module `sim_military::mishaps`** with the kinds of the design's section 11, except the camp brawl (step 12): drunk before battle, bad mutton, a dog at the rations, a wedding on the road, a slip in the shield wall, the victory feast, wandered off, dice, and the goose rout. Each has its condition, its effect, its drawn **subjects** (only they count it in `Service.mishaps`; army-wide moods count for nobody; the dice loser, never the winner), and its guards, enforced in code: never the champion, a captain or a legend as subject; deaths only from the slip and the feast, one ordinary soldier, in armies of 10 or more, one a game day; food never below a day of the army's need; delays only for marches with no foe near and no open request at their goal; one mishap a day per army. The dice leave no grudge until step 12, and their words pick the variant by outcome.
+  - **Two kinds are new movement,** said so in the design: the goose rout is a **timed flee** (a `geese` mood entry carrying a flee point and an end tick, honoured by `soldiers::decide` while no foe is near, through the rout's movement but marking no `routed`, counting toward no break and opening no desertion roll); wandered off is a **direct move** (set `Position` to a passable tile 4 to 8 tiles away with no hostile army within `threat.radius`, reset `Motion`, and let the rally field bring them back).
   - **`Mood`** (sparse): up to four timed entries, clamped, expired hourly in `saga::settle`, and written into `Veteran`'s cached nudges. Here it carries the mishap moods (`sick`, `hungover`, `wedding`, `feasted`, `dice`, `geese`) and the quirk moods that need it (Fears geese near farms, Pious after a plunder).
-  - **`Captain::halt_until`**, checked by `run_orders` for a halted march.
+  - **`Captain::halt_until`**, checked by `run_orders` for a halted march, and cleared by any new command for that captain in `apply_commands` and by a hostile army within `threat.radius` in `run_orders`.
   - **`SimEventKind::Mishap`**, chronicled and not notable, so the quiet clock, the run's first event and fast-forward don't see it.
-  - **A mishap's death** sets health to 0 and notes its manner in `Saga`; `find_fallen` finds it on the next tick (G4), and `casualties` tells it on its `mishap_*` key as a tier-A `Fall`.
-  - **The feed:** mishap lines, dimmer; at 8x only those that killed one of yours or befell your champion's army; at most one every 20 real seconds at any speed.
+  - **A mishap's death** sets health to 0 and notes its manner in `Saga` (an in-place part of its hash); `find_fallen` finds it on the next tick (G4), and `casualties` tells it on its `mishap_*` key as a tier-A `Fall`. **It's told once:** a lethal mishap pushes no `Mishap` event, so its `Fall` is its one line.
+  - **The feed:** mishap lines, dimmer; at 8x only those that befell your champion's army (a death of yours is already a tier-A `Fall`); at most one every 20 real seconds at any speed; and the **hard cap at 8x, 2 saga lines a game day** (mishaps now, weapons and kin lines as they arrive), in the feed's throttle, on every difficulty.
   - **Inspector:** the moods a mishap left, with their time to run.
   - **`bot_run`** prints mishaps by kind per seed and checks the guards over every seed.
-- **Where.** `crates/sim_military/src/director.rs`, `crates/sim_military/src/mishaps.rs` (new), `crates/sim_military/src/saga.rs` (`Mood`, `settle`), `crates/sim_military/src/orders.rs` (`halt_until`), `crates/sim_military/src/components.rs` (`Captain`), `crates/sim_military/src/combat.rs` (mishap deaths), `crates/sim_military/src/upkeep.rs` and `crates/sim_military/src/veterans.rs` (moods in the nudges), `crates/sim_core/src/events.rs` (`Mishap`, `ALL`, `name`, `chronicled`, `notable`); `assets/data/director.ron`; `assets/data/saga.ron`; `crates/game_ui/src/feed.rs`, `crates/game_ui/src/panels.rs`.
+- **Where.** `crates/sim_military/src/director.rs`, `crates/sim_military/src/mishaps.rs` (new), `crates/sim_military/src/saga.rs` (`Mood`, `settle`), `crates/sim_military/src/orders.rs` (`halt_until`, cleared in `apply_commands` and `run_orders`), `crates/sim_military/src/soldiers.rs` (the goose rout's timed flee), `crates/sim_military/src/components.rs` (`Captain`), `crates/sim_military/src/combat.rs` (mishap deaths), `crates/sim_military/src/upkeep.rs` and `crates/sim_military/src/veterans.rs` (moods in the nudges), `crates/sim_core/src/events.rs` (`Mishap`, `ALL`, `name`, `chronicled`, `notable`); `assets/data/director.ron`; `assets/data/saga.ron`; `crates/game_ui/src/feed.rs`, `crates/game_ui/src/panels.rs`.
 - **Tests (`tests/tests/mishaps.rs`).**
-  - `each_mishap_does_what_it_says`: each kind on a hand-built world, with its condition false (nothing happens) and then true (its effect, exactly).
-  - `mishaps_never_wipe_a_run`: over many hours of seeded runs, and again in `bot_run` over every seed: no champion, captain or legend touched, at most one death per mishap and one a game day, no baggage under the floor, no delay with a foe near, at most `max_per_day`, none in the first 24 hours.
-  - `mishaps_are_not_notable`: a run with mishaps and the same run with an empty kind list have the same quiet clock, first event and raider schedule.
-  - Re-run `director`, `chronicle` and `save_load`.
+  - `each_mishap_does_what_it_says`: each kind on a hand-built world, with its condition false (nothing happens) and then true (its effect, exactly). Also: a lethal slip leaves one `Fall` and no `Mishap` event; a new command, or a hostile army arriving, ends a wedding's halt; a march to a settlement with an open request gets no wedding; the goose rout's flee ends on time or when a foe comes near, and marks no `routed`; a sleepwalker never lands near a hostile army; only drawn subjects count the mishap.
+  - `mishaps_never_wipe_a_run`: on all three personalities (steady, chaotic, harsh) with compressed data overrides (`free_hours` 0, `spacing_hours` 1, `chance_per_hour` 1.0), under 60 s (G34), and again in `bot_run` over every seed: no champion, captain or legend touched, at most one death per mishap and one a game day, no baggage under the floor, no delay with a foe near, at most `max_per_day`, none in the first `free_hours`.
+  - `mishaps_are_not_notable`: a unit test that a chronicled `Mishap` leaves `Chronicle::last_notable`, `Director.first_event` and `eventful()` unchanged; and a scenario running the mishap clock with every kind's effect stubbed out (rolled and recorded, never applied), whose quiet clock and raider spawns match the same run with no mishap kinds. (A run with real mishaps differs from one without, by design: their effects change its path.)
+  - A `game_ui` test of the 8x hard cap on saga lines.
+  - Re-run `director`, `chronicle` and `save_load`, and the run-preset tests ("What stays unchanged"); one that moves only because the run took another path opts out with an empty `mishap_kinds`.
 - **Docs.** DATA.md (`director.ron` `mishaps`, `mishap_rules`, `mishap_kinds`; the mishap banks); ARCHITECTURE: slot 12's mishap clock, slot 13's mood expiry; GLOSSARY: Mishap, Mood, Low-tension beat; TESTING; HOWTO: "Add a mishap"; ADR 0019: mishaps aren't notable, the never-run-ending rules, the stream keys.
-- **Done when.** Bot runs show about one mishap a game day on steady, with none breaking a guard over every seed; each kind's line matches its effect; `bot_run` still wins 3 of 5; the quiet clock and raids are unchanged by them.
+- **Done when.** Bot runs show about one mishap a game day on steady, with none breaking a guard over every seed, and the guards hold on chaotic and harsh too; each kind's line matches its effect; `bot_run` still wins 3 of 5; mishaps never count as notable; the saga's own spans stay under 2% of a bot run's live tick.
 - **Ships as:** runs that go wrong in small ways, and say so.
 
-### Step 7: Battle moments (M, 7%; bot_run)
+### Step 7: Battle moments (M, 8%; bot_run)
 - **What.**
   - **`BattleReport` gains the moments:** `battle` (the number, which leads to the name, first blood, the told deaths and the odd in `Saga`), `broke`, `drew_first`, `best`, `ran_first`, `hurt` (the wounded), `deserted`, `wiped`, and `earned` (empty until step 8).
-  - **`Captain` gains** `battle_ran_first`, `battle_deserted` and `starved`.
+  - **`Captain` gains** `battle_ran_first`, `battle_deserted`, `starved` (the army's run-long count of hunger deaths, passed to an heir) and `starved_told` (how many of them the hourly summary has told).
   - **`build_index` names who ran first.** It already finds the moment.
   - **`apply_desertions` counts deserters** per army.
   - **`end_battles`:**
     - counts a wound for each survivor whose `hurt` reached a quarter of their health;
     - fills the report;
     - clears the new fields with `fought`.
-  - **Slot 13 (`saga::settle`)** gains the hourly starvation summary `Starved`, feed-only.
+  - **Slot 13 (`saga::settle`)** gains the hourly starvation summary `Starved`, feed-only: `starved` minus `starved_told`, leaving out anyone told by name.
   - **A wiped army in a run:** when no heir is left, `succeed` writes the report (`wiped`) and its `Battle` entry.
   - **Words:** the report's moments, "N more died", the odd (a mishap during the battle), the `Battle` line's battle name and faction nouns, the end screen's "Your battles", and the feed's battle line opening into the full report.
 - **Where.**
@@ -279,20 +287,21 @@ Sizes are shares of the enlarged milestone: S is up to 3%, M about 6–8%, L abo
 - **Gate note.** A wiped army's `Battle` is notable, so pacing can move: re-run `bot_run`.
 - **Done when.** Every report tells its moments in both tones, both sides' reports of a fight share its name, and a wiped army is reported in a run.
 
-### Step 8: Deeds, epithets, absurd deaths and rescues (M, 8%; run only; bot_run) — the end of part 1
+### Step 8: Deeds, epithets, absurd deaths and rescues (L, 10%; run only; bot_run) — the end of part 1
 - **What.**
   - **Deeds** (`SagaDeed`) are recorded once each, as (deed id, tick, battle number or nearest settlement, victim `NameId`):
     - at the kill: first blood, slayings, shield, five in a fight, doorwarden, kinslayer;
     - at `end_battles`: held the line, survivor, ran first, last stand (a kill after the army broke, and alive at the end);
     - in `run_orders`, on the captain: plunderer, breadgiver;
     - in `requests::complete`: rescuer.
-  - **The rest of `Service`:** `joined`, `rejoined`, `held`, `fled`, `mishaps` (per kind), `fights` (the latest 16 battles with their kills).
+  - **The rest of `Service`:** `joined` (copied from `Veteran.joined`), `rejoined`, `held`, `fled`, `mishaps` (per kind, counted for drawn subjects only), `fights` (the latest 16 battles with their kills).
   - **Fame** is worked out from the record.
   - **Epithet rows** (`saga.epithets`: a stable `id`, `kind` honour or mock, a `rank` and a rule): ids 0–18 honourable at ranks 8–26, ids 19–26 mocking at ranks 0–7. They're applied by one function, `saga::judge`:
     - from `end_battles`, for each survivor, so the report lists what was earned;
     - from slot 13, for every other record changed since the last hour (militia after a kill, captains after dealings, anyone after a mishap or a re-enlistment).
-  - **Ironies** (`saga.ironies`): ids 0–6 and 8–9 of the design's section 7, classified in `casualties`' second pass from the records, never for militia, rebel or villager victims; +50 to the score; the `absurd_*` keys and the `{irony}` slot. Irony 7 (own weapon) comes with step 11.
-  - **Rescues:** an answered `DriveOff` records its rescuers and heroes in `Saga.rescues`, the heroes earn the Rescuer deed, and the `RequestDone` line names the hero.
+  - **Ironies** (`saga.ironies`): ids 0–6 and 8–9 of the design's section 7, classified in `casualties`' second pass from the records, never for militia, rebel or villager victims; +50 to the score; the `absurd_*` keys and the `{irony}` slot. Irony 1 reads `Veteran.joined` (step 2), so a recruit killed on the day of joining qualifies with no record. Irony 6 is the one hunger death classified: an army's first (`Captain::starved` was 0) when the victim is a Glutton, told as a tier-A `Fall`. Irony 7 (own weapon) comes with step 11.
+  - **Mocking epithets count subjects:** the Unlucky (three mishaps), Empty-Purse (three dice losses) and Bread-Belly (a glutton sick from bad mutton twice) read `Service.mishaps`, which counts drawn subjects only.
+  - **Rescues:** an answered `DriveOff` records a rescue **only if** the answering captain's army fought an army at war with the player since the request was posted, with the battle's first blow within `threat.radius` of the settlement's centre (a request can complete after a band withdraws on its own, with nobody fighting). Then its rescuers (those who fought it) and heroes go in `Saga.rescues`, the heroes earn the Rescuer deed, and the `RequestDone` line names the hero. Without such a battle nothing is recorded and the line keeps its built words.
   - **Vain acts now:** the morale with an honourable epithet, `envy` when a comrade is named, `mocked` on a mocking epithet.
   - **`Named`**, chronicled but not notable, with the new `Cause::Earned { deed }`. `notable()` excludes the new chronicled kinds.
   - **Inspector:** the epithet after the name, then kills, battles, wounds and deeds.
@@ -308,13 +317,13 @@ Sizes are shares of the enlarged milestone: S is up to 3%, M about 6–8%, L abo
   - `epithets_follow_rank`: Nine-Kills, then a captain slain, replaces it; a lower rank never replaces a higher; re-ranking the rows keeps every stored id; militia earn Doorwarden at the kill;
   - `mocking_epithets_follow_rank`: each mocking rule from a scripted record; Twice-Fled is replaced by Banner-Taker and never the reverse;
   - `absurd_deaths_are_real`: each irony from a scripted state; none for a militia victim; the lint finds no `absurd_*` key whose irony the table lacks;
-  - `rescues_are_recorded`: an answered drive-off names a legend first, then the named by fame, then the best killer; the captain when nobody fought named;
+  - `rescues_are_recorded`: an answered drive-off names a legend first, then the named by fame, then the best killer; the captain when nobody who fought is named; a battle inside `threat.radius` but nearest a neighbour counts; a request answered after the band withdrew without a fight records no rescue, no deed and no hero in its line;
   - `every_cause_is_worded`;
   - the event order test;
   - `chronicle` and `director`;
   - `bot_run` prints epithet counts (honourable and mocking) and ironies; Vain's morale may move it.
 - **Docs.** DATA.md; GLOSSARY: Saga deed (kept distinct from goodwill's **Deed**), Fame (a per-person score with no unlocks, not FUN_DESIGN's renown), Epithet, Mocking epithet, Irony, Rescue; TESTING; ADR 0019.
-- **Done when.** A bot run of seed 1 earns several epithets, some mocking, each with its reason and place; at least one absurd death appears over the five seeds; answered drive-offs name their heroes; the inspector shows the record.
+- **Done when.** A bot run of seed 1 earns several epithets, some mocking, each with its reason and place; at least one absurd death appears over the five seeds; drive-offs won in a fight name their heroes, and none is credited without one; the inspector shows the record.
 - **Ships as:** names you notice, flattering or not, and deaths people retell. **Part 1 is done:** tick its criteria in SEED.md and hand over part 1's playtest.
 
 ### Part 2: Legends and kin
@@ -380,13 +389,14 @@ Sizes are shares of the enlarged milestone: S is up to 3%, M about 6–8%, L abo
 - **Docs.** DATA.md; ARCHITECTURE: row 2 (`LegendIndex`); GLOSSARY: Legend, kept distinct from Hero, Champion, Veteran and Elite; TESTING; ADR 0019.
 - **Done when.** Legends rise in most bot runs, steady and shake as specified, and a legend's death pauses your game.
 
-### Step 11: Named weapons (M, 7%; run only; bot_run)
+### Step 11: Named weapons (M, 6%; run only; bot_run)
 - **What.**
   - **`NamedWeapon(index)`** (sparse) on a holder, always with `Equipment.weapon` true, and **`Saga.weapons`**: the first namer's weapon word, the naming, up to 8 holders, kills while named, up to 8 notable kills, and the place.
   - **Naming** in `casualties`' first pass: an armed killer of a captain, the champion, a legend or a monument's beast names their weapon, at most 2 a battle and 24 a run (`saga.weapons`).
   - **Fates** in the second pass, the first that applies: looted (a soldier killer takes it in hand; a militiaman's village puts it in its storehouse), passed on (an unarmed member of the holder's household in the same army, else the nearest unarmed member within 3 tiles), into the baggage, or lost where its holder fell.
   - **Out of a hand:** a deserter takes it home (`apply_desertions`) and brings it back on re-enlisting (`enlist`); `arm_followers` and an `Equip` dealing hand named weapons out first; a barter spends them last, and one spent is sold into that settlement's storehouse.
   - **Reconciliation** in slot 13: a place holding fewer `weapons` units than the named weapons placed there marks the newest one lost.
+  - **Hashing:** a weapon's record changes in place (place, holders, kills), so `Saga.weapons` is in the in-place part of `Saga`'s hash (step 2), hashed in full; at most 24.
   - **Irony 7** (killed with a weapon they once carried); `{weapon}` fills with the name; Vain's morale with a named weapon.
   - **Saga notes** (`Saga.notes`, read by the feed's own cursor): namings, passings, lootings, sales, losses.
   - **Inspector:** the weapon line and its history; the settlement panel's relics.
@@ -400,10 +410,11 @@ Sizes are shares of the enlarged milestone: S is up to 3%, M about 6–8%, L abo
 - **Gate note.** Looting arms the looter, so a run can move: re-run `bot_run`, with weapons named and their fates per seed in the step notes.
 - **Done when.** Bot runs name a handful of weapons, each with a history that matches what the sim did, and none is ever in two places.
 
-### Step 12: Kin, friends, rivals and moods (L, 11%; run only; bot_run)
+### Step 12: Kin, friends, rivals and moods (L, 10%; run only; bot_run)
 - **What.**
   - **Kin** through `Home.residents` (one household), never stored: in `casualties`' second pass, the death of a villager-recruit gives their enlisted kin `grief`, and those within 12 tiles **vengeance** for the rest of the battle (morale +0.05 once, and the aim at the killer in `soldiers::decide`); killing the killer is the Avenged kin deed and a told `vengeance` line. A militia or rebel killed by a blow of a soldier's own faction gives that soldier's enlisted kin `kin_killed` (−0.08, desertion ×2, 3 days).
-  - **`Bonds`** (sparse, at most three): friends at `end_battles` (two held survivors within 2 tiles, in an army that broke or lost a quarter); rivals from dice (the mishap now leaves its grudge), from running first, and from a named weapon passed outside the household. Feuds end when both hold in one battle, when one dies, or in a brawl's one in three.
+  - **`Bonds`** (sparse, at most three): friends at `end_battles` (two held survivors within 2 tiles, in an army that broke or lost a quarter); rivals from dice (the mishap now leaves its grudge, and its words a grudge variant), from running first, and from a named weapon passed outside the household. Feuds end when both hold in one battle, when one dies, or in a brawl's one in three (a roll from `sim_military::mishap ^ n`).
+  - **A mood's `about` is plain data:** the other's SpawnId and `NameId`, the place and the tick, never an `Entity` (grief is about the dead, whom `casualties` despawns). Vengeance resolves its killer's SpawnId through the fighter grid.
   - **The camp brawl** joins the mishap kinds.
   - **Bond effects** through the cache: friend desertion ×0.9, rival morale target −0.02.
   - **The full mood table** of the design's section 13, the clamps, replacement of the entry ending soonest, and hourly expiry.
@@ -461,7 +472,7 @@ Sizes are shares of the enlarged milestone: S is up to 3%, M about 6–8%, L abo
 - **What.**
   - Complete ADR 0019.
   - CLAUDE.md:
-    - add a "Saga (ADR 0019)" rules block: the sim stores ids, never words; `saga.ron` is words only, exempt and unsaved; a told death goes through a `Fall` in `Saga`, never through `EventFeed`; battles get a number at their first blow; effects act through their holder, through `Veteran`'s cached nudges, and are run-only; quirks are dealt per SpawnId from their own stream, never from `populate`; mishaps are never notable and never touch the champion, a captain or a legend; a named weapon is always in exactly one place; kin are never stored; `Saga` is append-only; `saga::settle` is progress slot 13;
+    - add a "Saga (ADR 0019)" rules block: the sim stores ids, never words; `saga.ron` is words only, exempt and unsaved; a told death goes through a `Fall` in `Saga`, never through `EventFeed`; battles get a number at their first blow; effects act through their holder, through `Veteran`'s cached nudges, and are run-only; quirks are dealt per SpawnId from their own stream, never from `populate`; mishaps are never notable and never touch the champion, a captain or a legend; a named weapon is always in exactly one place; kin are never stored and moods name people by SpawnId and `NameId`, never `Entity`; `Saga` hashes its append-only parts by digest and its in-place parts in full; a lethal mishap is told by its `Fall` alone; a rescue needs a fight; `saga::settle` is progress slot 13, and anything it decides for the next tick goes through hashed state (`Follower.deserting`), never the exempt scratch; NFR-09 is measured on live ticks only;
     - update the milestone line.
   - README's status line.
   - PLAY_GUIDE: legends, quirks, mishaps, named weapons, kin and moods, the tone switch, and a cheat-sheet row.
@@ -476,19 +487,19 @@ Steps 1–3 and 5–12 are sim work, testable headless; step 3's words are check
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
 | Brutal words read as gratuitous, especially about villagers | High | Militia and rebel victims always take grave keys and never an irony; content rules in DATA.md; a deny-list lint; words reach the game at step 4 for an early look; a playtest question |
-| The milestone is now half again as big | High | The split after step 8: part 1 stands on its own (kill lines, quirks, mishaps, moments, epithets, absurd deaths) and part 2 can slip; the largest step (kin and moods) is the last sim step, so it can be trimmed without touching the rest |
+| The milestone is now about 1.6 times as big | High | The split after step 8: part 1 stands on its own (kill lines, quirks, mishaps, moments, epithets, absurd deaths) and part 2 can slip; the largest step (kin and moods) is the last sim step, so it can be trimmed without touching the rest |
 | Deadpan tips into silly, or the jokes wear thin | Medium | The voice rules and the do and don't table; the lint bans `!`, `?`, capitals and winking words; mishaps about once a day, not more; a playtest question |
-| Mishaps feel unfair, or wipe a band | Medium | Low-tension beats; a third fall on your enemies; good ones as well as bad; the never-run-ending rules in code, each tested over every `bot_run` seed |
-| Mishaps change pacing | Low | Not notable; tested that the quiet clock, the first event and the raider schedule don't move |
+| Mishaps feel unfair, wipe a band or take control away | Medium | Low-tension beats; a third fall on your enemies (the side is drawn first); good ones as well as bad; a wedding's halt ends at your next order or an approaching foe; the never-run-ending rules in code, each tested on all three personalities and over every `bot_run` seed |
+| Mishaps change pacing | Low | Never notable: a unit test on the quiet clock, the first event and fast-forward, and a stubbed-effects run whose quiet clock and raids match a run without mishaps. Their effects can change a run's path, like any change to a run |
 | Quirks shift balance or a village's food | Medium | Tiny effects through the holder, run-only; `bot_run` at step 5; `village_day` and `famine` re-run after the villagers.ron change |
-| Something told didn't happen (geese, weddings, fords) | Medium | Flavour only on a real effect; ironies only from the design's table, with the "not in M4c" ends having no key; the geese named as the one flavoured trigger |
-| Kill and saga lines flood the feed | Medium | Tier A narrowed; the rising bar, 10 tier-B lines a battle and 8 told deaths a tick in the sim; the speed filter, rate limit and fold in the feed; saga notes dropped first, at most 2 a game day at 8x; tested at 1,000 a side and over every `bot_run` seed |
+| Something told didn't happen (geese, weddings, fords, rescues) | Medium | Flavour only on a real effect; ironies only from the design's table, with the "not in M4c" ends having no key; the geese named as the one flavoured trigger; a rescue only after a real fight near the village |
+| Kill and saga lines flood the feed | Medium | Tier A narrowed; the rising bar, 10 tier-B lines a battle and 8 told deaths a tick in the sim; the speed filter, rate limit and fold in the feed; saga notes dropped first, with a hard cap of 2 a game day at 8x on every difficulty; one line per death (a lethal mishap is told by its `Fall` alone); tested at 1,000 a side, in a `game_ui` test and over every `bot_run` seed |
 | Moods snowball into desertion waves | Medium | Four entries, clamped sums, desertion ×2 at most and only from the rare `kin_killed`; `bot_run` reports desertions by cause |
 | Named weapons duplicate or vanish | Medium | One place per weapon, out first in arming and last in a barter, hourly reconciliation, a test for every way one moves |
 | Legends too rare to notice, or too common to matter | Medium | The numbers are data, tuned against `bot_run`'s counts; epithets carry the mid-game; the cap of three |
 | Earned traits too common (Cruel above all) | Medium | Marks only from eligibility, one of each kind per battle; target rates checked in step 9 |
 | Balance or pacing drift | Medium | Effects are run-only and exact no-ops; new kinds aren't notable except `LegendFell`; `bot_run` after steps 1, 5, 6, 7, 8, 9, 10, 11 and 12 |
-| Cost in big battles and on the run island | Medium | A push per kill is the only new work per blow; per-death work is bounded; nudges cached on `Veteran`; hourly work for the sparse parts; `--timings` on `--battle 7500` in every sim step against a recorded baseline, `--saga-bench` from step 9, and the run island from step 5 |
+| Cost in big battles and on the run island | Medium | A push per kill is the only new work per blow; per-death work is bounded; nudges cached on `Veteran`; hourly work for the sparse parts; `--timings` on `--battle 7500` in every sim step against a recorded baseline, `--saga-bench` from step 9, the run island's live ticks from step 5, and the saga's own spans in a bot run's live windows; never a mean over a run that has already ended |
 | Names of the dead lost | Medium | Kept deaths hold `NameId`s; anyone named has their death kept; the biography test checks it |
 | Lines repeat | Medium | Variants stepped by told-death index; composition; the bank-size lint; the golden test |
 | Saves break mid-milestone | Low | `SAVE_FORMAT` 2 at step 2, bumped again on any later layout change; M4 saves are refused by design, after the playtest |
@@ -497,7 +508,7 @@ Steps 1–3 and 5–12 are sim work, testable headless; step 3's words are check
 ## Defaults chosen (change any)
 
 1. **The step order** puts kill lines in the game at step 4, quirks at 5 and mishaps at 6, before the steps that change play most (traits, legends, kin). You can stop after step 4 for a look, or after step 8 for part 1's playtest.
-2. **The split** after step 8 into part 1 ("Deaths and oddities", about 57%) and part 2 ("Legends and kin", about 43%).
+2. **The split** after step 8 into part 1 ("Deaths and oddities", about 60%) and part 2 ("Legends and kin", about 40%).
 3. **Records and kill lines exist in every preset; effects only in runs.** The skirmish then shows kill lines, which helps tune the words. Quirks, mishaps, weapons, bonds and moods are run-only.
 4. **Notability:** tier A is captains, the champion and legends (and a legend's milestone kills, and the rare mishap death); the bar is 40 + 15 per told line, with at most 10 tier-B lines a battle and 8 told deaths a tick. The weights are in the design's section 2.
 5. **Legends:** fame 25, three battles and an epithet; three enlisted per faction; an aura of 8 tiles with −0.03 on the break point and +0.03 on the morale target; a death shock of 0.10, and 0.03 to foes.
@@ -509,3 +520,4 @@ Steps 1–3 and 5–12 are sim work, testable headless; step 3's words are check
 11. **Battles get a number** at their first blow, so both sides' reports share a name, first blood and bar.
 12. **Told deaths and saga notes live in `Saga`,** read by the feed with its own cursor, never through `EventFeed`; mishaps are events, not notable.
 13. **Quirk and mishap draws** use new stream keys only (`sim_agents::quirks ^ SpawnId`, `sim_military::director::mishap`, `sim_military::mishap ^ n`, `sim_military::saga::homesick ^ SpawnId`); no existing stream moves.
+14. **From the second review** (the design's decisions 33–41): a rescue needs a fight near the village; one line per death; a mishap counts only for its drawn subjects; a wedding yields to your orders and to an approaching foe; the side of a mishap is drawn first; the 8x cap on saga lines is a hard throttle; feed lines are fitted at read time with a `terse` fallback; quirk data is split between `villagers.ron` and `progression.ron`; the walk home goes through `Follower.deserting`; `Saga` is hashed in two parts; NFR-09 measures live ticks.
