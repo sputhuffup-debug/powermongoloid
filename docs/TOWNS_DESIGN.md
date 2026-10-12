@@ -1,6 +1,6 @@
 # Design: growing towns and town styles
 
-Status: **decisions made 2026-10-06; built in milestone M4b, after M4**. Requested: settlements start small and grow into towns and cities over time, and each settlement gets an urban design style drawn from the world's major building traditions, chosen per seed. Buildings keep their purposes, so only their placement and appearance vary.
+Status: **decisions made 2026-10-06; built in milestone M4b, after M4 and M4c**. Hero memorials (section 5) were added 2026-10-12. Requested: settlements start small and grow into towns and cities over time, and each settlement gets an urban design style drawn from the world's major building traditions, chosen per seed. Buildings keep their purposes, so only their placement and appearance vary.
 
 ## 1. Growth: hamlet to city
 
@@ -80,6 +80,24 @@ The request was random per settlement. Options are in decision 1. All options us
 - **Performance:** a city of 1,000+ people is more agents in one spot. The 20,000-agent budget (NFR-03) is unchanged, but the island's population curve has to stay inside the M5 LOD budget.
 - **Saves:** the plans aren't saved. They are regenerated from the seed and the site, and saves record only how far each plan has progressed and which plots are ruined.
 
+## 5. Hero memorials (added 2026-10-12)
+
+Decided with the saga design (`docs/SAGA_DESIGN.md`, section 14 and decision 14). M4c records who saved a village from raiders; M4b lets the village build them a memorial.
+
+- **Who gets one.** A settlement with a rescue in M4c's records (an answered drive-off request, with its heroes, a legend first) whose hero is named: a legend or someone with an epithet. One memorial per settlement, to its greatest hero (a legend first, then by fame). A later rescue never replaces a standing memorial.
+- **Building it.** From village tier, the master plan gains a memorial plot near the centre (on the style's axis or square). It opens like any other construction site (section 1, "How a settlement grows"), after the houses it needs, and takes wood, plus stone at town tier. A hamlet waits until it's a village.
+- **Its look, by style** (render-side, in `render.ron`): a statue on a plinth (Northern European), a carved column (Mediterranean), an inscribed fountain (Middle Eastern and North African), a stele on a stone tortoise (Chinese), a stone lantern (Japanese), a roofed and carved wooden post (Eastern Slavic), a rune stone (Norse), an earthen pillar shrine (West African Sahel), a stone cairn (Southern African), a hero stone (South Asian), a small stupa (Southeast Asian), a stela (Mesoamerican), a carved standing stone (Andean), a stone figure (Central Asian steppe). Hovering it shows the hero, the rescue and the epitaph.
+- **Small, local effects** (numbers in `towns.ron` `memorials`; exact no-ops where there's no memorial; nothing goes into `FactionModifiers`):
+  - **goodwill:** a daily `Memorial` deed toward the hero's faction (+0.01, spread like other deeds);
+  - **loyalty:** residents' loyalty target +0.03 while the hero's faction owns the settlement;
+  - **recruits:** the hero's faction's recruit chance there ×1.1;
+  - **the hero's army:** while the hero lives and serves, their own army's morale target +0.03 within 12 tiles of it.
+- **A grave the town tends.** When the hero dies, the memorial becomes a grave: its style's grave marks appear (flowers, lamps, offerings), the chronicle says so ("Ashford tends Wat Nine-Kills's grave now"), and the army effect ends while the goodwill and loyalty effects stay. A sacked town's memorial can burn (SIM-07) and be rebuilt like any building.
+- **Changing hands.** A conquered settlement keeps its memorial, and its effects still favour the hero's faction, so a memorial to an enemy hero is a small thorn in a conquest.
+- **Sim state.** The memorial is a building entity (spawned with `spawn_sim`, hashed and saved) holding its hero's `NameId` and SpawnId, the rescue and its state: standing, grave or ruin. Its plot is part of the master plan, regenerated from the seed with the rest.
+- **Across runs.** Only in M6's legends book, as history: the run record gains `memorials` in M4b. Nothing carries into a later run.
+- **Tests.** `tests/memorials.rs`: a saved village raises its memorial once it can build one, each effect applies exactly, it becomes a grave when the hero dies, and a village without one is unchanged.
+
 ## Decisions (answered 2026-10-06)
 1. **Styles are random per settlement, among styles that suit its site.** Stilts go by water, terraces on hills, courtyards in dry land, and the draw is seeded.
 2. **Every settlement starts as a hamlet.** *Amended 2026-10-07 for roguelite runs (`docs/PROGRESSION_DESIGN.md`): a run's island starts with a seeded mix of hamlets, villages and a few towns, so there are people to recruit by the final act, and growth is tuned to a 30-day run.* Consequences of the original decision:
@@ -89,3 +107,4 @@ The request was random per settlement. Options are in decision 1. All options us
 3. **Builders and materials:** wood, plus stone from a new quarry (a new good and workplace in `economy.ron`) for town and city buildings.
 4. **Per-style names:** not answered, so the recommended default applies: settlement and villager names come from per-style lists of original names. Easy to drop.
 5. **Scheduling:** a new milestone, **M4b "Living towns"**, after M4. Growth, town styles, population (SIM-15), trade (SIM-23), seasons and decay (SIM-05, SIM-22), and the seasonal palette (RND-05) move there.
+6. **Hero memorials (2026-10-12):** a village saved from raiders by a named hero raises a memorial to them in its town style, with small local effects, and tends it as a grave when the hero dies (section 5, SIM-58). M4c, which now comes before M4b, records the rescues.

@@ -66,7 +66,8 @@ The player interacts only through captains, settlements and the map. Requirement
 | GP-26 | Meta-progression between runs unlocks origins, trait choices and cards, never raw power | Should | M6 |
 | GP-27 | Start draws: a starting boon picked from three, the band's make-up, and one or two run modifiers, all from the seed | Must | M4 |
 | GP-28 | A rival warlord's seat grows on a clock and raids from mid-run; taking it wins the run | Must | M4 (scripted), M5 (rules-based) |
-| GP-29 | A finished run leaves a record of its legends (names, epithets, deeds, fates) for the legends book of past runs; nothing in it changes a later run | Should | M4c (record), M6 (book) |
+| GP-29 | A finished run leaves a record of its legends (names, epithets, deeds, fates), named weapons and the villages they saved, for the legends book of past runs; nothing in it changes a later run | Should | M4c (record), M6 (book) |
+| GP-30 | In a run, the pacing director schedules small mishaps from real sim state (bad mutton, a dog at the rations, a wedding on the road, a slip in the shield wall); each is low-stakes and rate-limited, never touches the champion, a captain or a legend, and never ends a run | Must | M4c |
 
 ## Simulation requirements
 
@@ -99,6 +100,8 @@ The simulation must run 250,000 people across a full world, with up to 20,000 at
 | SIM-50 | Each settlement follows a faith (data-defined) and holds a piety level that rises with worship, offerings and feasts and falls with hunger, desecration and neglect | Must | M4b |
 | SIM-51 | Sustained high piety brings divine favour: one of the settlement's militia becomes a hero (at most one living hero per settlement; cooldown after a hero dies) | Must | M4b |
 | SIM-52 | Heroes are never controllable by the player or any AI warlord; a hero autonomously leads its settlement's militia within a radius (morale and combat bonus, rallying, engage or fall back) | Must | M4b |
+| SIM-55 | In a run, every villager and soldier has one or two quirks (coward, glutton, drunkard, pious, fears geese, ...) dealt from a data deck by their own seeded stream; each nudges only its holder's behaviour, slightly, and outside a run nobody has one | Must | M4c |
+| SIM-58 | A settlement saved from raiders by a named hero raises a memorial to them in its town style once it can build one; it gives small local effects (goodwill and loyalty there, recruits a little more willing, the hero's army steadier near it) and becomes a grave the town tends when the hero dies | Should | M4b |
 
 ### Economy
 
@@ -123,9 +126,11 @@ The simulation must run 250,000 people across a full world, with up to 20,000 at
 | SIM-36 | Soldiers rank up by battles survived; ranks change stats and desertion | Must | M4 |
 | SIM-37 | Equipment tiers are goods made by settlements of a sufficient tier; gear sets combat stats; bows are ranged | Must | M4b |
 | SIM-38 | Wild foraging feeds a landless band at a small rate, from wild food that depletes and regrows | Must | M4 |
-| SIM-39 | Every death in battle records who killed whom and how; notable deaths are told one by one, and the rest are counted into the battle's report | Must | M4c |
-| SIM-53 | Soldiers keep a service record (kills, battles, wounds, deeds) that outlives desertion and, on death, is kept for anyone told or named; they earn one epithet by rule, which says why | Must | M4c |
+| SIM-39 | Every death in battle records who killed whom and how, including absurd but real ends; notable deaths are told one by one, and the rest are counted into the battle's report | Must | M4c |
+| SIM-53 | Soldiers keep a service record (kills, battles, wounds, deeds) that outlives desertion and, on death, is kept for anyone told or named; they earn one epithet by rule, honourable or mocking, which says why | Must | M4c |
 | SIM-54 | A few soldiers of great fame in each faction become legends: a legend steadies nearby men a little and their death shakes the army; legends gain no stats and are not heroes | Must | M4c |
+| SIM-56 | A weapon that kills a notable foe (a captain, a champion, a legend, a monument's beast) gets a name and a history, and is passed on, looted, sold, taken home or lost as the sim moves it; named weapons gain no stats | Must | M4c |
+| SIM-57 | Soldiers have kin (their household) and make friends and rivals by rule; kin grieve and avenge, rivals feud and make peace, and each soldier's mood is the bounded sum of its recorded causes, which the inspector explains | Must | M4c |
 
 ### Information
 
@@ -281,7 +286,7 @@ The look is a clean, low-poly 3D isometric-style world that stays readable with 
 | UI-07 | Debug UI (egui): tick time per system set, entity counts by detail level, region LOD state, RNG seed | Must | M0 |
 | UI-08 | Settlement panel shows faith and piety; heroes are visibly distinct and their inspector explains their decisions | Must | M4 |
 | UI-09 | Chronicle: an automatic history of the island, short biographies of settlements and named characters, end-of-battle reports and an end-of-campaign timeline | Must | M4, M4c (biographies) |
-| UI-10 | Kill lines, battle reports and biographies are told from phrase banks in data, brutal by default and mild by choice; the choice is a viewer setting the game remembers, and it never changes the simulation | Must | M4c |
+| UI-10 | Kill lines, mishaps, mood notes, battle reports and biographies are told from phrase banks in data, in a deadpan dark voice, brutal by default and mild by choice; the choice is a viewer setting the game remembers, and it never changes the simulation | Must | M4c |
 
 ## Non-functional requirements
 
@@ -299,7 +304,7 @@ Reference machine: 8-core desktop CPU from 2022 or later, 16 GB RAM, a mid-range
 | NFR-06 | Memory at full world | ≤ 4 GB |
 | NFR-07 | Save or load full world | ≤ 3 seconds |
 | NFR-08 | Determinism | Same seed + same command stream → bit-identical state hash after N ticks, on the same build and platform |
-| NFR-09 | Saga bookkeeping (kill records, service records, legends) | At most +2% on the median (of three runs) mean tick of the `--battle 7500` clash, with and without the saga's run effects forced on (`--saga-bench`), over an M4 baseline recorded in docs/m4c/; no allocation per blow |
+| NFR-09 | Saga bookkeeping (kill records, service records, legends, quirks, moods, bonds, named weapons) | At most +2% on the median (of three runs) mean tick of the `--battle 7500` clash, with and without the saga's run effects forced on (`--saga-bench`), and of the run preset (`--run --seed 7 --difficulty steady --ticks 24000`), over M4 baselines recorded in docs/m4c/; no allocation per blow |
 
 ### Determinism rules
 
@@ -380,22 +385,28 @@ One complete, playable hour: a roguelite run from a wandering band to the rival 
 
 ### M4c: Saga
 
-Combat gets its stories, after the M4 playtest and before M4b: brutal kill lines (mild on request) where only notable deaths are told and the rest are summed up, battle reports with their moments, service records and epithets earned by deeds, the traits soldiers earn from what they live through (SIM-34's triggers), and a few legends per faction who steady nearby men, shake their army when they fall and leave a cairn. It also builds UI-09's biographies and the end screen's legends, and writes each run's legends down for M6's book, with no power carried between runs. Design: `docs/SAGA_DESIGN.md`, plan: `docs/M4C_PLAN.md`.
+Combat gets its stories, and every run its oddities, after the M4 playtest and before M4b: brutal kill lines (mild on request) where only notable deaths are told and the rest are summed up, battle reports with their moments, service records and epithets earned by deeds (honourable or mocking), absurd but real deaths, the traits soldiers earn from what they live through (SIM-34's triggers), and a few legends per faction who steady nearby men, shake their army when they fall and leave a cairn. Following the Dwarf Fortress decisions of 2026-10-12, villagers in a run have quirks, the pacing director schedules small mishaps, weapons that kill notable foes get names, and soldiers have kin, friends, rivals and moods; everything is told in one voice, deadpan dark, and rescues of villages are recorded for M4b's hero memorials. It also builds UI-09's biographies and the end screen's legends and oddities, and writes each run's legends down for M6's book, with no power carried between runs. The milestone may be split after step 8 of its plan: part 1 ("Deaths and oddities") and part 2 ("Legends and kin"). Design: `docs/SAGA_DESIGN.md`, plan: `docs/M4C_PLAN.md`.
 
 - [ ] Every death by a blow names its killer and how it happened (armed or bare-handed, fleeing, last stand, one blow), and a rebel's kill is credited to the rebels (`tests/saga.rs`)
 - [ ] Captains, the champion and legends are always told; any other death is told only if it clears its battle's rising bar, at most 10 a battle and 8 told deaths a tick; at 8x the feed shows only lines about your people or a legend (at most 8 a battle over every `bot_run` seed); a report's "more died" equals its losses minus its named dead (`tests/saga.rs`)
 - [ ] Both sides' reports of a fight share its battle number and name; reports name first blood, who ran first, when the army broke, the told deaths and the best killer, and in a run an army killed to the last man still gets its report (`tests/saga.rs`)
 - [ ] In a run, deeds earn one epithet by rule, and Brave, Shaken, Cruel and Beloved are earned from what a soldier lived through; each acts only through its holder (their own morale, aim and desertion, and a captain's own dealings), and a person without one, under a captain without one, behaves exactly as before (`tests/saga_traits.rs`)
 - [ ] Legends rise by fame, at most three enlisted per faction; they steady men within 8 tiles, and their death shakes their army once and pauses the game for your own (`tests/legends.rs`; a `game_ui` test of the pause; `tests/bot_run.rs`: still 3 of 5 seeds won, and a player legend on at least 3 of them)
-- [ ] Brutal and mild banks have the same keys; every line names its key's facts (killer, victim, place or count) and uses only its key's slots, though mild may leave out flavour such as the wound; no gendered words; feed lines fit one feed row; the tone never changes the state hash or a replay (`tests/saga_words.rs`)
-- [ ] The inspector shows the biographies of soldiers and settlements, the end screen lists the run's legends, foes remembered and the fallen, and cairns mark where legends fell (UI-09, RND-09)
-- [ ] A finished run writes its legends record (facts and names, no sentences), and no sim crate reads it (`tests/saga.rs`)
-- [ ] NFR-09 holds against the M4 baseline in docs/m4c/, with and without `--saga-bench`; developed, skirmish and `--battle` stdout are byte-identical to M4's; saves and determinism hold (`tests/save_load.rs`, `tests/determinism.rs`)
-- [ ] **Playtest:** after a run you can name a legend and say how they fell, at least one death landed, brutal reads grim without numbing and mild reads sober without being dry (playtest: `docs/M4C_PLAYTEST.md`)
+- [ ] Brutal and mild banks have the same keys; every line names its key's facts (killer, victim, place or count) and uses only its key's slots, though mild may leave out flavour such as the wound; no gendered words; the deadpan voice holds (no exclamation or question marks, no capitals, none of the winking or pitying words); feed lines fit one feed row; the tone never changes the state hash or a replay (`tests/saga_words.rs`)
+- [ ] In a run, every villager and soldier has one or two quirks from the deck in `villagers.ron`, dealt from their own stream keyed by SpawnId: the same seed deals the same quirks in any order, beasts and the developed world, the skirmish and `--battle` have none, and `village_day` and `famine` pass unchanged; each quirk has its documented effect through its holder only, and a person without one behaves exactly as before (`tests/quirks.rs`)
+- [ ] The pacing director schedules mishaps in a run, about one a game day on steady, each only when its condition holds in the sim and doing exactly what its line says; over every `bot_run` seed no mishap touches the champion, a captain or a legend, kills more than one ordinary soldier (and at most one a game day), takes a baggage below a day's food or delays a march with a foe near, none comes in a run's first 24 hours, and mishaps never reset the quiet clock or move the raider schedule (`tests/mishaps.rs`, `tests/bot_run.rs`)
+- [ ] Mocking epithets (Twice-Fled, Turnip-Hand, the Unlucky, ...) are earned by rule and rank below every honourable one, so a deed replaces them and never the reverse; absurd deaths are told only for the ironies the sim produced, never for militia, rebel or villager victims; an answered drive-off request records its heroes, a legend first, and its line names them (`tests/saga.rs`)
+- [ ] A weapon that kills a captain, a champion, a legend or a monument's beast is named (at most 2 a battle and 24 a run); it is looted, passed on, put in the baggage, sold, taken home or lost exactly as the sim moved it, and after every move it is in exactly one place (`tests/weapons.rs`)
+- [ ] Kin (one household) grieve and avenge, and a soldier whose own army kills their kin takes it hard; friends and rivals form by rule and feuds end by rule; moods are bounded, expire and act only through their holder, a soldier with none behaves exactly as before, and the inspector explains each mood from its recorded causes (`tests/kin.rs`)
+- [ ] The feed stays readable at 8x: over every `bot_run` seed, at most 8 deaths a battle and at most 2 mishap, weapon, kin and feud lines a game day pass the 8x filter, and no speed shows more than one mishap line every 20 real seconds (`tests/bot_run.rs`, a `game_ui` test)
+- [ ] The inspector shows the biographies of soldiers and settlements (with quirks, weapons, kin and rescues), the end screen lists the run's legends, foes remembered, the fallen and the run's oddities, and cairns mark where legends fell (UI-09, RND-09)
+- [ ] A finished run writes its legends record (facts and names, no sentences, with its named weapons and rescues), and no sim crate reads it (`tests/saga.rs`)
+- [ ] NFR-09 holds against the M4 baselines in docs/m4c/, on `--battle 7500` with and without `--saga-bench` and on the run preset; developed, skirmish and `--battle` stdout are byte-identical to M4's; saves and determinism hold (`tests/save_load.rs`, `tests/determinism.rs`)
+- [ ] **Playtest:** after a run you can name a legend and say how they fell, at least one death landed, a mishap or an odd death made you laugh or wince and none felt unfair, brutal reads grim without numbing, mild reads sober without being dry, and the deadpan reads dry, not silly (playtest: `docs/M4C_PLAYTEST.md`)
 
 ### M4b: Living towns
 
-Settlements grow from hamlets to cities in their own town styles; population, construction, trade, seasons and food decay; equipment tiers; faith, piety and heroes (moved from M4). Growth is tuned to a 30-day run. Design: `docs/TOWNS_DESIGN.md`, `docs/PROGRESSION_DESIGN.md`.
+Settlements grow from hamlets to cities in their own town styles; population, construction, trade, seasons and food decay; equipment tiers; faith, piety and heroes (moved from M4); memorials to the heroes who saved villages, from M4c's rescue records (added 2026-10-12). Growth is tuned to a 30-day run. Design: `docs/TOWNS_DESIGN.md` (with "Hero memorials"), `docs/PROGRESSION_DESIGN.md`, `docs/SAGA_DESIGN.md` (section 14).
 
 - [ ] Every settlement starts as a hamlet; under good conditions one grows to a village and then a town within the configured days, stalls in famine and shrinks after a sack
 - [ ] Every town style produces a valid master plan on the sites it suits (no overlaps, every plot reachable), and a seed always yields the same styles and plans
@@ -405,6 +416,7 @@ Settlements grow from hamlets to cities in their own town styles; population, co
 - [ ] Follow-cam and a growth time-lapse work on any settlement
 - [ ] Equipment tiers 1–3 are made by settlements of the right tier and change how soldiers fight; bows shoot
 - [ ] Sustained piety raises a hero who leads the militia and obeys no one
+- [ ] A village saved from raiders by a named hero (M4c's rescue record) raises a memorial to them in its town style once it can build one; while it stands it gives its small local effects (goodwill and loyalty there, recruits a little more willing, the hero's own army steadier near it), and when the hero dies it becomes a grave the town tends, with a chronicle line for each (`tests/memorials.rs`)
 
 ### M5: Scale and information
 

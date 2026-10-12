@@ -7,7 +7,7 @@ in commits, tests and comments.
 
 ## Current milestone
 M4 "Rise" built 2026-10-09 (roguelite runs; docs/PROGRESSION_DESIGN.md, plan docs/M4_PLAN.md), awaiting the playtest in docs/M4_PLAYTEST.md.
-Next: M4c "Saga" (kill lines, battle moments, epithets, earned traits, legends; design docs/SAGA_DESIGN.md) is planned in docs/M4C_PLAN.md, awaiting go; it follows the M4 playtest and comes before M4b.
+Next: M4c "Saga" (kill lines, battle moments, epithets, earned traits, legends, plus quirks, mishaps, named weapons, kin and moods, told deadpan; design docs/SAGA_DESIGN.md) is planned in docs/M4C_PLAN.md, awaiting go, splittable after its step 8; it follows the M4 playtest and comes before M4b.
 (M0 complete 2026-10-05, M1, M2 and M3b complete 2026-10-06, M3 complete 2026-10-07, M4 built 2026-10-09, M4c planned 2026-10-12; update this line as milestones complete)
 
 ## Hard rules
