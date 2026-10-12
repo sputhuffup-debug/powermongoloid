@@ -19,7 +19,9 @@
 //! 4. takes the nearest monuments nobody holds early on, answers food
 //!    requests it can spare, and attacks weak settlements (independent or
 //!    the rival's, never the seat) once it outnumbers their estimated
-//!    militia by `CONQUEST_MARGIN` (1.6);
+//!    militia by `CONQUEST_MARGIN` (1.6), and the seat's garrison too when
+//!    the target or the straight march to it lies within `SEAT_BERTH` (80
+//!    tiles) of the seat;
 //! 5. appoints captains up to the slots, each garrisoning an owned
 //!    settlement and recruiting there;
 //! 6. marches on the rival's seat with every captain once its soldiers
@@ -68,6 +70,12 @@ const MILITIA_SHARE: f32 = 0.12;
 /// Attack a settlement once the army outnumbers its expected militia by
 /// this much.
 const CONQUEST_MARGIN: f32 = 1.6;
+
+/// The seat's garrison counts against an attack whose target, or straight
+/// march to it, comes within this many tiles of the seat: an army that
+/// marches past the seat meets the garrison on the way (PROGRESS_BOT.md,
+/// "Village food in a run").
+const SEAT_BERTH: f32 = 80.0;
 
 /// March on the seat once all captains' soldiers outnumber its expected
 /// defence by this much (early in the run; see [`assault_margin`]).
@@ -349,6 +357,18 @@ fn assault_margin(day: f32) -> f32 {
 
 fn dist(a: IVec2, b: IVec2) -> f32 {
     a.as_vec2().distance(b.as_vec2())
+}
+
+/// How close the straight line from `a` to `b` comes to `p` (tiles).
+fn dist_to_line(p: IVec2, a: IVec2, b: IVec2) -> f32 {
+    let (p, a, b) = (p.as_vec2(), a.as_vec2(), b.as_vec2());
+    let ab = b - a;
+    let t = if ab == Vec2::ZERO {
+        0.0
+    } else {
+        ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
+    };
+    p.distance(a + ab * t)
 }
 
 fn good_named(econ: &Economy, name: &str) -> Option<GoodId> {
@@ -895,7 +915,9 @@ impl Bot {
             if d > 260.0 {
                 continue;
             }
-            let near_seat = dist(s.center, v.seat_center) < 80.0;
+            // The garrison meets an army at the target or on the way past
+            // the seat.
+            let near_seat = dist_to_line(v.seat_center, cap.at, s.center) < SEAT_BERTH;
             let foes = self.militia(s)
                 + v.hostiles_near(s.center, 45.0) as f32
                 + if near_seat { v.garrison as f32 } else { 0.0 };
@@ -1245,4 +1267,31 @@ pub fn play_bot_with(
         notes: bot.notes,
     };
     (app, run)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The seat counts against an attack whose straight march passes near
+    /// it, not only one whose target is near it (`conquest_target`,
+    /// `SEAT_BERTH`): seed 3 of `bot_run` lost its main army marching past
+    /// the seat from one side to a village on the other.
+    #[test]
+    fn a_march_past_the_seat_comes_near_it() {
+        let seat = IVec2::new(395, 813);
+        // Seed 3: from #2 to #6, both about 110 tiles from the seat; the
+        // march passes 24 tiles from it.
+        let (from, to) = (IVec2::new(288, 841), IVec2::new(505, 833));
+        assert!(dist(to, seat) > SEAT_BERTH);
+        let d = dist_to_line(seat, from, to);
+        assert!((23.0..25.0).contains(&d), "{d}");
+        // The nearest point is an end when the seat lies beyond it, and
+        // a march of no length is its start.
+        assert_eq!(
+            dist_to_line(IVec2::new(0, 0), IVec2::new(3, 4), IVec2::new(10, 4)),
+            5.0
+        );
+        assert_eq!(dist_to_line(seat, from, from), dist(seat, from));
+    }
 }

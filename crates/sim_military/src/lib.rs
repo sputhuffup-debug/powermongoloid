@@ -117,10 +117,12 @@ pub use data::{Army, RankGain, VeteranData};
 pub use director::{Director, DirectorData, Personality, RaiderBandData, TensionWeights};
 pub use index::{ArmyIndex, ArmyInfo, FighterGrid, Side};
 pub use monuments::{Guard, Holder, NoUpkeep};
-pub use orders::{CommandInbox, arm_followers, enlist, enlist_into, find_settlement, provoke};
+pub use orders::{
+    CommandInbox, arm_followers, enlist, enlist_into, find_settlement, forages_below, provoke,
+};
 pub use progression::{
     Champion, ChampionData, ChampionPoints, ChampionRank, DominionData, DriftersData, ForageData,
-    GoodwillDeeds, GuardData, GuardKind, HireData, Holding, Holdings, InvitationData,
+    GatherData, GoodwillDeeds, GuardData, GuardKind, HireData, Holding, Holdings, InvitationData,
     MonumentBonus, MonumentData, Progression, RegionTally, RequestData, RunProgress, RunStart,
     RunWorld, StartDraws, StartTerrain, Traits, captain_slots, champion_of, draw_start,
     rebuild_modifiers, report_start, setup_run,

@@ -14,6 +14,8 @@
 //!   (`RunStarted`) and every pending offer from that state, so a save
 //!   taken before the first tick tells them too.
 //! - [`HireData`]: the band for hire's tuning (`hire`, GP-27).
+//! - [`GatherData`]: an army's dealings with a village in a run (`gather`,
+//!   GP-02, GP-03, ADR 0018).
 //! - [`offers`]: answering offers ([`choose`]) and abandoning the run
 //!   ([`abandon`]), both reached only through `SimCommand`s.
 //! - [`RunProgress`]: what the run has drawn and picked so far.
@@ -256,6 +258,30 @@ pub struct ForageData {
     pub default_radius: u16,
 }
 
+/// An army's dealings with a village in a run (GP-02, GP-03, ADR 0018):
+/// `gather` in progression.ron. In a run, every dealing but plunder sees
+/// the village's storehouse and homes (the pantry its Food security
+/// counts); see `orders::gather_food`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct GatherData {
+    /// A neutral army asking for food is given half of what the village
+    /// holds beyond this many days of its own need (army.ron
+    /// `gather_keep_days.neutral` outside a run). At least villagers.ron
+    /// `loyalty.food_days` and progression.ron `requests.food_days`, so a
+    /// gift alone never costs a village loyalty or makes it ask for food.
+    pub neutral_keep_days: f32,
+}
+
+impl Default for GatherData {
+    /// The shipped values, so a save made before `gather` existed (whose
+    /// progression text lacks it) still loads.
+    fn default() -> Self {
+        Self {
+            neutral_keep_days: 0.5,
+        }
+    }
+}
+
 /// Village requests (GP-22): `requests` in progression.ron. See
 /// [`crate::requests`].
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -479,6 +505,11 @@ pub struct ProgressionData {
     pub goodwill_deeds: GoodwillDeeds,
     /// Wild foraging (SIM-38).
     pub forage: ForageData,
+    /// An army's dealings with a village in a run (GP-02, GP-03, ADR
+    /// 0018). Optional: progression text saved before it existed loads
+    /// with the shipped values.
+    #[serde(default)]
+    pub gather: GatherData,
     /// Village requests (GP-22).
     pub requests: RequestData,
     /// Invitations (GP-22).
@@ -683,6 +714,10 @@ impl Progression {
                 "progression: drifters need radius >= 0, goodwill in -1..1 and per_settlement (min <= max)"
                     .into(),
             );
+        }
+        // GP-02, GP-03 (ADR 0018): the neutral keep in a run.
+        if !non_negative(d.gather.neutral_keep_days) {
+            return Err("progression: gather.neutral_keep_days must be >= 0".into());
         }
         // GP-27: the band camps within reach of the champion's start.
         let h = &d.hire;
@@ -1388,6 +1423,9 @@ pub(crate) mod tests {
         assert!(check(&|d| d.forage.every_ticks = 0).is_err());
         assert!(check(&|d| d.forage.default_radius = d.forage.max_radius + 1).is_err());
         assert!(check(&|d| d.forage.regrow_per_day = 2.0).is_err());
+        assert!(check(&|d| d.gather.neutral_keep_days = -0.1).is_err());
+        assert!(check(&|d| d.gather.neutral_keep_days = f32::NAN).is_err());
+        assert!(check(&|d| d.gather.neutral_keep_days = 0.0).is_ok());
         assert!(check(&|d| d.requests.low_samples = 0).is_err());
         assert!(check(&|d| d.requests.volunteers = (3, 1)).is_err());
         assert!(check(&|d| d.requests.max_need = -1.0).is_err());
@@ -1504,6 +1542,22 @@ pub(crate) mod tests {
         assert!(!without.contains("hire:"), "{without}");
         let back = Progression::from_ron(&without).expect("parses without hire");
         assert_eq!(back.data.hire, HireData::default());
+    }
+
+    /// GP-02, GP-03 (ADR 0018): `GatherData::default()` is the shipped
+    /// `gather`, so a save made before the section existed loads with the
+    /// same rule; and the section may be left out of the text.
+    #[test]
+    fn gather_defaults_match_the_shipped_data() {
+        let p = Progression::default_data();
+        assert_eq!(GatherData::default(), p.data.gather);
+        let text = ron::to_string(&p.data).unwrap();
+        let start = text.find("gather:").expect("gather is written");
+        let end = start + text[start..].find("),").expect("the section closes") + 2;
+        let without = format!("{}{}", &text[..start], &text[end..]);
+        assert!(!without.contains("gather:"), "{without}");
+        let back = Progression::from_ron(&without).expect("parses without gather");
+        assert_eq!(back.data.gather, GatherData::default());
     }
 
     /// GP-23: the shipped monument data lists every kind once, and a

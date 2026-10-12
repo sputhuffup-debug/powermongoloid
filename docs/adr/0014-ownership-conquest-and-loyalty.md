@@ -100,3 +100,4 @@ The decisions above held, with these additions and clarifications:
 - **Requests, invitations and drifters concern only the player** and are posted by settlements the player or nobody owns, never by the rival's seat. A clear-the-camp request (ADR 0015) runs on its own track beside the others.
 - **Soldiers' traits are not built.** Traits come only from the champion's start and ranks (ADR 0013 addendum); SIM-34's "what they live through" triggers wait.
 - **Revolts are frequent in play.** The step 11 bot loses up to 12 settlements in a run: conquest seeds loyalty from goodwill that the attack itself spent, and a held village needs a garrison. The weights (`w_food` 0.55, `w_goodwill` 0.3) are untuned by a human; the playtest may revisit them.
+- **Amended by [ADR 0018](0018-village-food-in-a-run.md) (2026-10-12):** in a run an owner's supply counts and draws on the village's storehouse and homes, still keeping `garrison.keep_days`.

@@ -2,24 +2,36 @@
 //! with GP-09 in M5). It decides from the sim state and issues ordinary
 //! AI-origin commands, so it uses the same order path as the player and
 //! replays without being recorded.
+//!
+//! In a run (GP-16, ADR 0018) a band the director aimed raids its target,
+//! and when it then has nothing to do (no prey, no village of the
+//! player's) it lingers by the village for director.ron
+//! `band_linger_hours`, then withdraws beyond army.ron `threat.radius` of
+//! every settlement (`withdraw_tile`), so the village goes back to work.
 
 use bevy_ecs::prelude::*;
+use bevy_math::{IVec2, Vec2};
 use sim_agents::Owner;
 use sim_core::{
-    CommandKind, FactionId, OrderSpec, Position, RunState, SimCommand, SimTick, SpawnId,
+    Calendar, CommandKind, FactionId, OrderSpec, Position, RunState, SimCommand, SimTick, SpawnId,
 };
 use sim_economy::SettlementEconomy;
-use sim_world::Settlement;
+use sim_world::{NO_REGION, Settlement, TravelCosts, WorldMap};
 
 use crate::components::{Captain, Raider};
 use crate::data::Army;
+use crate::director::DirectorData;
 use crate::index::ArmyIndex;
 use crate::monuments::Guard;
+use crate::spawn::nearest_passable;
 
 /// How often a raider reconsiders (ticks).
 const THINK_EVERY: u64 = 300;
 /// Raiders with less food than this (days) raid a village first.
 const RAID_BELOW_DAYS: f32 = 2.0;
+/// A band withdrawing in a run (GP-16) heads this many tiles beyond
+/// army.ron `threat.radius` from the settlement nearest it.
+const WITHDRAW_BEYOND: f32 = 10.0;
 
 /// Runs in `SimInputSet::Ai`, after scripted and player input, so its
 /// commands always arrive in the same order (guide G2). Raiders never hunt
@@ -28,6 +40,9 @@ const RAID_BELOW_DAYS: f32 = 2.0;
 /// themselves and raid only the player's settlements, and when hungry with
 /// none of the player's settlements to raid they hunt anyway. A band the
 /// pacing director aimed (`Raider::target`, GP-16) first raids its target.
+/// In a run, a band with nothing to do lingers `band_linger_hours` after
+/// that raid, then withdraws ([`withdraw_tile`], ADR 0018); outside a run
+/// it holds where it is.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // Bevy system parameters.
 pub(crate) fn think(
     tick: Res<SimTick>,
@@ -35,6 +50,7 @@ pub(crate) fn think(
     army: Res<Army>,
     index: Res<ArmyIndex>,
     villagers: Res<sim_agents::Villagers>,
+    (cal, director, map): (Res<Calendar>, Res<DirectorData>, Res<WorldMap>),
     mut raiders: Query<(Entity, &SpawnId, &Captain, &Position, &mut Raider)>,
     captains: Query<(Entity, &SpawnId, &Captain, &Position), (Without<Raider>, Without<Guard>)>,
     settlements: Query<(&SpawnId, &Settlement, &SettlementEconomy, Option<&Owner>)>,
@@ -61,6 +77,7 @@ pub(crate) fn think(
             continue;
         }
         // GP-16: the director's target first, once.
+        let mut just_raided = false;
         if let Some(t) = raider.target {
             if raider.last_target != Some(t)
                 && settlements
@@ -79,6 +96,7 @@ pub(crate) fn think(
                 continue;
             }
             raider.target = None;
+            just_raided = true;
         }
         // In a run, only an army no bigger than the band is prey.
         let people = |e: Entity| index.get(e).map_or(1, |a| a.followers + 1);
@@ -112,6 +130,27 @@ pub(crate) fn think(
                     OrderSpec::GatherFood { settlement: sid }
                 }
                 (None, Some((_, _, at))) if run.in_run() => OrderSpec::MoveTo { x: at.x, y: at.y },
+                // GP-16 (ADR 0018): nothing to do after the director's
+                // raid: stay by the village a while (it hides; its
+                // DriveOff request stands), then withdraw.
+                _ if run.in_run() && just_raided => {
+                    raider.next_think = tick.0 + cal.hours(director.band_linger_hours);
+                    continue;
+                }
+                _ if run.in_run() && captain.orders.is_empty() => {
+                    let mut centres: Vec<(u64, IVec2)> = settlements
+                        .iter()
+                        .filter(|(_, _, se, _)| se.population > 0)
+                        .map(|(sid, s, ..)| (sid.0, s.center))
+                        .collect();
+                    centres.sort_unstable_by_key(|c| c.0);
+                    let centres: Vec<IVec2> = centres.into_iter().map(|c| c.1).collect();
+                    let radius = army.data.threat.radius;
+                    match withdraw_tile(pos.0, &centres, &map, &villagers.travel_costs, radius) {
+                        Some(t) => OrderSpec::MoveTo { x: t.x, y: t.y },
+                        None => continue,
+                    }
+                }
                 _ => continue,
             }
         };
@@ -123,5 +162,128 @@ pub(crate) fn think(
                 queue: false,
             },
         ));
+    }
+}
+
+/// GP-16 (ADR 0018): where a band at `here` withdraws to, out of reach of
+/// every settlement centre in `centres` (populated, by SpawnId): `None` if
+/// it is already at least `radius` from all of them. Otherwise it walks
+/// away from the nearest centre (ties: the first), trying the direction
+/// from that centre to the band, then 30, -30, 60, -60, ... 150 degrees
+/// off it, a point `radius + WITHDRAW_BEYOND` tiles from that centre
+/// snapped to the nearest passable tile: the first such tile in a region
+/// (land the band can reach: never water or an islet, which are
+/// `NO_REGION`, as the director's spawn checks) at least `radius` from
+/// every centre. `None` if none is.
+pub(crate) fn withdraw_tile(
+    here: IVec2,
+    centres: &[IVec2],
+    map: &WorldMap,
+    costs: &TravelCosts,
+    radius: f32,
+) -> Option<IVec2> {
+    let clear = |t: IVec2| {
+        centres
+            .iter()
+            .all(|c| (*c - t).as_vec2().length() >= radius)
+    };
+    if clear(here) {
+        return None;
+    }
+    let dist = |c: &IVec2| (*c - here).as_vec2().length();
+    let centre = *centres.iter().min_by(|a, b| dist(a).total_cmp(&dist(b)))?;
+    let away = (here - centre).as_vec2();
+    let base = if away == Vec2::ZERO {
+        0.0
+    } else {
+        away.y.atan2(away.x)
+    };
+    let reach = radius + WITHDRAW_BEYOND;
+    for k in [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5] {
+        let angle = base + (k as f32 * 30.0).to_radians();
+        let at = (centre.as_vec2() + Vec2::from_angle(angle) * reach)
+            .round()
+            .as_ivec2();
+        if let Some(t) = nearest_passable(map, costs, at)
+            && map.region(t) != NO_REGION
+            && clear(t)
+        {
+            return Some(t);
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sim_world::Terrain;
+
+    /// GP-16 (ADR 0018): a band withdraws straight away from the nearest
+    /// settlement, beyond the radius of every one; one already clear of
+    /// them all stays; when straight away is blocked it turns aside.
+    #[test]
+    fn withdrawing_walks_out_of_reach_of_every_settlement() {
+        let mut map = WorldMap::flat(200, 50, Terrain::Grass);
+        let costs = sim_agents::Villagers::default_data(&Calendar::default_data()).travel_costs;
+        let centres = [IVec2::new(100, 100), IVec2::new(40, 100)];
+        let r = 45.0;
+        // Already clear of both.
+        assert_eq!(
+            withdraw_tile(IVec2::new(100, 170), &centres, &map, &costs, r),
+            None
+        );
+        // East of the first centre: further east.
+        let t = withdraw_tile(IVec2::new(110, 100), &centres, &map, &costs, r).unwrap();
+        assert_eq!(t, IVec2::new(155, 100));
+        // Water from x = 140: straight away the shore is too near, so it
+        // turns 30 degrees (south first) and stops at the shore.
+        for y in 0..200 {
+            for x in 140..200 {
+                map.set_terrain(IVec2::new(x, y), Terrain::Water);
+            }
+        }
+        let t = withdraw_tile(IVec2::new(110, 100), &centres, &map, &costs, r).unwrap();
+        for c in centres {
+            assert!((c - t).as_vec2().length() >= r, "{t}");
+        }
+        assert!(t.x < 140 && t.y > 100, "turned aside, on land: {t}");
+        // Nowhere to go: the whole map is within the radius.
+        let small = WorldMap::flat(60, 20, Terrain::Grass);
+        assert_eq!(
+            withdraw_tile(IVec2::new(30, 30), &[IVec2::new(30, 30)], &small, &costs, r),
+            None
+        );
+    }
+
+    /// GP-16 (ADR 0018): a band never withdraws to land it can't reach. On
+    /// seed 42's run island (which has islets), a settlement placed so
+    /// that straight away from it lies an islet tile: the band turns aside
+    /// to a tile in a region, or stays.
+    #[test]
+    fn withdrawing_never_heads_for_an_islet() {
+        use sim_world::{WorldGenSettings, WorldPreset, generate_world};
+        let map = generate_world(42, &WorldGenSettings::preset(WorldPreset::Run), 1).map;
+        let costs = sim_agents::Villagers::default_data(&Calendar::default_data()).travel_costs;
+        let r = 45.0;
+        let size = map.size() as usize;
+        let islet = (0..size * size)
+            .map(|i| map.pos(i))
+            .find(|&p| {
+                map.terrain(p).is_land()
+                    && map.region(p) == NO_REGION
+                    && nearest_passable(&map, &costs, p) == Some(p)
+            })
+            .expect("seed 42's run island has islets; pick a seed that does");
+        // A centre 55 tiles (radius + WITHDRAW_BEYOND) west of the islet
+        // tile, and the band just east of it: straight away is the islet.
+        let centre = islet - IVec2::new((r + WITHDRAW_BEYOND) as i32, 0);
+        let here = centre + IVec2::new(5, 0);
+        let t = withdraw_tile(here, &[centre], &map, &costs, r);
+        assert_ne!(t, Some(islet), "headed for the islet at {islet}");
+        if let Some(t) = t {
+            assert_ne!(map.region(t), NO_REGION, "{t} is in no region");
+            assert!((t - centre).as_vec2().length() >= r, "{t}");
+        }
     }
 }

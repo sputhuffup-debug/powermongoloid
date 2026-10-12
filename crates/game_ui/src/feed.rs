@@ -402,6 +402,28 @@ mod tests {
         assert!(!log_line_shown("anything", ""));
     }
 
+    /// UI-05 (ADR 0018): every food dealing's line about your warband,
+    /// what it brought or why it brought nothing, joins the feed.
+    #[test]
+    fn food_dealing_lines_join_the_feed() {
+        for shown in [
+            "Northwell had no food to spare for Your warband (it holds 0.4 days of food and keeps 0.5)",
+            "Your warband's baggage is full (4.0 of 4 days): nothing gathered at Ashford",
+            "Your warband took food from Ashford (+1.0 days)",
+            "Your warband found nothing to plunder at Ashford (its storehouse is empty)",
+            "Ashford shared food with Your warband (+2.1 days)",
+            "Your warband has no goods to trade for food at Ashford",
+            "Ashford supplied Your warband (+1.5 days)",
+            "Your warband bought food from Ashford (+0.7 days)",
+        ] {
+            assert!(log_line_shown(shown, ME), "{shown}");
+        }
+        assert!(!log_line_shown(
+            "Ashford shared food with Rival (+2.1 days)",
+            ME
+        ));
+    }
+
     #[test]
     fn other_factions_offers_and_ranks_get_no_line() {
         let mine = SimEvent::new(SimEventKind::VeteranRank, FactionId::PLAYER);

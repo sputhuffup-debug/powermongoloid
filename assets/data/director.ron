@@ -41,4 +41,9 @@
     spawn_distance: (70.0, 130.0),
     // Days of food in a band's baggage.
     band_food_days: 2.5,
+    // GP-16 (ADR 0018): a band that has raided its target and has nothing
+    // else to do (no prey, no village of the player's) stays by it this
+    // many game hours (the village hides; its DriveOff request is open),
+    // then withdraws beyond army.ron threat.radius of every settlement.
+    band_linger_hours: 12.0,
 )

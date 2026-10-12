@@ -48,6 +48,9 @@ For seed 1, then seed 3, play the first ten minutes (about two game days at 4x):
 - [ ] You can tell where your band is, how much food it has, and where the rival's seat is (ownership overlay).
 - [ ] The first notable event comes within a few game hours (a request, raiders, a monument). Fast-forward stops at it.
 - [ ] Food matters: you forage, ask a village, or give food for a request before the band starves.
+- [ ] Gather food always ends with a feed line: what you got ("+N days") or why not.
+- [ ] Under a day of food the captain panel's Food line says "(hungry: helps itself)" (Neutral; "(hungry: buys food)" at Passive), and a band for hire shows no such note.
+- [ ] A plundered village is back at work within about a day (the raiders linger about half a day, then leave).
 - [ ] You can take a monument by standing at it (two game hours) and see its bonus.
 - [ ] A village request (drive off raiders, bring food, clear a camp) can be answered and pays out.
 - [ ] Sellswords (seeds 5, 8, 15 or 25 draw it): 12 sellswords camp near the start and the game pauses on their offer. Hiring with too little food or from too far away is refused (a feed line says why) and the offer comes back; hiring adds 12 men to the champion for 11 food; *Decline*, or a day unanswered, sends them away.

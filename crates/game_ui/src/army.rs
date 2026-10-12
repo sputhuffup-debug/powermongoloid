@@ -18,7 +18,7 @@ use sim_core::{
 use sim_economy::{Economy, SettlementEconomy, Stockpile};
 use sim_military::{
     Army, Captain, Champion, ChampionRank, Equipment, Follower, MilitaryLog, Progression,
-    RunProgress, Soldier, Traits, describe,
+    RunProgress, Soldier, Traits, describe, forages_below,
 };
 use sim_world::{Settlement, WorldMap};
 
@@ -506,6 +506,38 @@ type MemberQuery = (
     Option<&'static Equipment>,
 );
 
+/// The last `n` military log lines that name `faction_name`, newest
+/// first: the captain panel's "Recent" (UI-01, ADR 0018), so other
+/// factions' dealings don't push the player's own lines out.
+fn recent_lines<'a>(
+    log: &'a MilitaryLog,
+    faction_name: &'a str,
+    n: usize,
+) -> impl Iterator<Item = (u64, &'a str)> + 'a {
+    log.entries
+        .iter()
+        .rev()
+        .filter(move |(_, l)| l.contains(faction_name))
+        .take(n)
+        .map(|(t, l)| (*t, l.as_str()))
+}
+
+/// What the captain panel adds after Food (GP-03, ADR 0018): whether, and
+/// how, the army helps itself at villages it passes without an order
+/// ([`forages_below`]: neutral takes a day's food, passive buys, aggressive
+/// plunders); nothing for an army that never eats (a guard camp, a band
+/// for hire). The panel's one decimal would otherwise hide the line.
+fn food_note(posture: Posture, days: f32, never_eats: bool) -> &'static str {
+    if never_eats || days >= forages_below(posture) {
+        return "";
+    }
+    match posture {
+        Posture::Passive => " (hungry: buys food)",
+        Posture::Neutral => " (hungry: helps itself)",
+        Posture::Aggressive => " (plunders villages it passes)",
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)] // Bevy system parameters.
 fn army_panel(
     selection: Res<Selection>,
@@ -659,8 +691,9 @@ fn army_panel(
     s += &format!("Men: {n} ({fighting} fighting, {routed} routed)\n");
     s += &format!("Morale {} {:.0}%\n", style::bar(morale, 12), morale * 100.0);
     s += &format!(
-        "Food   {} {days:.1} days\n",
-        style::bar((days / 5.0).min(1.0), 12)
+        "Food   {} {days:.1} days{}\n",
+        style::bar((days / 5.0).min(1.0), 12),
+        food_note(c.posture, days, never_eats)
     );
     s += &format!("Armed: {weapons}/{people} weapons, {tools}/{people} tools\n");
     s += "\nOrders:\n";
@@ -671,8 +704,8 @@ fn army_panel(
         s += &format!("  {}\n", order_line(&o.spec));
     }
     s += "\nRecent:\n";
-    for (tick, line) in log.entries.iter().rev().take(4) {
-        let day = calendar.at(*tick).day + 1;
+    for (tick, line) in recent_lines(&log, army.faction_name(c.faction), 4) {
+        let day = calendar.at(tick).day + 1;
         s += &format!("  day {day}: {line}\n");
     }
     if c.faction == FactionId::INDEPENDENT && never_eats {
@@ -693,5 +726,61 @@ fn army_panel(
         } else {
             style::BUTTON
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// UI-01 (ADR 0018): the captain panel's "Recent" keeps the player's
+    /// own lines, newest first, however many other factions' lines came
+    /// after them.
+    #[test]
+    fn recent_lines_keep_your_own() {
+        let mut log = MilitaryLog::default();
+        log.push(1, "Your warband: captain 7 ordered to gather food");
+        log.push(2, "Ashford shared food with Your warband (+2.1 days)");
+        for t in 3..10 {
+            log.push(t, "Raiders plundered Northwell (+0.8 days)");
+        }
+        log.push(10, "Rival bought food from Ashford (+1.0 days)");
+        let mine: Vec<(u64, &str)> = recent_lines(&log, "Your warband", 4).collect();
+        assert_eq!(
+            mine,
+            vec![
+                (2, "Ashford shared food with Your warband (+2.1 days)"),
+                (1, "Your warband: captain 7 ordered to gather food"),
+            ]
+        );
+        let raiders: Vec<u64> = recent_lines(&log, "Raiders", 4).map(|l| l.0).collect();
+        assert_eq!(raiders, vec![9, 8, 7, 6]);
+        assert_eq!(recent_lines(&log, "Your warband", 0).count(), 0);
+    }
+
+    /// GP-03 (ADR 0018): the Food line says how a hungry army helps
+    /// itself, by posture and at that posture's threshold, and nothing for
+    /// an army that never eats.
+    #[test]
+    fn the_food_note_follows_posture() {
+        assert_eq!(
+            food_note(Posture::Neutral, 0.9, false),
+            " (hungry: helps itself)"
+        );
+        assert_eq!(food_note(Posture::Neutral, 1.0, false), "");
+        assert_eq!(
+            food_note(Posture::Passive, 0.5, false),
+            " (hungry: buys food)"
+        );
+        assert_eq!(food_note(Posture::Passive, 1.5, false), "");
+        assert_eq!(
+            food_note(Posture::Aggressive, 2.5, false),
+            " (plunders villages it passes)"
+        );
+        assert_eq!(food_note(Posture::Aggressive, 3.0, false), "");
+        // A band for hire or a guard camp: no food, never eats, no note.
+        for p in [Posture::Passive, Posture::Neutral, Posture::Aggressive] {
+            assert_eq!(food_note(p, 0.0, true), "");
+        }
     }
 }

@@ -135,6 +135,18 @@
         default_radius: 32,
     ),
 
+    // GP-02, GP-03 in a run (ADR 0018): an army's dealings with a village
+    // other than plunder (asking, the hungry take, trade, an owner's supply)
+    // see its storehouse and homes, the Food security its panel shows, and
+    // draw from the storehouse first, then the best-stocked homes. A
+    // neutral army is given half of what the village holds beyond
+    // `neutral_keep_days` of its own need (army.ron
+    // `gather_keep_days.neutral` outside a run). Keep it at least
+    // villagers.ron `loyalty.food_days` and `requests.food_days`, so a gift
+    // alone never costs a village its loyalty or takes it below the line
+    // where it asks for food.
+    gather: ( neutral_keep_days: 0.5 ),
+
     // GP-22: village requests, addressed to the player. Once a game hour
     // (100 ticks), settlements in SpawnId order (independent or the
     // player's, never the rival's seat) may post one: "drive off" when an

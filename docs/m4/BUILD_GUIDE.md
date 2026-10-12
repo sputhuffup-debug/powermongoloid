@@ -901,7 +901,7 @@ It also adds the ADR from D3, references requirement IDs, and re-runs fmt, clipp
 - **G19.** ArmyData has no serde defaults, so every new army.ron field must be present. Every new RON field needs a DATA.md row in the exact `## <file>` section. A new .ron file without a section **panics** docs.rs. Paths named in the handbook must already exist in the same commit.
 - **G20.** The `Terrain` enum has no serde. Use MonumentKind or site-rule enums in RON, or add derives deliberately.
 - **G21.** Settlement-level components exist only on populated settlements. In the run preset every settlement is populated; in developed only one region is. `find_settlement`, raiders, `setup_skirmish` and UI "populated" checks key on SettlementEconomy.
-- **G22.** `FoodSecurity.days` excludes farm stock and carried food, and dips by day. `spare_food` counts the storehouse only. Pick one per rule.
+- **G22.** `FoodSecurity.days` excludes farm stock and carried food, and dips by day. `spare_food` counts the storehouse only, except in runs: dealings use Food security's pool (ADR 0018). Pick one per rule.
 - **G23.** Farming output (8) equals carry (8), so a positive yield bonus is silently dropped (`act.rs:217`). Use `add_over_capacity` and update `out_units` (`ai.rs:395`).
 - **G24.** `orders::forage`, `Captain.last_forage` and `upkeep.forage_radius` mean settlement auto-gather. Name wild foraging `wild`.
 - **G25.** `FactionStats.given` means village→army. Add new fields (`donated`, `supplied`, `conquests`) and extend the StateHash.
