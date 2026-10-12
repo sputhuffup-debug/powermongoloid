@@ -76,18 +76,19 @@ Recruits bring no food, so your days of food drop with every one. Your band star
 
 Check **Food** at every pause. Under about 1.2 days, get food first:
 
-- **Gather food** at a village with food to spare. At Neutral it hands you half of what its storehouse holds beyond a day of the village's own need. So read the panel's **Storehouse**, not Food security: a day's food is roughly 3 units of grain, fish, mutton or bread per person. Gather where the storehouse holds clearly more.
+- **Gather food** at a village with food to spare. At Neutral a free village gives you half of the food it holds beyond half a day of its own need: read its panel's **Food security** (storehouse and homes). A village of about 120 at 2 days gives a band of 13 its fill (up to 4 days of food). Your own villages give everything beyond a day. Every *Gather food* ends with a feed line: "+N days", or why not ("had no food to spare ... holds 0.4 days of food and keeps 0.5", "only crumbs to spare", "baggage is full", "no goods to trade").
+- **The first morning is lean.** At dawn villagers carry most of a village's food in their hands, so a village under 1 day of Food security spares little until about midday. Gather at a bigger village, or wait until the afternoon.
 - **Forage (F)** when no village is near. The band gathers wild food a bit faster than it eats. When the feed says "nothing left to forage here", walk about 50 tiles on and press F again. This feeds a small band; an army of 50 strips a spot in under a day.
 
-**Under 1 day of food, your army helps itself.** *Gather food* then also takes whatever is missing for one day, even from the village's reserve. Without any order, it does the same at the nearest village within 25 tiles that you don't own. Each seizure costs -0.05 goodwill there and a little at neighbours within 150 tiles.
+**Under 1 day of food, your army helps itself.** The captain panel then says "(hungry: helps itself)" after Food (at *Passive* "(hungry: buys food)": it only buys; at *Aggressive* "(plunders villages it passes)", from 3 days down). *Gather food* then also takes whatever is missing for one day, even from the village's reserve. Without any order, it does the same at the nearest village within 25 tiles that you don't own. Each seizure costs -0.05 goodwill there and a little at neighbours within 150 tiles.
 
 Starving men lose morale, desert, then lose health.
 
 ### The first raiders
 
-The first event comes within about 4 game hours, often a raider band. On Steady, raiders are unarmed: 5 men at first, one more every two days, at most 16. They plunder a village near you, then hunt armies **no bigger than themselves**. Stay bigger and they leave you alone.
+The first event comes within about 4 game hours, often a raider band. On Steady, raiders are unarmed: 5 men at first, one more every two days, at most 16. They plunder a village near you, then hunt armies **no bigger than themselves**. Stay bigger and they leave you alone. With nobody to hunt, a band stays by the village it plundered for about half a day (its people hide and stop working), then withdraws out of reach.
 
-The plundered village asks you to *drive off raiders*. If you clearly outnumber them, go and fight, and stay within 40 tiles until no raiders have been near for an hour. You earn food, +0.2 goodwill and a champion point.
+The plundered village asks you to *drive off raiders*. If you clearly outnumber them, go and fight while they are still there, and stay within 40 tiles until no raiders have been near for an hour. You earn food, +0.2 goodwill and a champion point. If they withdraw before you come, the feed says the village "asked in vain", at no cost to you.
 
 Villages also ask you to *bring food (x/y)*: answer with **Give food** only when you have well over a day of food, because it hands over everything beyond one day. *Clear the camp* names a guarded monument: skip it early. Ignoring a request costs nothing.
 
@@ -103,7 +104,7 @@ Hover over a monument before you go near it. Leave "Held by: Raiders" (an armed 
 
 ## 5. Growing (the first week or so)
 
-**Recruit around.** Visit free villages, and later your own, with **Recruit 10** then **Gather food**. Rest each village half a day between visits. *Recruit 10* suits villages of about 80 people or more. The rival's villages send nobody.
+**Recruit around.** Visit free villages, and later your own, with **Recruit 10** then **Gather food**. Rest each village half a day between visits. *Recruit 10* suits villages of about 80 people or more, and at those the *Gather food* that follows feeds the recruits. The rival's villages send nobody.
 
 **Take nearby monuments.** If one says "Held by: nobody", stand your band within 10 tiles of it (the monuments overlay rings that area), alone, for 2 game hours. Each gives a small bonus and 2 champion points. It stays yours while you own a village within 120 tiles or visit it every 3 days.
 
@@ -137,7 +138,7 @@ If the feed says "gave up the attack" (the defenders didn't break within a game 
 
 **Keep your villages fed and guarded.** A village taken by force starts unhappy. Loyalty climbs while it has food and falls while it goes hungry. Under 35% for a full day, it goes free if none of your soldiers are within 30 tiles, and with too few there its people rise. Watch for "unrest since day N" in its panel.
 
-**Eat from your own villages.** *Gather food* there takes what the storehouse holds beyond a day of the village's need, and never costs loyalty. Your villages also feed your armies by themselves, once a day, when you pass within 25 tiles.
+**Eat from your own villages.** *Gather food* there takes what the village holds (storehouse and homes, its Food security) beyond a day of its need, and never costs loyalty. Your villages also feed your armies by themselves, once a day, when you pass within 25 tiles.
 
 **More captains.** You get a slot per 300 people you rule (at least one), plus boons, up to 8. Appoint later captains when your main army has 40 men or more. When a garrison is under about 16 men and its village has 60+ people, queue there: **Recruit 10**, Shift **Gather food**, Shift **Garrison**.
 
@@ -206,7 +207,7 @@ If the feed says "gave up the attack" (the defenders didn't break within a game 
 **The plan, day by day (Steady):**
 
 - **Start:** pick the boon for your band (food first). Pause, unless II is already lit. Read the feed for the seat's name. Click your champion and read Food.
-- **First 2 days:** Recruit 10, then Shift Gather food, at the nearest big free village. Keep Food above 1.2 days: gather where the storehouse has food to spare, or forage (F) and move 50 tiles when the land is bare.
+- **First 2 days:** Recruit 10, then Shift Gather food, at the nearest big free village. Keep Food above 1.2 days: gather where Food security is well above half a day (the feed line says what you got, or why not), or forage (F) and move 50 tiles when the land is bare.
 - **First 3 days:** drive off small raider bands near you, take unguarded monuments, and hire the sellswords if you drew them.
 - **Days 3-8:** with 30-40 men, 1.5 days of food and 1.6 x the militia + 5, Attack the biggest free village within reach that you beat. Let the captain hold the centre for 2 hours.
 - **Right after:** appoint a captain (your heir) and Garrison the village.

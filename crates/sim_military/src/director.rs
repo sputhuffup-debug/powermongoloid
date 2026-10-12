@@ -10,7 +10,9 @@
 //! (stream `sim_military::director` at the tick), aimed at that village
 //! (`Raider::target`): on arrival the village asks the player to drive
 //! them off (a `DriveOff` request), so a band also nudges a request into
-//! being. A band comes:
+//! being. Once it has raided its target with nothing else to do, the band
+//! lingers by the village `band_linger_hours`, then withdraws out of
+//! every settlement's reach (`raiders::think`, ADR 0018). A band comes:
 //! - **when it is about to be too quiet**: the next hourly check would
 //!   pass `quiet_limit_hours` without a notable event, or
 //! - **when the run's first event is due**: nothing has happened yet
@@ -123,6 +125,19 @@ pub struct DirectorData {
     pub spawn_distance: (f32, f32),
     /// Days of food in a band's baggage.
     pub band_food_days: f32,
+    /// Game hours a band stays by the village it was sent to raid once it
+    /// has nothing else to do (no prey, no village of the player's); then
+    /// it withdraws beyond army.ron `threat.radius` of every settlement
+    /// (`raiders::think`, ADR 0018). Optional: director text saved before
+    /// it existed loads with the shipped value.
+    #[serde(default = "default_linger_hours")]
+    pub band_linger_hours: f32,
+}
+
+/// The shipped `band_linger_hours`, for director text saved before it
+/// existed.
+fn default_linger_hours() -> f32 {
+    12.0
 }
 
 impl DirectorData {
@@ -174,9 +189,12 @@ impl DirectorData {
             }
         }
         let (lo, hi) = self.spawn_distance;
-        if !(ok(lo) && hi.is_finite() && lo <= hi && hi > 0.0) || !ok(self.band_food_days) {
+        if !(ok(lo) && hi.is_finite() && lo <= hi && hi > 0.0)
+            || !ok(self.band_food_days)
+            || !ok(self.band_linger_hours)
+        {
             return Err(
-                "director: spawn_distance needs 0 <= min <= max, max > 0, and band_food_days >= 0"
+                "director: spawn_distance needs 0 <= min <= max, max > 0, and band_food_days and band_linger_hours >= 0"
                     .into(),
             );
         }
@@ -539,5 +557,24 @@ mod tests {
         assert!(check(&|d| d.personalities[0].raider_band.min = 99).is_err());
         assert!(check(&|d| d.spawn_distance = (50.0, 10.0)).is_err());
         assert!(check(&|d| d.band_food_days = -1.0).is_err());
+        assert!(check(&|d| d.band_linger_hours = -1.0).is_err());
+        assert!(check(&|d| d.band_linger_hours = f32::INFINITY).is_err());
+    }
+
+    /// GP-16 (ADR 0018): the default linger is the shipped one, so a save
+    /// whose director text predates it lingers the same; and the field may
+    /// be left out of the text.
+    #[test]
+    fn the_default_linger_matches_the_shipped_data() {
+        let d = DirectorData::default_data();
+        assert_eq!(default_linger_hours(), d.band_linger_hours);
+        let without: String = DEFAULT_DIRECTOR_RON
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("band_linger_hours"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!without.contains("band_linger_hours:"), "{without}");
+        let back = DirectorData::from_ron(&without).expect("parses without the linger");
+        assert_eq!(back, d);
     }
 }

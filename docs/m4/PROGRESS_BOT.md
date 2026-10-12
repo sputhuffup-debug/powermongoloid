@@ -105,3 +105,23 @@ Locally: the smoke recorded 39 commands and both replays said "replay ok" with `
 - **The bot's notes are long** (an entry per new task); `--bot` prints them all to stderr. Fine for tuning, noisy otherwise.
 - The bot keeps no state across a save/load (a fresh `Bot` after `load_app` plays on from what it sees, not from its notes). Only the headless harness uses it.
 - Wins with large margins on steady (5/5 on days 18-31, extra seeds 3/3): the 3-of-5 bar has headroom; steady might be on the easy side for a human who plays as well as the bot (the playtest will tell).
+
+## Village food in a run (ADR 0018, 2026-10-12)
+
+The pantry rule (in a run, dealings other than plunder read a village's storehouse and homes; neutral keep 0.5), the feed lines and the lingering raiders changed the bot's food without any change to how it feeds: its `Site.spare` (storehouse minus a day) stays a conservative estimate, and gathers at the villages it picks yield the same or more.
+
+- `--run --bot --seed 1 --ticks 24000` (release, 10 days): before, 52 commands, 5 conquests (first at tick 9110), 30 battles, 8 raider bands, 1 request done; after, 72 commands, 11 conquests (first at tick 2326), 40 battles, 6 bands, no request done. Developed (`--seed 42 --ticks 1200 --stats-every 600`) is byte-identical, and the skirmish differs only in its timing lines.
+- **`bot_run` at first: 4 of 5.** Seed 3 lost on day 10.5 (killed in battle, by Raiders; 43 commands, settlements taken 7, lost 5, held 2). The better-fed bot took seven villages in six days, then (tick 14,900), with 62 men (60 unarmed, 2.5 days of food), attacked the rival's village #6 (305 people, 112 tiles from the seat Elmfield) straight from #2 (111 tiles from the seat on the other side): the straight march passes 24 tiles from the seat. Raiders and the seat's garrison (40, defence +31%) met it near Elmfield, the champion fell to the Rival at tick 16,203 ("Day 7" in the chronicle; 24 of the army fell), and the heir fell to Raiders on day 11. `conquest_target` added the seat's garrison only when the target itself lay within 80 tiles of the seat.
+- **The bot fix** (HOWTO "Tune run balance": the bot played badly, the data is fine): `conquest_target` counts the seat's garrison when the target *or the straight march to it* comes within `SEAT_BERTH` (80 tiles) of the seat (`dist_to_line`). Seed 3 then never sends the army past the seat; it wins on day 26.3.
+- **`bot_run` after the fix: 5 of 5** (release, 2026-10-12; 492 s of tests on 4 cores at `-j 2`):
+
+| Seed | Before ADR 0018 (HEAD, step 11 + Sellswords) | After (pantry, feed lines, lingering raiders, bot fix) |
+|---|---|---|
+| 1 | won, day 18.0 | won, day 17.4 (123 commands, 17 taken, 5 lost, 12 held) |
+| 2 | won, day 30.6 | won, day 19.3 (58 commands, 16 taken, 11 lost, 5 held) |
+| 3 | won, day 23.3 | won, day 26.3 (216 commands, 19 taken, 13 lost, 6 held) |
+| 4 | won, day 24.7 | won, day 18.4 (72 commands, 11 taken, 3 lost, 8 held) |
+| 5 | won, day 17.5 | won, day 15.5 (99 commands, 14 taken, 1 lost, 13 held) |
+
+  The longest quiet spell stays within the steady limit on every seed (999, 999, 899, 999, 999 of 1,000 ticks). Wins come earlier on four seeds (the bot is fed); seed 3 wins three days later than before, after a called-off assault on day 18.
+- On seed 3 no storehouse the bot saw ever held arms ("arms in stores 0" in every daily note), so its main army stayed mostly unarmed (60 of 62 on day 6, 63 of 64 on day 18); it wins on numbers.

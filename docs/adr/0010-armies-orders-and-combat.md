@@ -41,3 +41,4 @@ Armies also forage this way from villages they pass.
 - Military systems stay off the hot path when there are no armies. Exclusive steps run only when commands, the fallen or deserters exist, and per-soldier systems query `Enlisted`, never all villagers.
 - With few factions, a soldier's hostility is a 64-bit mask. More than 32 factions would need a wider mask.
 - Combat numbers are a first pass. A 1,000-against-1,000 battle produces a decisive rout within a game day; tuning continues in the playtest.
+- **Amended by [ADR 0018](0018-village-food-in-a-run.md) (2026-10-12):** in a run, food dealings other than plunder read a village's storehouse and homes, and every explicit dealing logs what it moved or why it moved nothing.

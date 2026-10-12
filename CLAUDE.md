@@ -74,7 +74,9 @@ M4 "Rise" built 2026-10-09 (roguelite runs; docs/PROGRESSION_DESIGN.md, plan doc
   AI commands carry `CommandOrigin::Ai` and are not recorded in replays.
 - Settlement dealings (recruit, food, arms, trade) are the army's serial
   logistics step in `orders::run_orders`; nothing else moves goods between
-  two stockpiles directly.
+  two stockpiles directly. In a run, food dealings other than plunder read a
+  village's pantry (storehouse + homes, `orders::food_sources`, ADR 0018);
+  plunder stays storehouse-only. Every explicit dealing logs what moved or why not.
 - Per-soldier systems query `Enlisted` (or the fighter grid's militia list),
   never all villagers; blows and deaths resolve serially in SpawnId order.
 - Followers rejoin along the rally field toward the captain; only the captain
