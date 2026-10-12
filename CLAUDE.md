@@ -7,7 +7,7 @@ in commits, tests and comments.
 
 ## Current milestone
 M4 "Rise" built 2026-10-09 (roguelite runs; docs/PROGRESSION_DESIGN.md, plan docs/M4_PLAN.md), awaiting the playtest in docs/M4_PLAYTEST.md.
-Next: M4c "Saga" (kill lines, battle moments, epithets, earned traits, legends, plus quirks, mishaps, named weapons, kin and moods, told deadpan; design docs/SAGA_DESIGN.md) is planned in docs/M4C_PLAN.md, awaiting go, splittable after its step 8; it follows the M4 playtest and comes before M4b.
+Next: M4c "Saga" (kill lines, battle moments, epithets, earned traits, legends, plus quirks, mishaps, named weapons, kin and moods, told deadpan; combat effects (blood, bodies and severed parts, GPU or CPU), maimed survivors and a kill cam; design docs/SAGA_DESIGN.md, ADR 0019) is planned in docs/M4C_PLAN.md, awaiting go, splittable after its step 8b; it follows the M4 playtest and comes before M4b.
 (M0 complete 2026-10-05, M1, M2 and M3b complete 2026-10-06, M3 complete 2026-10-07, M4 built 2026-10-09, M4c planned 2026-10-12; update this line as milestones complete)
 
 ## Hard rules
@@ -157,10 +157,24 @@ Next: M4c "Saga" (kill lines, battle moments, epithets, earned traits, legends, 
   `sim_military::chronicle::describe` and progression.ron `chronicle.causes`. Name a cause
   wherever there is a why.
 
-## Rendering (ADR 0008, ADR 0009)
+## Rendering (ADR 0008, ADR 0009, ADR 0019)
 - Detail bands come from assets/data/render.ron: stylized textures inside the
   detail distance, flat low-poly beyond, then billboards, then dots.
 - Textures are generated in game_render::art; replace by swapping handles.
+- Combat effects are render-side requests built from sim records (landed blows,
+  kills, falls, maims; never a visual's health) and drawn by one backend: GPU
+  (bevy_hanabi), CPU fallback or Off. GPU and CPU differ only in spray density,
+  and Off draws no spray; bodies, pools and parts are plain meshes, the same on
+  every backend. Gore follows the tone, not the backend.
+- Render systems may read sim state (the effects collector in FixedLast copies
+  `Casualties` only when `SimTick` advanced) and never write it. Effects are
+  never saved; the kill cam touches only `Time<Virtual>`; every effect stays
+  inside its band and render.ron's caps.
+- bevy_hanabi is pinned (`=0.19.0`, default features off, `3d`) and named only in
+  game_render's `effects/gpu.rs`. Never add `HanabiPlugin` yourself:
+  `EffectsPlugin::finish` adds it only when the render device has compute
+  shaders (ADR 0019). Only game_app adds `EffectsPlugin`, so headless builds,
+  tests and CI never need a GPU.
 
 ## Determinism harness (ADR 0003, ADR 0004)
 - Every new sim component or resource is registered with `register_hashed` /

@@ -1,6 +1,6 @@
 # Design: Saga, kill lines and legends
 
-Status: **draft 2026-10-12, for your approval** (revised the same day after review, again with your follow-up decisions: hero memorials, and Dwarf-Fortress-style oddities in a deadpan dark voice, and once more after a second review of those additions against the code). All your decisions are recorded in the Decisions section at the end, and the open questions there each have a recommended default. M4c is planned in `docs/M4C_PLAN.md`, and SEED.md has its section ("M4c: Saga") and new requirement rows. This doc answers your ask, "for combat we need some flavor in the kill messages to make it more brutal and we can make specific soldiers have legendary histories", and your follow-up: every run should be strange in its own way, told with a straight face.
+Status: **draft 2026-10-12, for your approval** (revised the same day after review, again with your follow-up decisions: hero memorials, and Dwarf-Fortress-style oddities in a deadpan dark voice, once more after a second review of those additions against the code, then with your combat-spectacle decisions: gore effects drawn by bevy_hanabi or a CPU fallback, maimed survivors and a kill cam, sections 20 and 21, and last after a review of those against the code and Hanabi's source). All your decisions are recorded in the Decisions section at the end, and the open questions there each have a recommended default. M4c is planned in `docs/M4C_PLAN.md`, and SEED.md has its section ("M4c: Saga") and new requirement rows. This doc answers your ask, "for combat we need some flavor in the kill messages to make it more brutal and we can make specific soldiers have legendary histories", and your follow-up: every run should be strange in its own way, told with a straight face.
 
 Your answers (2026-10-12):
 - **Milestone:** Saga is its own milestone, **M4c "Saga"**. It comes after the M4 playtest and before M4b "Living towns".
@@ -13,6 +13,19 @@ Your follow-up answers (2026-10-12):
 - **Dwarf-Fortress-style fun, all in M4c, in a deadpan dark voice** (section 4): quirks (section 10), mishaps (section 11), unflattering epithets and absurd deaths (section 7), named weapons (section 12), and kin, friends, rivals and moods (section 13).
 - **Guards:** rate limits keep the feed readable at 8x; everything is grounded in the sim; everything is deterministic, with new seeded streams for quirk deals and mishap rolls; mishaps never wipe a run; the effects are run-only, so the developed world and the skirmish don't change.
 - **Later, not M4c:** animals with names (M4b) and tall tales about you (M5). See "Later".
+
+Your combat-spectacle decisions (2026-10-12, sections 20 and 21, decisions 42–47; my defaults for them are 48–66):
+- **Gore, on the render side only.** Blood spatters on hits, bigger bursts come on kills, and pools fade in about a game hour. On told kills, severed heads, arms and legs arc, bounce and settle. Bodies lie where they fell, then fade. **The part that flies is the one the kill line names:** both come from the kill record.
+- **Over the top** (Battle Brothers, Dwarf Fortress) in the brutal tone. The mild tone shows no blood and no parts: dust and falls only.
+- **Maimed survivors are a sim fact.** A survivor of a bad wound can lose a hand, an eye or a leg. They get a small lasting penalty, a service-record line and an epithet (One-Hand, ...), and lines and visuals agree. It's deterministic, hashed and saved, and its effects are run-only, like the rest of M4c (section 21).
+- **Kill cam.** About a second of slow motion and a camera nudge when a legend, the champion or a captain dies near the camera. It has an options toggle and never plays at 8x or in fast-forward. Slow motion is a `Time<Virtual>` effect, never sim state.
+- **bevy_hanabi is approved** as a new dependency: `=0.19.0`, default features off plus `3d`, in game_render only.
+- **One effects layer, three backends.** The game turns sim records into render-side effect requests, and one backend draws them:
+  - **GPU** particles (Hanabi) where the adapter has compute shaders;
+  - **CPU**, our own droplets, where it hasn't, or on a software adapter;
+  - **Off** for headless builds, tests, CI, or by your choice.
+
+  Hanabi does only the droplet spray. Severed parts, pools and lingering bodies are a handful of ordinary meshes per battle, drawn identically on every backend, so only the spray's density degrades (Off draws no spray at all). The backend is chosen from the adapter, and an Effects setting and a command-line flag override it. The sim, saves and replays are untouched, and tests and CI never need a GPU ([ADR 0019](adr/0019-combat-effects-and-bevy-hanabi.md)).
 
 ## 1. What you'll see
 
@@ -38,13 +51,17 @@ What changes for you:
 - **Kin, friends and rivals.** Households march together, grieve and avenge each other; soldiers who held side by side become shield-friends; feuds start at dice and end in a shared fight. The inspector says how someone feels, and why.
 - **Memorials.** A cairn where a legend fell, and a stone in their home village. A village saved from raiders remembers who saved it, and from M4b raises a memorial to them.
 - **The end screen** lists the run's legends, the foes you remember, the fallen and the run's oddities. A small record of them is kept for M6's legends book.
+- **Blood and bodies.** Up close, a fight looks like one: blood on every blow, a burst on every kill, the dead lying where they fell, and, on a told kill, the part its line names flying off. In the mild tone it's dust and falls (section 20).
+- **The kill cam.** When a captain, the champion or a legend is cut down near your camera, the game slows for a second and the camera leans in (section 20).
+- **Maimed survivors.** A soldier who lives through a bad wound may come out of it One-Hand, One-Eye or One-Leg, a little weaker for good. It happens at most once in a life (section 21).
 
 **Goals:**
 - You remember people: a few legends, many odd names, one strange death a run.
 - Runs differ from their first hour: quirks are dealt per person, and mishaps come from each run's own state.
 - Brutal where it's fighting and deadpan everywhere, never cruel toward villagers.
-- Everything told is something the sim did.
-- Readable at 8x, and cheap in a 7,500-a-side battle and on a run island of 4,000 to 5,000 villagers.
+- Everything told is something the sim did, and everything shown agrees with what is told: the part that flies is the one the line names.
+- Battles worth watching up close: over the top in the brutal tone, plain in the mild one.
+- Readable at 8x, and cheap in a 7,500-a-side battle and on a run island of 4,000 to 5,000 villagers. The effects stay inside the frame budget (NFR-10) on every backend.
 - Small effects through the people who carry them, so runs stay winnable (`bot_run` wins 3 of 5).
 
 **Non-goals:**
@@ -52,6 +69,7 @@ What changes for you:
 - Flavour with nothing in the sim behind it.
 - A blow-by-blow log, nemesis AI, prisoners or executions.
 - Animals with names (M4b), tall tales about you (M5), weather moods (M4b).
+- Gore in the simulation. Effects never touch the sim, saves or replays. No decals, ragdolls or per-limb damage model.
 
 ## 2. Kill lines: who killed whom, and how (SIM-39)
 
@@ -155,10 +173,12 @@ At every speed the feed shows at most one line every 1.5 real seconds per place,
 
 | Slot | Fills with | Example |
 | --- | --- | --- |
-| `{killer}`, `{victim}` | The name. With an epithet, the given name and the epithet | "Wat Ashby", "Tobin Banner-Taker", "Kael Nine-Kills" |
+| `{killer}`, `{victim}` | The name. With an epithet, the given name and the epithet, as they stood at the death: a `Fall` keeps the killer's epithet then, so a later one never rewrites an old line | "Wat Ashby", "Tobin Banner-Taker", "Kael Nine-Kills" |
 | `{killer_given}`, `{victim_given}` | The given name, so lines never need a pronoun | "Tobin" |
 | `{weapon}` | A named weapon's name, when the killer carries one (section 12). Otherwise, armed: a weapon word fixed for life per person, so Wat Ashby always swings the same axe. Unarmed: their old trade's tool, or a word from the unarmed bank | "Vane's Bane", "an axe", "a felling axe", "a flail", "a fence post", "bare hands" |
-| `{wound}` | Where the blow went (flavour; brutal lines use it, mild lines usually don't) | "through Ulric Vane's jaw" |
+| `{wound}` | Where the blow went: a body part worked out from the death's record by `saga::wound`, the same part the renderer shows (section 20). A severing part says so. Brutal only: mild lines never use it | "through Ulric Vane's jaw", "took Rook Vane's head off at the neck" |
+| `{wound_terse}` | A severing wound in a few words, for the `terse` forms, report lines and fate clauses that must still name it (section 20). Brutal only | "head off", "arm off" |
+| `{maim}` | The part a maimed survivor lost, from their record (section 21) | "a hand", "an eye", "a leg" |
 | `{ground}` | The terrain where it happened | farmland "in the furrows", forest "among the roots", beach "on the shingle", road "on the road", a settlement "in the lane" |
 | `{place}` | The nearest settlement | "near Loweby" |
 | `{home}`, `{trade}` | The victim's village and old trade (one of the sim's occupations) | "of Ashby", "a baker" |
@@ -186,7 +206,8 @@ At every speed the feed shows at most one line every 1.5 real seconds per place,
 - **Fit the feed.** A feed row is 520 px at 12 pt, about 80 characters, and the line follows a "Day N: " prefix, so a feed line gets **72 characters**. The data's longest fills (an 18-character name, a 23-character name with an epithet, 17-character weapon names, 12-character places) leave a two-name line about 14 characters of its own, so a fixed limit on every variant would leave only bare facts. The rule is settled now (not left to step 4):
   - **Feed form and long form.** A key that can reach the feed has its feed variants, and, where a key wants two sentences or more, a long form for reports, the inspector, biographies and the end screen (up to 110 characters filled). Report-only keys ("more died", deserters, moments) have only the long form.
   - **Every feed variant** fits 72 characters filled with the data's median names, epithets, weapon names and places, so most lines show as written. **Each key also has a `terse` form** per tone, facts only ("{killer} killed {victim} at {place}."), that fits 72 filled with the longest.
-  - **Fit at read time.** When the chosen variant, filled with the real names, runs over 72, the Teller takes the next variant in the stepped order (see "Variety without randomness") that fits, and the `terse` form if none does. The fit depends only on records and names, so it's deterministic, and the same line shows in the game, in headless and after a load.
+  - **Fit at read time.** When the chosen variant, filled with the real names, runs over 72, the Teller takes the next variant in the stepped order (see "Variety without randomness") that fits, and the `terse` form if none does. The fit depends only on records and on names as they stood at the death, so it's deterministic, the same line shows in the game, in headless and after a load, and a told line never changes after it's told.
+  - **A severed wound is in every telling.** When a death's wound severs (section 20), every brutal form that tells it names it: the Teller picks only among variants carrying `{wound}`, the `terse` form has a severing twin with `{wound_terse}` that also fits 72 with the longest names, and long forms, report lines and the fate clauses of biographies and epitaphs carry `{wound}` or `{wound_terse}` too.
   - The sample lines in this doc are feed forms unless marked long; their names are short examples, and the lint checks the real fits.
 - **Name first** in every line that can show at 8x (the `champion`, `legend`, `captain` and `by_legend` keys), so a glance gets who.
 - **Toward militia, rebels and villagers:** grave, never gleeful and never funny, even in brutal. They die "in the lane, fork in hand". (Civilians can't be struck at all; only militia and rebels die by blows.)
@@ -194,6 +215,7 @@ At every speed the feed shows at most one line every 1.5 real seconds per place,
 - **Never:** sexual violence, torture as spectacle, mutilating the dead for laughs, slurs, or children.
 - **No gender.** There is no gender in the sim, so lines use names, given names, roles or "they". The lint denies the pronouns (he, she, his, her, him, hers) and gendered nouns (man, men, woman, women, son, daughter, wife, husband, brother, sister, mother, father, widow, lad, lass, boy, girl). Design prose may still say "men" for soldiers; lines may not. Family ties are "kin" or "of one household".
 - **Mild is sober, not cute.** "Killed", "fell", "was cut down": a clerk's battle report, not a children's book.
+- **Body parts only through `{wound}`, `{wound_terse}` and `{maim}`.** A line's own text names no body part of the victim. The lint takes the nouns from saga.ron's `wounds` table, so a line never names a part the renderer doesn't show, or the reverse (section 20). Some sample lines below name a part in their text ("jaw", "skull", "collarbone to belly", "neck", "face", "ribs", "throat", "hip to hip"). Read those words as the line's `{wound}` fill; in saga.ron they are the slot.
 - **Words may invent the manner, never the facts.** The wound, the weapon word, the ground, a mishap's flavour (the geese, the wedding, the dog) are flavour. Who, whom, where, when, first, last, how much and the outcome always come from records. Times come only from the `{daypart}` and `{then}` slots, never from a fixed phrase. Flavour may only decorate an effect the sim really had (section 11).
 
 **Sample lines** (names are examples; trades are the sim's occupations):
@@ -343,35 +365,35 @@ Health never comes back in the sim today. A soldier with two wounds fights on wi
 
 **Epithets: earned by rule, one per person, explained.**
 - **Rules** are rows in `progression.ron` (`saga.epithets`). Each row has a stable `id`, which saves and run records store, and a separate `rank`. A higher rank outranks a lower one, so ranks can be re-tuned and new epithets slotted in anywhere without relabelling old saves or records. Ids are append-only.
-- **Honourable and mocking.** Each row is `honour` or `mock`. Mocking epithets (section 7) take the lowest ranks, so a deed can wash one off ("Twice-Fled became Banner-Taker at Kemp's Ford") and none ever replaces an honourable one.
+- **Honourable, scarred and mocking.** Each row is `honour`, `scar` or `mock`. Mocking epithets (section 7) take the lowest ranks, so a deed can wash one off ("Twice-Fled became Banner-Taker at Kemp's Ford") and none ever replaces an honourable one. The scar epithets of maimed survivors (section 21) rank just above the mocking ones and below every honourable one.
 - **One per person.** A person carries one epithet, replaced only by a higher-ranked one ("Nine-Kills became Banner-Taker at Kemp's Ford").
 - **Words.** Each epithet's words, in both tones, are in saga.ron, keyed by id. Where there are several variants, one is chosen per person for life.
 - **Every epithet says why** in a tooltip: "Nine-Kills: nine kills, at Loweby and Crane's Ford".
 - **Who.** Epithets are run-only and come to every faction except beasts.
 
-The honourable epithets (the mocking ones, ids 19 to 26 at ranks 0 to 7, are in section 7):
+The honourable epithets, at ranks 11 to 29. The mocking ones (ids 19 to 26, ranks 0 to 7) are in section 7, and the scar epithets of maimed survivors (ids 27 to 29, ranks 8 to 10) in section 21. The ranks were 8 to 26 before the scar epithets were slotted in; ids don't change.
 
 | Id | Rank | Rule | Brutal | Mild |
 | --- | --- | --- | --- | --- |
-| 0 | 8 | 8 battles | Old Iron | Old Iron |
-| 1 | 9 | 4 kills bare-handed | Bare-Hands / Knuckles | the Wrestler |
-| 2 | 10 | 2 wounds | Half-Face / the Stitched / Old Scars | the Scarred |
-| 3 | 11 | Doorwarden | Doorwarden | Doorwarden |
-| 4 | 12 | Ran first, and 5 kills | the Hare | the Runner |
-| 5 | 13 | 9 kills | Nine-Kills | Nine-Kills |
-| 6 | 14 | Beast-slayer | Wolfsbane / Boar-Sticker / Beast-Bane | Beast-Bane |
-| 7 | 15 | Shield | Shieldfast / the Shield | the Shield |
-| 8 | 16 | Held 3 times (`held` ≥ 3) | the Unbroken / the Wall | the Unbroken |
-| 9 | 17 | Last stand | Last-Standing / the Stubborn | the Steadfast |
-| 10 | 18 | 20 kills | the Butcher / Red-Hands / the Reaper | the Grim |
-| 11 | 19 | Cruel, and 6 kills of fleeing foes | the Hound | the Hunter |
-| 12 | 20 | Beloved, and Breadgiver | Breadgiver | Breadgiver |
-| 13 | 21 | Redeemed | the Redeemed | the Redeemed |
-| 14 | 22 | Banner-taker | Banner-Taker / Captainsbane | Banner-Taker |
-| 15 | 23 | Avenger | Blood-Debt / the Avenger | the Avenger |
-| 16 | 24 | Kinslayer | Kinslayer | Kinslayer |
-| 17 | 25 | Legend-breaker | Legend-Breaker / Giantkiller | Legend-Breaker |
-| 18 | 26 | Champion-slayer | the Headsman / Champion's Bane | Champion's Bane |
+| 0 | 11 | 8 battles | Old Iron | Old Iron |
+| 1 | 12 | 4 kills bare-handed | Bare-Hands / Knuckles | the Wrestler |
+| 2 | 13 | 2 wounds | Half-Face / the Stitched / Old Scars | the Scarred |
+| 3 | 14 | Doorwarden | Doorwarden | Doorwarden |
+| 4 | 15 | Ran first, and 5 kills | the Hare | the Runner |
+| 5 | 16 | 9 kills | Nine-Kills | Nine-Kills |
+| 6 | 17 | Beast-slayer | Wolfsbane / Boar-Sticker / Beast-Bane | Beast-Bane |
+| 7 | 18 | Shield | Shieldfast / the Shield | the Shield |
+| 8 | 19 | Held 3 times (`held` ≥ 3) | the Unbroken / the Wall | the Unbroken |
+| 9 | 20 | Last stand | Last-Standing / the Stubborn | the Steadfast |
+| 10 | 21 | 20 kills | the Butcher / Red-Hands / the Reaper | the Grim |
+| 11 | 22 | Cruel, and 6 kills of fleeing foes | the Hound | the Hunter |
+| 12 | 23 | Beloved, and Breadgiver | Breadgiver | Breadgiver |
+| 13 | 24 | Redeemed | the Redeemed | the Redeemed |
+| 14 | 25 | Banner-taker | Banner-Taker / Captainsbane | Banner-Taker |
+| 15 | 26 | Avenger | Blood-Debt / the Avenger | the Avenger |
+| 16 | 27 | Kinslayer | Kinslayer | Kinslayer |
+| 17 | 28 | Legend-breaker | Legend-Breaker / Giantkiller | Legend-Breaker |
+| 18 | 29 | Champion-slayer | the Headsman / Champion's Bane | Champion's Bane |
 
 Every epithet is gender-neutral. "Spearwife" from the first pitch is dropped (open question 3).
 
@@ -389,7 +411,7 @@ Dwarf Fortress's best names are the ones nobody wanted. A few epithets are mocki
 - "Garrick Hale's band feasted after Loweby. Bram Tull choked."
 - "Hild Crane, a glutton, was the first of the band to starve."
 
-**Mocking epithets.** Appended to `saga.epithets` as ids 19 to 26, with `kind: mock`, at ranks 0 to 7, below every honourable epithet (whose ranks move up by 8; ids don't change). They stick until an honourable epithet replaces them. A Vain soldier who earns one takes it badly (a `mocked` mood, section 13).
+**Mocking epithets.** Appended to `saga.epithets` as ids 19 to 26, with `kind: mock`, at ranks 0 to 7, below every honourable epithet (whose ranks move up by 8, and by 3 more for the scar epithets of section 21; ids don't change). They stick until an honourable epithet replaces them. A Vain soldier who earns one takes it badly (a `mocked` mood, section 13).
 
 | Id | Rank | Rule (from the record) | Brutal | Mild |
 | --- | --- | --- | --- | --- |
@@ -501,6 +523,7 @@ Auras don't stack, a legend doesn't steady themself, and only an enlisted legend
 - **Pause.** The game auto-pauses for your own legends only. It's added to every difficulty's `auto_pause` in `director.ron`, and the feed checks the faction.
 - **The record.** The death is kept with the legend's full record. The killer's name is kept too, even if the killer dies the same moment.
 - **Memorials.** A cairn where the legend fell, and a stone in their home village: render-only in M4c (section 14).
+- **The kill cam.** If the legend is cut down near your camera (not if they starve), the game slows for a second and the camera leans in, as for a captain or the champion (section 20).
 
 **Grudges, a light nemesis (open question 1):**
 - **Named.** The enemy who killed a legend is named in later lines and on the end screen: "Osric Pike, who slew Brenna the Stubborn".
@@ -771,14 +794,14 @@ Spawned soldiers have no home: "a sword of the starting band", "a raider out of 
 
 | Where | What you get |
 | --- | --- |
-| **Feed** | Told deaths (read from `Saga`), `Starved`, `Named`, `TraitEarned`, `LegendRose`, `LegendFell` and `Mishap` lines, and saga notes (weapons, kin, feuds), coloured by kind (your dead, your kills, legends in gold, mishaps dimmer); the speed filter and fold (section 2) and the tighter limits for the rest (below); clicking a line selects the person if alive, or else moves the camera there; a Brutal/Mild switch |
-| **Inspector** | The epithet after the name; quirks; "Kills 14 · Battles 6 · Wounds 2"; deeds in words; earned traits with what earned them; the weapon carried and its history; kin in the band, friends and a feud; the mood note; a legend's "Steadies those nearby". The biography replaces "Memories: none yet" for anyone with a record (other villagers keep it until M5's memories, and show their quirks) |
+| **Feed** | Told deaths (read from `Saga`), `Starved`, `Named`, `TraitEarned`, `LegendRose`, `LegendFell` and `Mishap` lines, and saga notes (weapons, kin, feuds, maims), coloured by kind (your dead, your kills, legends in gold, mishaps dimmer); the speed filter and fold (section 2) and the tighter limits for the rest (below); clicking a line selects the person if alive, or else moves the camera there; a Brutal/Mild switch |
+| **Inspector** | The epithet after the name; quirks; "Kills 14 · Battles 6 · Wounds 2"; what they lost ("Lost a hand at Loweby, day 4", section 21); deeds in words; earned traits with what earned them; the weapon carried and its history; kin in the band, friends and a feud; the mood note; a legend's "Steadies those nearby". The biography replaces "Memories: none yet" for anyone with a record (other villagers keep it until M5's memories, and show their quirks) |
 | **Captain panel** | "Notables": the army's legends and up to three other named men; clicking one selects them. "Mourning: N · Feuds: N" |
 | **Settlement panel** | The settlement's short history, its rescues and the relics in its storehouse |
 | **Battle reports** | The feed's battle line opens the whole report with its moments; the end screen uses the same words |
 | **End screen** | "Legends of the run": up to six, yours first, each with their numbers and fate in one line and the epitaph on hover. "Foes remembered": enemy legends, and whoever killed one of your legends or your champion. "The Fallen": how many of your people died, with the named ones listed. "Oddities of the run": the strangest death (the highest-scoring irony), the most storied weapon and its fate, the run's mishaps by kind, and its longest feud. The bloodiest battle, by name. The timeline gains legends risen and fallen |
-| **Map** | A small pennant over each living legend inside the detail band; cairns and memorial stones |
-| **New-game screen** | "Words: Brutal / Mild" beside the difficulty buttons |
+| **Map** | A small pennant over each living legend inside the detail band; cairns and memorial stones; blood, bodies and severed parts, and the kill cam (section 20); maimed figures: an eye patch, a bound stump, a limp (section 21) |
+| **New-game screen** | "Words: Brutal / Mild" beside the difficulty buttons, with "Effects: Full / Reduced / Off" and "Kill cam: On / Off" (section 20). The same three switches sit in a small view menu by the time bar during play. M6's options screen takes them over later |
 
 **Readable at 8x, for the new lines too.** Mishap, weapon, kin and feud lines are lower priority than told deaths and events, and the throttle drops them first. At 8x and fast-forward they pass only as sections 11 to 13 say (a mishap that hit your champion's army; a legend's weapon), and then through a **hard cap in the feed: at most 2 such lines a game day** (about 30 real seconds at 8x), whatever the difficulty or the run. The rest fold into the day's "…and 3 more" line. It's a throttle, not a statistic, so chaotic's three mishaps a day can't break it; `bot_run` still counts what the filter passes, as a check. At every speed, at most one mishap line every 20 real seconds.
 
@@ -834,14 +857,20 @@ Decide     sim_agents::ai::decide   quirk factors (run only; a fifth Factors slo
            soldiers::decide         + reads Veteran: personal break point (cached nudges: quirks, traits, moods,
                                     a legend nearby); reads Mood for its few holders: the vengeance aim and the
                                     goose rout's timed flee; Cruel aim (run only)
-Act        combat::resolve_strikes  a kill pushes (victim, killer, credited side, one blow); a blow adds to the victim's
-                                    hurt this battle; the battle bookkeeping joins or allocates battle numbers
-           combat::casualties       pass 1, killers in strike order: snapshot each killer, start or update their record,
-                                    streaks, best killer, weapon naming
+Act        combat::resolve_strikes  clears the tick's kills, blows and maim checks first; a landed blow pushes (victim,
+                                    striker) onto Casualties.struck; a kill pushes (victim, killer, credited side, one
+                                    blow); a blow adds to the victim's hurt this battle, and one that takes a living
+                                    person past half their health this battle notes a maim check; the battle
+                                    bookkeeping joins or allocates battle numbers
+           combat::casualties       (only when someone fell) pass 1, killers in strike order: snapshot each killer, start
+                                    or update their record, streaks, best killer, weapon naming
                                     pass 2, the dead in SpawnId order: classify (manner, irony); tell tier A, then tier B
-                                    against the bar and the caps (Fall / LegendFell / ChampionFell); keep named deaths;
+                                    against the bar and the caps (Fall, with its position, the victim's role and maim,
+                                    and the killer's epithet as it stood / LegendFell / ChampionFell); keep named deaths;
                                     a named weapon's fate; kin and friend moods, vengeance; a legend's shock;
                                     then today's work (morale entry, goodwill, succession, despawn)
+           combat::maims (new)      (only when a maim check was noted) the checks of the living in SpawnId order: roll,
+                                    record, note (section 21); runs on ticks with no death too
 Needs      sim_agents::update_needs quirk hunger and rest rates (run only)
            upkeep::soldier_upkeep   marks "ran this battle"; legend aura; cached nudges to break point, morale target,
                                     desertion and hunger
@@ -854,7 +883,10 @@ Needs      sim_agents::update_needs quirk hunger and rest rates (run only)
                                     (a walk home sets Follower.deserting, taken by the next tick's tally and
                                     apply_desertions); reconcile named weapons' places
 Words      chronicle::Teller        kill lines, moments, mishaps, notes, biographies; the dead named from the saga's
-                                    records; a tone parameter
+                                    records; a tone parameter; told_wound, the part a told death's line names
+Render     FixedLast effects::collect   (game_render, after every tick that advanced SimTick) copies this tick's
+                                    blows, kills, falls and maims into a render-side buffer; Update turns them into
+                                    effect requests (section 20)
 ```
 
 **The sim stores no text** (ADR 0017):
@@ -868,21 +900,22 @@ Words      chronicle::Teller        kill lines, moments, mishaps, notes, biograp
 
 | Type | What | Hash | Save |
 | --- | --- | --- | --- |
-| `Casualties.kills` | This tick's kills (replaces `slain_by`) | Exempt scratch, as today | No |
-| `Veteran` gains `joined`, `routed`, `hurt`, `trade`, and the holder's cached nudges | The tick they enlisted or were spawned (set in `enlist` and at spawn; reset on re-enlisting like the rest); ran this battle; share of health lost to blows this battle; trade before enlisting; break-point offset, morale-target offset, desertion multiplier and hunger multiplier, written only by serial steps (the quirk deal, `judge`, mood changes, rebuilt from `Service`, `Quirks` and `Mood` on enlisting) so the parallel loops never read the sparse components. The nudges are **fixed-point** (`i8` hundredths for the offsets, `i16` thousandths for the multipliers), so `Veteran` keeps `Eq` and stays small | Yes | Yes |
-| `Service` (new, sparse) | The service record (section 6) | Yes | Yes |
+| `Casualties.kills`, `struck`, `maim_checks`, `maims` | This tick's kills (replaces `slain_by`); its landed blows as (victim, striker), a reused list whose length is the blow count; the maim checks the strike loop noted; and the maims recorded this tick, with where. All are cleared at the top of `resolve_strikes`. With `fallen` (which gains the victim's `Entity` and SpawnId), they're what the renderer's collector reads (section 20) | Exempt scratch, as today | No |
+| `Veteran` gains `joined`, `routed`, `hurt`, `trade`, and the holder's cached nudges | The tick they enlisted or were spawned (set in `enlist` and at spawn; reset on re-enlisting like the rest); ran this battle; share of health lost to blows this battle; trade before enlisting; break-point offset, morale-target offset, desertion multiplier and hunger multiplier, and the maim's attack, guard and pace multipliers (section 21; at most one of them below 1.0), written only by serial steps (the quirk deal, `judge`, mood changes, rebuilt from `Service`, `Quirks` and `Mood` on enlisting) so the parallel loops never read the sparse components. The nudges are **fixed-point** (`i8` hundredths for the offsets, `i16` thousandths for the multipliers), so `Veteran` keeps `Eq` and stays small | Yes | Yes |
+| `Service` (new, sparse) | The service record (section 6), with the maim, if any: the part, the tick and the battle (section 21) | Yes | Yes |
 | `Legend` (new) | `{ faction, rose }` | Yes | Yes |
 | `Quirks` (new, sim_agents) | One or two quirk ids per person, in a run | Yes | Yes |
 | `Mood` (new, sparse) | Up to four timed entries (section 13) | Yes | Yes |
 | `Bonds` (new, sparse) | Up to three friend or rival entries | Yes | Yes |
 | `NamedWeapon` (new, sparse) | Index into `Saga.weapons` | Yes | Yes |
-| `Saga` (new resource) | Told and kept deaths (`Fall`, append-only, with manner and irony), battles (number, first blow and its position, place, ordinal, terrain, lines told, first blood), per-settlement battle counts, legends risen, grudges, weapons, rescues, notes, pending mishap deaths, untold count, `next_battle` | **Two parts.** The append-only parts (`Fall`s, notes, rescues, closed battles) as lengths and a running digest, like the `Chronicle`: each is folded in when pushed, and a battle when it closes. The parts changed in place (open battles with their lines told and first blood, named weapons with their place, holders and kills, per-settlement battle counts, grudges, pending mishap deaths, the untold count, `next_battle`) are hashed in full, which stays small: the battles open now and at most 24 weapons. A divergence in either part reaches the checkpoint hash | Yes |
+| `Saga` (new resource) | Told and kept deaths (`Fall`, append-only, with manner, irony, the position where they fell, the victim's role (captain, champion, legend), the part the victim had lost, if any, and the killer's epithet as it stood), battles (number, first blow and its position, place, ordinal, terrain, lines told, first blood), per-settlement battle counts, legends risen, grudges, weapons, rescues, notes, pending mishap deaths, untold count, `next_battle` | **Two parts.** The append-only parts (`Fall`s, notes, rescues, closed battles) as lengths and a running digest, like the `Chronicle`: each is folded in when pushed, and a battle when it closes. The parts changed in place (open battles with their lines told and first blood, named weapons with their place, holders and kills, per-settlement battle counts, grudges, pending mishap deaths, the untold count, `next_battle`) are hashed in full, which stays small: the battles open now and at most 24 weapons. A divergence in either part reaches the checkpoint hash | Yes |
 | `Captain` gains `battle`, `battle_broke`, `battle_best`, `battle_ran_first`, `battle_deserted`, `starved`, `starved_told`, `halt_until` | The battle number, this army's moments, its run-long count of hunger deaths and how many of them the hourly summary has told (irony 6 reads the first), and a wedding's halt | Yes | Yes |
 | `Director` gains `next_mishap`, `mishap_day`, `mishaps_today`, `mishaps`, `deaths_day` | The mishap clock | Yes | Yes |
 | `BattleReport` gains moments | Section 5 | In the chronicle's digest | Yes |
 | `LegendIndex` | Rebuilt in Knowledge before any reader | Exempt | No |
 | `SagaWords` | saga.ron | Exempt ("words only; the sim never reads it") | No |
 | Tone, feed cursors and throttle state | game_ui | Outside the sim | Tone in the preferences file |
+| Effect requests, bodies, pools, parts, droplets, the effect clock, the kill cam | game_render and game_ui (section 20) | Outside the sim | No; the Effects and Kill cam settings in the preferences file |
 
 - **Append-only enums.**
   - `SimEventKind` gains `Starved`, `Named`, `TraitEarned`, `LegendRose`, `LegendFell` and `Mishap`.
@@ -909,6 +942,9 @@ Words      chronicle::Teller        kill lines, moments, mishaps, notes, biograp
 | `sim_military::director::mishap` | The hour's tick | Whether a mishap comes, its side, its kind and its army |
 | `sim_military::mishap ^ n` (n = the run's mishap count) | The hour's tick | Its subjects, counts and rolls: the choke, the dice, the dice grudge, the brawl's peace, the wandering tile |
 | `sim_military::saga::homesick ^ SpawnId` | The hour's tick | A sweetheart's walk home (it sets `Follower.deserting`) |
+| `sim_military::saga::maim ^ SpawnId` | The tick of the blow | Whether a survivor past half their health is maimed, and which part (section 21) |
+
+The renderer's own variety (droplet spread, a part's arc) never draws from these: it comes from stable hashes of record ids, like `game_render::art` (section 20).
 
 **The run gate.** Records and lines exist in every preset. Behaviour changes only in a run:
 
@@ -918,6 +954,9 @@ Words      chronicle::Teller        kill lines, moments, mishaps, notes, biograp
 | A rebel's kill credited to the rebels | Yes, wherever rebels fight; the guarded developed, skirmish and battle commands have none | |
 | Epithets (honourable and mocking), ironies, deeds that need a run (Breadgiver, Plunderer, Rescuer), earned traits and their effects, legends, aura, shock, the report of an army wiped out | | Yes |
 | Quirks, mishaps, named weapons, bonds and moods, rescue records | | Yes |
+| Maims recorded, with their notes and visuals (section 21) | Yes: hashes change, stdout doesn't | |
+| A maim's attack, guard and pace penalties, and the scar epithets | | Yes |
+| Combat effects and the kill cam (section 20): render and UI only | Wherever the game draws a battle | |
 
 Developed, skirmish and `--battle` stdout stay byte-identical. Kill lines appear in the skirmish too, which helps test the words. `villagers.ron` and `director.ron` gain sections, so the developed world's state hash changes (`Villagers` and `DirectorData` hash their text) while its behaviour doesn't: `village_day` and `famine` are re-run to show it.
 
@@ -927,7 +966,7 @@ Developed, skirmish and `--battle` stdout stay byte-identical. Kill lines appear
   - M4's numbers for the 7,500-a-side battle (seed 42: deaths a tick, the clash window's mean tick, and the Act, Decide and Needs stage times);
   - **the run island's live window:** `--run --seed 7 --difficulty steady --ticks 7200 --timings --stats-every 2400`, the first three game days, which end before the run does (no `run ended` line). Its mean tick and Decide and Needs stage times, where 4,000 to 5,000 villagers live;
   - **a bot run's live windows,** the M4 convention (`docs/m4/PROGRESS_BOT.md`): `--run --bot --seed 42 --ticks 96000 --timings --stats-every 250`, averaging only the windows before the win, with the stage times.
-- **Per blow:** one byte added to the victim's battle hurt, and a push onto a vector, on a kill only. No query and no allocation.
+- **Per blow:** one byte added to the victim's battle hurt; a push of two entities onto `Casualties.struck`; and a push onto a vector on a kill, or when a survivor's hurt first passes half their health in a battle (a maim check, section 21). No query, and no allocation once warm: the scratch lists are cleared, never dropped, so they keep their capacity.
 - **Per death:** a few microseconds of reads and one record; a weapon lookup; a household lookup for villager-recruits only.
 - **Per soldier, in a run:** at most three distance checks for the aura, and none when the faction has no legend. Traits, quirks and moods are read from `Veteran`'s cached nudges: `soldier_upkeep` already reads `Veteran`, and `soldiers::decide` gains one read of it (the break-point offset). The developed stress world has none of them and pays nothing beyond that read.
 - **Per villager, in a run:** one optional two-byte component read in `decide` and `update_needs`.
@@ -990,13 +1029,24 @@ Developed, skirmish and `--battle` stdout stay byte-identical. Kill lines appear
 | Cost | A push on a kill is the only new work per blow; nudges cached on `Veteran`, fixed-point; hourly work for the sparse parts; NFR-09 is measured on `--battle 7500`, with and without `--saga-bench`, on the run island's live ticks, and as the saga's own spans in a bot run's live windows (never on frozen ticks after a run ended) |
 | Saga state diverges unseen | Append-only parts by length and digest; the parts changed in place (open battles, weapons, counts, grudges, pending deaths) hashed in full |
 | Save between ticks loses a walk home | The Sweetheart's walk home sets the hashed, saved `Follower.deserting`, never the exempt `Deserters` scratch |
+| The gore contradicts the words | One function, `Teller::told_wound`, gives the feed its `{wound}` and the renderer its part, from the record alone, whatever form a line takes; every brutal telling of a severed death names the part (feed variants, the `terse` twin, long forms, report lines, fate clauses; lint); names in a told line are frozen at the death, so a later epithet never changes its fit; fixed text names no body part (lint); a maimed victim's lost part is never wounded again; a test checks every form of every told death of a seeded battle (section 20) |
+| A deserter leaves a body, or bleeds | Bodies come only from `Casualties.fallen` and sprays only from `Casualties.struck`, read after every tick in `FixedLast`, never from "a visual whose person vanished" or "a visual whose health fell": in the 7,500-a-side battle, 19 desert for every one who dies, and a deserting recruit's health drops by 40 when they take civilian stats again |
+| A finished run replays its last deaths | After a run ends, `Casualties` keeps the ending tick's lists, since the combat steps no longer run. The collector copies only when `SimTick` has advanced since its last copy, so a frozen tick yields nothing |
+| A load shows the old world's dead | Bodies, pools, parts, droplets and the collector's buffer clear in `RenderSet::Epoch`, and its last tick resets; the saga cursor starts at the end of the loaded `Saga` |
+| Effects eat the frame in a big battle | Effects only in the detail band (bodies to the low-poly band); per-frame burst caps ranked told kill > kill > maim > hit, nearer the camera first, sized to each Hanabi asset's capacity; capped droplets, bodies, pools and parts; pooled GPU instances, never one per hit; NFR-10 gates on the stress battle, at 1,000 a side and with `--effects-bench` |
+| A GPU-only dependency breaks CI, tests or a weak machine | Only game_app adds `EffectsPlugin`, which adds `HanabiPlugin` only when the render device has compute shaders; headless builds don't compile game_render; the CPU fallback and Off; smoke runs with each backend forced and with WebGL2 limits ([ADR 0019](adr/0019-combat-effects-and-bevy-hanabi.md)) |
+| Sprays vanish at 8x, or freeze oddly | The effect clock runs at game speed up to 1x and on real time above it (`Time<Real>`, not `Time<Virtual>`, whose catch-up cap would slow it), and stops when paused; bodies and pools last the later of their game hours and a floor of real seconds |
+| The kill cam fights the player | Rare (captains, the champion and legends, on screen), never at 8x or in fast-forward, once per 10 real seconds; any speed key, pause or camera input ends it; it restores the speed only if nobody changed it; a pause the death brings waits and is never lost; a toggle |
+| Maims snowball into a band of cripples | At most one maim in a life, about a quarter of those past half their health; small penalties through the holder only, run-only; a lost leg never slows a captain's march (their pace is the army's); `bot_run` counts them |
+| A maim is missed on a quiet tick | The roll is its own serial step after `casualties`, run whenever a maim check was noted, because `casualties` runs only on ticks when someone fell, and most battle ticks have no death |
+| Gore toward villagers | Militia, rebel and villager victims take grave keys, which never use `{wound}`, so no part leaves them; they bleed like anyone struck, in the brutal tone only (open question 19) |
 | Name clashes | Goodwill's `Deed` and the champion's `Feat` already exist: the new type is `SagaDeed`, the cause `Cause::Earned`, and the glossary says "Saga deed". "Fame" avoids FUN_DESIGN's "renown"; "Mood" and "Bonds" are new; a quirk is never called a trait |
 
 ## 19. Proposed roadmap change
 
 | Milestone | Was | Proposed |
 | --- | --- | --- |
-| **M4c "Saga"** | — | New, after the M4 playtest and before M4b: kill lines and battle moments, service records, deeds and epithets (honourable and mocking), absurd deaths, SIM-34's earned traits, legends and render-only memorials, quirks, mishaps, named weapons, kin, friends, rivals and moods, rescue records, UI-09's biographies, end-screen legends and oddities, the tone setting and the deadpan voice, and the run record for M6. About 1.6 times the first draft's size; the plan suggests a split after its step 8 (part 1 about 60%) |
+| **M4c "Saga"** | — | New, after the M4 playtest and before M4b: kill lines and battle moments, service records, deeds and epithets (honourable and mocking), absurd deaths, SIM-34's earned traits, legends and render-only memorials, quirks, mishaps, named weapons, kin, friends, rivals and moods, rescue records, UI-09's biographies, end-screen legends and oddities, the tone setting and the deadpan voice, and the run record for M6; then the combat spectacle (render-only gore drawn by bevy_hanabi or a CPU fallback, bodies that linger, severed parts that match the kill lines, the kill cam) and maimed survivors. About twice the first draft's size (1.25 times the plan before the combat spectacle); the plan suggests a split after its step 8b (part 1 about 64%) |
 | M4b | Living towns | Also: hero memorials raised by saved villages, which become tended graves (section 14); animals with names; weather quirks |
 | SIM-34 | M4 | M4 (champion traits), M4c (earned traits) |
 | UI-09 | M4 | M4, M4c (biographies) |
@@ -1015,10 +1065,284 @@ Requirement IDs added to SEED.md on 2026-10-12 (proposed, with M4c and M4b). SEE
 | SIM-55 | In a run, every villager and soldier has one or two quirks (coward, glutton, drunkard, pious, fears geese, ...) dealt from a data deck by their own seeded stream; each nudges only its holder's behaviour, slightly, and outside a run nobody has one |
 | SIM-56 | A weapon that kills a notable foe (a captain, a champion, a legend, a monument's beast) gets a name and a history, and is passed on, looted, sold, taken home or lost as the sim moves it; named weapons gain no stats |
 | SIM-57 | Soldiers have kin (their household) and make friends and rivals by rule; kin grieve and avenge, rivals feud and make peace, and each soldier's mood is the bounded sum of its recorded causes, which the inspector explains |
+| SIM-59 | A survivor of a bad wound may be maimed once in their life (a hand, an eye or a leg) by rule, from their own seeded stream: in a run, a small lasting penalty to their own attack, guard or pace and an epithet (One-Hand, One-Eye, One-Leg); in every preset, a line in their service record; kill lines and visuals never contradict it |
 | SIM-58 (M4b) | A settlement saved from raiders by a named hero who fought them there (M4c's rescue record) raises a memorial to them in its town style once it can build one; it gives small local effects (goodwill and loyalty there, recruits a little more willing, the hero's army steadier near it) and becomes a grave the town tends when the hero dies |
 | RND-09 | Living legends are marked on the map; a cairn stands where a legend fell, and a memorial stone in their home village |
+| RND-10 | Battles show their blows inside the detail band with render-only effects: blood on hits, bursts on kills, pools that fade, severed heads, arms and legs on told kills (the part the kill line names), and bodies that lie where they fell and fade; over the top in the brutal tone, dust and falls only in the mild; drawn by GPU particles where the adapter has compute shaders, a CPU fallback where it hasn't or on a software adapter, or off by choice; the simulation, saves and replays never see them, and headless builds, tests and CI need no GPU |
+| RND-11 | Kill cam: when a captain, the champion or a legend is killed by a blow on screen near the camera, the game slows to a quarter speed for about a second and the camera leans in; never at 8x or in fast-forward, at most once in 10 seconds, switchable off; a viewing effect, never sim state |
 | UI-10 | Kill lines, mishaps, mood notes, battle reports and biographies are told from phrase banks in data, in a deadpan dark voice, brutal by default and mild by choice; the choice is a viewer setting the game remembers, and it never changes the simulation |
 | NFR-09 | Saga bookkeeping (kill records, service records, legends, quirks, moods, bonds, named weapons, mishaps): at most +2% on the median (of three runs) mean tick of the `--battle 7500` clash, with and without the saga's run effects forced on (`--saga-bench`), and of a run's live ticks (`--run --seed 7 --difficulty steady --ticks 7200`, a window that ends before the run does), over M4 baselines recorded in docs/m4c/; in a bot run (`--run --bot --seed 42`, the windows before the win), the saga's own spans stay under 2% of the mean tick; never measured over ticks after a run ended; no allocation per blow |
+| NFR-10 | Combat effects cost: on the reference machine with Full effects, the effects systems (ours and Hanabi's main-world systems) take at most 0.5 ms of CPU a frame (median over a clash), `--stress 20000`'s worst clash window stays at 60 fps or more and within 1.5 ms of the same window measured before the effects layer, and a 1,000-a-side clash framed in the detail band holds 60 fps; the CPU fallback at its caps takes at most 1 ms a frame, and on a software adapter the Reduced setting adds at most 10% to the median frame time over Off |
+
+## 20. Combat spectacle: blood, bodies and the kill cam (RND-10, RND-11, NFR-10)
+
+You asked for fights that look as brutal as their lines read: blood on hits, bursts on kills, pools, severed parts that match the line, bodies that stay where they fell, and a kill cam. All of it is drawn by the renderer from records the sim already keeps. The sim, saves and replays never see it. The decision and its alternatives are in [ADR 0019](adr/0019-combat-effects-and-bevy-hanabi.md).
+
+**What you see** (brutal tone, Full effects, 1x, the camera in the detail band over the front at the Battle of Loweby Fields):
+1. The lines meet. Every blow that lands throws a short red spray off the one struck, away from whoever struck them.
+2. A raider folds and drops where they stood, a gush going out of them. A second later the furrow under them darkens into a pool.
+3. Jory Lowe's axe finds captain Rook Vane. The feed reads "Jory Lowe took captain Rook Vane's head off at the neck in the barley." The game drops to a quarter speed and the camera leans in. The head goes up, turns over, hits the furrow twice and rolls to a stop a few paces from the body, which is still pumping. A second later the speed is back where you had it.
+4. Odo Rook takes a blow past half their health and lives. A hand goes into the barley ("Odo Rook lost a hand at Loweby, and kept swinging."). From then on Odo's figure carries a bound stump.
+5. The raiders break. The pools fade within the next game hour. The dead lie where they fell for three game hours (at least half a minute of real time), then sink into the ground, oldest first.
+
+In the mild tone the same fight is dust kicked up and people falling. Nobody bleeds and no part leaves anyone, though the dead still lie where they fell. With Effects off there are no droplets at all, not even dust, and everything else stays: the dead fall and lie, and in the brutal tone pools spread and parts fly. Off turns off the spray; the mild tone is the switch for gore.
+
+**What each setting shows:**
+
+| | Brutal | Mild | Effects Off (no spray, either tone) |
+| --- | --- | --- | --- |
+| A blow that lands | A blood spray | A small dust flick (GPU only) | Nothing |
+| A death | A burst, the body falls and lies, a pool spreads | A dust puff, the body falls and lies | The body falls and lies; in brutal a pool spreads |
+| A told death with a severing wound | The part its line names flies, arcs, bounces and settles; the stump pumps; a larger pool | As any death: no part, and the line names none | In brutal, the part flies and the larger pool spreads, with no fountain; in mild, as any death |
+| A maim (section 21) | The hand or lower leg flies, or a burst at the head for an eye; a small pool | A dust flick | In brutal, the hand or leg flies and a small pool spreads; in mild, nothing |
+| Maimed figures | An eye patch, a bound stump, a limp | The same (they aren't gore) | The same |
+| Kill cam | On by default (its own toggle) | The same | The same |
+
+**The effects layer.** One layer in game_render turns what the sim recorded into **effect requests**, and one **backend** draws them. Requests are render-side values; nothing of them is ever written into the sim.
+
+| Request | Made from | Drawn as |
+| --- | --- | --- |
+| `Hit { at, dir }` | This tick's landed blows (`Casualties.struck`: the victim and the striker), copied after every tick. A blow on someone killed in the same tick is left to the kill. Several blows on one person in a frame merge into one | A spray (droplets) |
+| `Kill { at, dir, told }` | This tick's kills and falls (`Casualties.kills`, `fallen`), copied after every tick | A burst (droplets), then a `Pool` and a `Corpse` |
+| `Sever { at, dir, part }` | A told death whose wound severs (`Teller::told_wound`, below), read from `Saga` with a render-side cursor | A part (a mesh) and, on the GPU, a stump fountain |
+| `Maim { at, dir, part }` | This tick's maims (`Casualties.maims`, section 21) | A part for a hand or a leg, a burst at the head for an eye, and a small pool |
+| `Pool { at, size }` | A kill or a maim, after a short delay | A flat splat mesh on the ground |
+| `Corpse { visual, at, facing, headless }` | A death, matched to the dead person's visual | The visual itself, tipped over, lingering, then sinking |
+| `Dust { at }` | Hits and kills in the mild tone | A puff (droplets) |
+
+**Where requests come from** (reading only):
+- **After every tick.** A game_render system in `FixedLast`, as `snapshot_positions` runs in `FixedFirst`, copies this tick's `Casualties.struck`, `kills`, `fallen` and `maims` into a render-side buffer, with the positions of the people they name. Several ticks can run in one frame at 8x, so reading `Casualties` in `Update` would lose deaths. `Casualties.fallen` gains the victim's `Entity` and SpawnId (exempt scratch, reset on load: no hash, save or replay change), so starvation deaths get a body too.
+- **Only a tick that ran.** The collector remembers the last `SimTick` it copied (a `Local`, reset on a new world or a load) and copies only when the tick has advanced. Once a run has ended, every `SimSet` is gated off, so nothing clears `Casualties` again and the ending tick's lists stay as they were. Without the check, the collector would send the run's last deaths again ten times a second under the end screen.
+- **A blow, not a health drop.** Hits come from the sim's own list of landed blows, never from a visual's health falling between frames. A recruit who deserts takes civilian stats again, so their health drops by 40 at full health (100 to 60) with no blow; a starving soldier, a slip in the shield wall and a camp brawl lose health without one too.
+- **A death, not a desertion.** Bodies come only from that buffer. `sync_visuals` checks it before despawning a visual whose person is gone: a dead person's visual becomes a corpse (its `AgentVisual` removed, its pose tipped over), and everyone else's vanishes as today. In the 7,500-a-side battle, 19 people desert for every one who dies, so "a visual whose person vanished" would be wrong 19 times in 20.
+- **Told deaths.** A render-side cursor (a `Local`, like the feed's, reset on a new world) reads new `Fall`s from `Saga`. A `Fall` holds the victim's SpawnId and, new in M4c, **the position where they fell** (`at`) and **their role** (captain, champion or legend), which the kill cam, the feed's "move the camera there" and the cairn also need. The renderer keeps each visual's SpawnId, so a `Fall` finds its corpse.
+- **The killer's direction.** From `Casualties.kills` and `struck` the collector reads the striker's position (usually still alive) for the spray's direction. Without one (hunger, a mishap), the spray goes up and out on a hashed bearing.
+
+**The body part: one function for words and visuals.** The part that flies is the part every line names, because both come from one function of the record:
+- **`saga::wound(fall, words) -> Option<Wound>`** is a pure function in `sim_military::saga`'s words. `Wound` is a part (head, neck, face, throat, chest, belly, back, arm, hand, leg or eye; ids append-only) and whether it's severed.
+- **None** when the death has no killer (hunger, a mishap), or when the victim is militia, a rebel or a villager: their grave keys never name a wound.
+- **The part** is a weighted pick from saga.ron's `wounds` table, among the rows for the killer's kind (armed, unarmed or beast) and leaving out the part the victim had lost, if any (`Fall.maim`, section 21). The pick uses a stable integer hash of (victim SpawnId, death tick), never `SimRng`.
+- **Severed** when the row can sever (head and neck give the head; arm; hand; leg), the killer is armed or a beast, and the blow was a single one, or the victim was tier A, or the killer is a legend, or a second hash falls under the row's `sever_percent` (about half for limbs, a third for the head). Over the top, as you asked.
+- **`Teller::told_wound(fall, tone)`** is that wound for a told death in the brutal tone, and none in mild. It reads only the record and the `wounds` table, never which form a line took, so a line that falls back to a shorter form, or a killer who earns an epithet later, can't change it. The renderer calls this same function.
+- **Every telling names a severed wound** (section 3). The Teller picks only among a key's variants that carry `{wound}`; the key's `terse` form has a severing twin with `{wound_terse}` ("head off"), which fits 72 characters with the longest names; and long forms, report lines and the fate clauses of biographies and epitaphs carry `{wound}` or `{wound_terse}` too. The lint checks that every kill key has them, at least four brutal variants with `{wound}`, and a terse phrase for every severable part. A wound that doesn't sever is flavour: a variant may name it or not, since nothing flies. Mild never uses `{wound}`, so mild shows no part.
+- **Names are frozen at the death.** A `Fall` keeps the killer's epithet as it stood, so a told line fits the same way forever and reads the same in the feed, on the end screen and after a load.
+- **Worked out, never stored.** The part is flavour worked out from the record, like a weapon word: the sim never reads it, and the `wounds` table lives in saga.ron (words, exempt, unsaved). Editing it changes what is told and shown, both together, and nothing in the sim.
+
+So the sample line "Rowan Kemp hacked through captain Garrick Hale's neck" is, in saga.ron, `{killer} hacked {wound}` with the neck cut filled in, and if that wound severs, Garrick Hale's head is what you see go, and the report reads "Slain: captain Garrick Hale, head off, by Rowan Kemp."
+
+**Three backends.** Hanabi does only the droplet spray, and only the spray differs between them: the GPU draws it densely, the CPU sparsely, and Off not at all. Severed parts, pools and lingering bodies are a handful of ordinary meshes per battle, drawn identically on every backend, Off included (your decision 47).
+
+| Backend | Draws the spray with | Droplets: hit / kill / told kill | Live droplets | When |
+| --- | --- | --- | --- | --- |
+| **GPU** | bevy_hanabi: one `EffectAsset` per kind (hit spray, kill burst, stump fountain, dust), each with its own `capacity` from render.ron, and a pool of about 40 pre-spawned instances (12 hit, 12 kill, 4 fountain, 12 dust) in global simulation space, so moving an instance to its next burst leaves the last burst's droplets where they are. Fired round-robin with `EffectSpawner::reset()`. Droplets die by age and stop on a per-burst ground height carried in a particle attribute; Hanabi has no collision | 40 / 250 / 600, plus 300 over 1.5 s from the stump on a severing | Each kind's instances × its capacity (below) | The default where the device has compute shaders and the adapter isn't a software one |
+| **CPU** | Our own droplets: a pool of small instanced meshes (one mesh, a few materials, batched by Bevy), moved on the CPU, oldest recycled | Full: 8 / 32 / 64. Reduced: 4 / 16 / 32 | Full 1,500; Reduced 600 | No compute shaders (WebGL2, GL, old drivers), a software adapter (lavapipe, llvmpipe, WARP), or `--effects cpu` |
+| **Off** | No droplets. Bodies, pools and parts as on the other backends | — | — | Effects Off; `--effects off`. Headless builds, tests and CI have no renderer, so `EffectsPlugin` is never added there and nothing is drawn |
+
+**Hanabi's capacities.** An `EffectAsset`'s `capacity` is how many particles each of its instances can keep alive at once. All instances of one asset share a GPU buffer (a slab) of at least 65,536 particles, rounded up (`ParticleSlab::MIN_CAPACITY`), and each gets a slice of its asset's capacity. So:
+- **The live cap** of a kind is its instances × its capacity. An instance fired again while its last burst lives drops whatever doesn't fit.
+- **The per-frame burst caps must fit:** each instance fires (bursts a second ÷ instances) times a second and must hold that × droplets × lifetime. A test checks this over render.ron.
+- **Slab memory** per asset is the larger of 65,536 and the sum of its instances' capacities, times the particle's size (about 48 bytes: position, velocity, age, lifetime, colour and the ground height). That's about 3 MB an asset and 12 MB for the four.
+
+| Asset | Droplets a burst | Lifetime | Instances | Capacity each | Bursts a second at the cap | Live per instance at the cap |
+| --- | --- | --- | --- | --- | --- | --- |
+| Hit spray | 40 | 0.5 s | 12 | 1,024 | 480 (8 a frame) | 40 × 0.5 × 480 ÷ 12 = 800 |
+| Kill burst | 250, or 600 told | 1.2 s | 12 | 4,096 | 120 (2 a frame), plus told kills | 250 × 1.2 × 120 ÷ 12 = 3,000, with room for a told burst |
+| Stump fountain | 300 over 1.5 s | 1 s | 4 | 512 | Told severings only, a handful a battle | About 300 |
+| Dust | 24 | 0.8 s | 12 | 1,024 | 480 (8 a frame) | 24 × 0.8 × 480 ÷ 12 = 768 |
+
+**Automatic selection, and overrides:**
+- **Where.** `EffectsPlugin` lives in game_render, but only game_app adds it, after `DefaultPlugins` and game_render's own plugin. Its `finish()` runs after Bevy's `RenderPlugin::finish`, which puts `RenderDevice`, `RenderAdapter` and `RenderAdapterInfo` into the main world. Without a `RenderApp`, it chooses Off.
+- **Compute** means all of these, read from what Bevy will actually use:
+  - the adapter's downlevel flags (`RenderAdapter`) include `COMPUTE_SHADERS`, `INDIRECT_EXECUTION` and `VERTEX_STORAGE`;
+  - the **device's** limits (`RenderDevice::limits()`, not the adapter's): `max_storage_buffers_per_shader_stage` at least 8, `max_compute_workgroup_storage_size` not 0 (Bevy's own canary for WebGL2 limits), and `max_bind_groups` at least 4. With `WGPU_SETTINGS_PRIO=webgl2` on a Vulkan adapter, the adapter still reports compute while the device is held to WebGL2's limits, which is why Bevy's GPU preprocessing reads the device too. Reading the adapter's limits would load Hanabi there and quit the game;
+  - the backend isn't GL: `Backends::from(info.backend) != Backends::GL` (Bevy re-exports `Backends`). Bevy turns its GPU preprocessing off on GL, and Hanabi's CI runs Vulkan only.
+- **A software adapter** is a `DeviceType::Cpu` adapter (`RenderAdapterInfo`'s `device_type`), matched by its debug name: Bevy doesn't re-export the type, and a direct wgpu dependency isn't worth it for one comparison. This is the only check that matches a name.
+- **Hanabi is added only with compute,** by `EffectsPlugin::finish`:
+  - it calls `app.add_plugins(HanabiPlugin)`, which runs Hanabi's `build` and registers it, so `is_plugin_added` works and a second add panics at once;
+  - then it calls `HanabiPlugin.finish(app)` by hand, because the finish loop never reaches a plugin added during it.
+
+  That works because bevy_app 0.19.1 fixes the range of plugins it finishes when the loop starts, and refuses new plugins only after it has finished. None of Hanabi's sub-plugins has a `finish` or `cleanup` of its own. Added without compute, Hanabi's eager compute pipelines raise a validation error, which quits the game, and without a renderer its `finish` panics. With compute, it's added even on a software adapter, so Full stays possible there, unless the flag forces `cpu` or `off`. A Hanabi plugin can't be added after startup, so this keeps the setting switchable at runtime.
+- **The GPU instances exist only while the GPU backend draws.** Switching to Reduced or Off despawns them, and switching back to Full respawns them; their shaders are compiled by then.
+- **The Effects setting** (Full, Reduced, Off) starts at the machine's choice: Full where there's compute on a hardware adapter, Reduced otherwise. The preferences file stores only a choice you made.
+  - Full draws GPU where Hanabi is loaded, and CPU at its Full caps where it isn't.
+  - Reduced draws CPU at the Reduced caps.
+  - Off draws no droplets.
+  - Switching takes effect at once: Off despawns every droplet, and bodies, pools and parts stay.
+- **The flag** `--effects gpu|cpu|off` forces a backend for the session and isn't stored. `gpu` without compute logs a warning and draws CPU.
+- **No compile-time switch.** The GPU backend is one module (`effects/gpu.rs`), the only code that names Hanabi. If a Bevy upgrade ever comes before a matching bevy_hanabi, that module can be put behind a feature then, or dropped, and the CPU fallback carries on. A feature now would be a code path that nothing builds.
+
+**The effect clock.** Effects run on their own clock:
+- **At 1x or slower, game speed** (`Time<Virtual>`). Pausing freezes droplets in mid-air, and the kill cam's slow motion slows them.
+- **Faster than 1x, real time** (`Time<Real>`), stopped while `Time<Virtual>` is paused. Not `Time<Virtual>` divided by the speed: in a big clash the catch-up cap (game_ui's `cap_catch_up`) clamps virtual time's delta before the speed multiplies it, so virtual time ÷ speed runs slower than real time, and sprays would play in partial slow motion exactly when 8x is busiest.
+
+On the GPU, Hanabi's `Time<EffectSimulation>` advances by `Time<Virtual>`'s delta times its relative speed. A system in `Last` sets that speed: 1 at 1x and below, and above 1x this frame's real delta ÷ virtual delta (clamped to 0.05–4), which Hanabi applies to the next frame. A frame's lag after a speed change doesn't show. The CPU backend reads the same effect clock, so both agree. Lifetimes are "the later of" a span in game hours (sim ticks) and a floor in effect seconds. At 8x a game hour is 1.25 real seconds, and a pool that faded in that time would only flash.
+
+**Bodies, pools and parts:**
+- **Bodies.** The visual of the dead tips over in 0.35 effect seconds, away from the killer, and lies flat. A severed head swaps it to a headless figure mesh (the figure has no limbs, so an arm or a leg leaves the body as it was). It lingers 3 game hours, at least 30 effect seconds, then sinks into the ground over 4 seconds and is despawned. Sinking, not alpha, keeps it in the same batch as the living. At most 300 bodies, the oldest sinking first when more fall. A dead captain's banner falls with them.
+- **Pools.** Brutal only. A pool starts 0.4 seconds after the burst and spreads over 1.5 seconds: 0.5 to 0.8 tiles across for a kill, 1.0 to 1.4 for a told kill, 0.4 for a maim. It's a flat quad laid along the terrain's normal just above the ground, with one of four splat textures from `game_render::art`. It lasts 1 game hour, at least 12 effect seconds, and fades over its last third in four steps, one material each, so pools still batch. At most 200; the oldest fades first.
+- **Parts.** Brutal only. A head, an arm, a hand or a lower leg: low-poly meshes coloured like the figure, with a cut face. A part leaves from the height the wound names, on a ballistic arc out from the killer with a spin, under gravity on the effect clock. It bounces at most three times on the terrain's height (`surface_height_at`) and settles. Its path comes from a stable hash of the `Fall`'s index, so a screenshot is reproducible. It stays as long as its body, and sinks with it. At most 40.
+- **A switch to mild** despawns every pool and part, gives headless bodies their heads back and keeps the bodies.
+- **A new world or a load** (`WorldEpoch`, cleared in `RenderSet::Epoch`) despawns every body, pool, part and CPU droplet, and, while the GPU draws, respawns its instances from their assets (no old droplet survives). It also empties the collector's buffer, resets its last tick, and starts the saga cursor at the end of the loaded `Saga`, so no death from before the load is shown. After a load the field is clean.
+
+**Detail bands** (render.ron):
+- **Sprays, bursts, parts, pools and maim effects** are requested only for people inside the detail band (150 world units, with its hysteresis), as you asked. A burst beyond it is never requested.
+- **Bodies** are made inside the low-poly band too (600), since a figure that vanishes there would pop. Beyond it, the dead vanish as today.
+- **A body or pool already lying** stays when the camera pulls back, until its time is up. It's drawn with the band's mesh like any figure, or skipped beyond the low-poly band.
+
+**Budgets and caps.** The measured numbers (seed 42, headless) set the scale:
+- **Deaths.** About 300 die in either the 1,000- or the 7,500-a-side battle. The front line, not the army size, limits the rate: at most 5 in a tick, and 1.2 to 1.4 a tick at the busiest.
+- **Blows.** There's no blow count yet (step 1 adds `Casualties.struck`, whose length is the count). Kills take 5 to 11 blows, so the peak is estimated at 25 to 50 blows a tick.
+- **The reference machine** (Ryzen 5 7600X, RTX 4070) ran the 7,500-a-side clash at 118 to 176 fps, and 81 fps in its worst window (ADR 0012). That leaves about 4 ms of a 60-fps frame.
+
+| Cap (render.ron `effects`) | GPU | CPU, Full | CPU, Reduced |
+| --- | --- | --- | --- |
+| Bursts started a frame: hits / kills | 8 / 2 | 6 / 2 | 3 / 1 |
+| So, bursts a real second at 60 fps, at most: hits / kills | 480 / 120 | 360 / 120 | 180 / 60 |
+| Told kills a frame (up to 8 a tick) | Never dropped | Never dropped | Never dropped |
+| Live droplets | Instances × capacity: hit 12,288, kill 49,152, fountain 2,048, dust 12,288 | 1,500 | 600 |
+| Bodies / pools / parts | 300 / 200 / 40 | 300 / 200 / 40 | 200 / 120 / 24 |
+| CPU time of the effects systems a frame (median, at the caps) | 0.5 ms, ours and Hanabi's main-world systems | 1.0 ms | 0.6 ms |
+
+**The demand these caps meet.**
+- **The whole battle** makes, at its busiest at 1x, about 14 deaths and 250 to 500 blows a real second (10 ticks a second). Only the slice of the front inside the detail band asks for bursts, so the GPU caps take nearly every one of them and the CPU caps most.
+- **At 8x** the 25 ms catch-up cap keeps a big clash near one tick a frame, so the demand per frame barely grows.
+- **Parts** come only from told deaths: at most 10 tier-B deaths a battle, plus its tier A, and 8 a tick.
+- **Bodies** are a few hundred a battle at most.
+
+When more is asked than a frame allows, requests are ranked: told kill > kill > maim > hit, nearer the camera first. Hits closer together than half a tile merge, and the rest are dropped. This is render-only, so nothing is lost but a droplet.
+
+**The kill cam** (game_ui decides; game_render nudges the camera):
+- **Who.** A captain, a legend or the champion of any faction, **killed by a blow**. A captain or a legend is found by the victim's role in its `Fall`, with its `at`, never by the `Fall`'s tier: tier A also covers a legend's milestone kill of an ordinary soldier, a mishap's death and a Glutton's starvation. The champion is found by `ChampionFell`, which already carries `at` and its cause. A death with no killer (hunger, a mishap) never starts one. The death must be on screen (`Camera::world_to_viewport`) and within render.ron's `detail_distance` of the camera.
+- **Never** at 8x, in fast-forward (`FastForward`), while paused, behind a dialog (`InputGate.blocked`), during the opening shot, or with the kill cam switched off.
+- **What.** At 1x to 4x, `Time<Virtual>`'s relative speed goes to 0.25 for 1 real second (eased in over 0.1 s and out over 0.2 s), then back to the speed it replaced. The camera rig's targets move 35% of the way toward the death and zoom in 15%, no closer than the rig's minimum, on `Time<Real>`, and the camera stays there: no snap back. There's no lead-in: deaths are found after the tick, so the kill cam frames the aftermath (the burst, the fall, a part in flight), which the effect clock slows too.
+- **Once in 10 real seconds.** With several in one frame, the champion comes before a legend before a captain, nearest first. A chain of falling heirs shows only the first.
+- **You win.** A speed key, a pause or any camera input ends it at once and keeps what you chose. It restores the speed only if `Time<Virtual>` is still at its 0.25 and unpaused. While it runs, the time bar lights the speed it will return to.
+- **The pause waits for it.** `ChampionFell`, and your own `LegendFell`, auto-pause (director.ron `auto_pause`). When a kill cam starts for that death, the feed holds the pause until it ends, about 1.3 real seconds, in which the sim moves about 3 ticks. So the slow motion lands and the pause follows on the aftermath. Without a kill cam the pause is immediate, as today. A held pause is never lost: it's applied when the kill cam ends, for any reason.
+- **Data and switches.** Its numbers are in render.ron `kill_cam` (slow, real seconds, eases, cooldown, nudge, zoom). Kill cam On/Off is in the preferences file, and `--no-kill-cam` turns it off for the session.
+- **Never sim state.** `Time<Virtual>` only paces `FixedUpdate`; the ticks and their order don't change, so a state hash at a given tick never depends on it.
+
+**Performance gates (NFR-10)**, in the effects steps' notes and again at the end:
+- **`--stress 20000`** (the 7,500-a-side seed-42 battle), on the reference machine, with Full effects:
+  - the worst clash window keeps 60 fps or more (RND-04), and its mean frame time rises at most 1.5 ms over the same window measured before the effects layer (on the build before step 3b, recorded in `docs/m4c/`), so bodies, pools and parts count as well as the spray;
+  - measured once at the opening shot and once zoomed into the detail band over the front;
+  - `stress_log` gains the live droplets, bodies, pools, parts, bursts a second and the effects systems' spans.
+- **1,000 a side,** the camera in the detail band over the front in the busiest window (ticks 3,400 to 3,500): 60 fps with Full effects, and never below 30 (NFR-05).
+- **What the CPU budget covers.** Our effects systems, and Hanabi's main-world systems (its clock in `First`, and `EffectSystems` in `PreUpdate` and `PostUpdate`), each in a span. Hanabi's render-world systems are logged beside them, not gated: they run in the render world, pipelined with the next frame, and show in the frame time.
+- **`game_app --effects-bench <bursts a second>`,** a synthetic load with no battle: it requests bursts, bodies, pools and parts at the caps around the camera's focus for 60 seconds. The effects systems' median span must stay within the table's CPU time on each backend. Reaching a real clash takes minutes even at 8x, and about 15 minutes at a software renderer's 3 to 4 fps; the bench reaches the caps at once.
+- **On a software adapter** (lavapipe under Xvfb, as on the dev box): Reduced under `--effects-bench` adds at most 10% to the median frame time over Off, as the median of three 60-second runs. The four cores are shared by the sim and lavapipe's rasteriser, so the gate compares medians and the effects systems' own spans, not single frames.
+- **Your machine's checks don't block a step.** The reference-machine numbers need your RTX 4070. Each effects step's notes give the commands, the numbers join the notes when you run them, and NFR-10 is ticked only once they're in (step 15).
+- **The sim's tick cost is unchanged.** The collector runs after the tick and copies a few dozen entries at most, and NFR-09's gates don't move.
+
+**What is never touched:**
+- **The sim.** No sim crate depends on game_render or bevy_hanabi. The layer's systems only read sim components and resources. The collector runs in `FixedLast` and writes render-side resources only. The `Casualties` additions are exempt scratch, reset on load.
+- **Saves.** Nothing of the layer is saved; after a load the field is clean.
+- **Replays.** There's no new command. The Effects setting, the tone's gore and the kill cam are viewer settings, not inputs.
+- **Randomness.** Hanabi seeds its own render RNG inside the crate. That never reaches the sim, and the "never `thread_rng`" rule is about our code, which still never calls `rand::rng()` (clippy). Our CPU droplets and part arcs use stable hashes of record ids.
+- **Headless, tests and CI.** `sim_headless` doesn't depend on game_render. No test adds the effects plugin, and Hanabi's `gpu_tests` feature stays off, so nothing needs a GPU. game_render's tests are pure functions.
+
+**Data:**
+- `render.ron` gains `effects` (the caps above per backend, droplet counts, each GPU asset's instances and `capacity`, lifetimes and floors, band choices, pool sizes, delays and fade steps) and `kill_cam` (the numbers above). It's viewer data, like the rest of render.ron, documented in `docs/dev/DATA.md`.
+- `saga.ron` gains `wounds` (per part: its nouns for the lint, the killer kinds it fits, its weight, whether it severs and `sever_percent`, its phrases in both tones, and a severing part's terse phrase; mild's are never used in a line).
+- The preferences file gains `effects` and `kill_cam` beside the tone.
+
+**Tests** (no GPU anywhere):
+- `select_backend` (game_render unit): every row of the selection, as a pure function over (adapter flags, device limits, backend, device type, setting, flag), including a Vulkan adapter whose device has WebGL2's limits.
+- `effect_requests_follow_the_records` (game_render unit, over hand-built buffers):
+  - a death makes a burst, a body and a pool, and a desertion makes nothing;
+  - a landed blow makes a hit; a deserter's or a recruit's change of stats makes none, and neither do starvation, a slip or a brawl;
+  - a frozen tick (no `SimTick` advance since the last copy) yields no request;
+  - the bands decide what is requested;
+  - the caps and the ranking hold, and each GPU burst cap fits its asset's capacity (a check over render.ron);
+  - mild gives dust and no pools or parts;
+  - Off gives no droplets and the same bodies, pools and parts as the other backends.
+- `bodies_and_pools_fade_and_clear` (game_render unit): lifetimes on the effect clock with their floors, the caps (oldest first), and a new epoch clearing everything, resetting the collector's last tick and moving the saga cursor to the end.
+- `wound_and_line_agree` (`tests/saga_words.rs`): for every told death of a seeded 1,000-a-side battle, every brutal form that tells it (the fitted feed variant, the `terse` form, the long form, its report line and a fate clause) names a severing wound exactly when `told_wound` severs, and the part is the one the renderer's request builder sends. The same holds after the killer earns a new epithet. Mild lines never contain one; militia and rebel deaths never get one.
+- Kill-cam unit tests in game_ui (`kill_cam_*`), as a pure policy over (deaths this frame, speed, fast-forward, pause, input, cooldown):
+  - who triggers, and that a legend's milestone kill of an ordinary soldier and a starving captain don't;
+  - never at 8x, in fast-forward, while paused or behind a dialog;
+  - the cooldown and the chain of heirs;
+  - the speed restored only when untouched;
+  - a held pause applied when the kill cam ends, for any reason.
+- **Smoke runs** (step notes, not CI): the game starts and draws a skirmish clash with each backend forced, with automatic selection, with `WGPU_SETTINGS_PRIO=webgl2` (no compute: CPU, and no validation exit) and with `WGPU_BACKEND=gl`. Screenshots of each.
+
+**Built:** the layer with its CPU and Off backends, bodies and pools in plan step 3b; severed parts, the gore following the tone and the Effects setting in step 4; the GPU backend (bevy_hanabi) in step 4b; the maim visuals in step 8b; the kill cam in step 10b; the final frame checks in step 15.
+
+## 21. Maimed survivors (SIM-59)
+
+A soldier who survives a bad wound may come out of it without a hand, an eye or a leg. It's a sim fact: recorded, hashed and saved. In a run it costs its holder a little for good and earns them an epithet. Battle Brothers' lasting injuries, kept small.
+
+**What you'll read** (brutal; mild in italics):
+- "Odo Rook lost a hand at Loweby, and kept swinging." *(Odo Rook lost a hand at Loweby.)*
+- "Hild Crane left an eye in the mud at Kemp's Ford." *(Hild Crane lost an eye at Kemp's Ford.)*
+- "Bram Tull lost a leg at Loweby, and lived." *(Bram Tull lost a leg at Loweby.)*
+- "They call Odo Rook One-Hand now. Odo swings with the other." *(Odo Rook is called One-Hand now.)*
+- Biography: "Lost a hand at Loweby on day 4; fights on with the other."
+- Inspector: "Lost a hand (Loweby, day 4) · Attack −15%".
+
+In saga.ron the part is always the `{maim}` slot, never fixed text (section 3's rule).
+
+**The rule:**
+- **When.** A blow takes a person with a `Veteran` (a soldier, a captain or the champion; never a beast, never militia) past half their maximum health lost to blows in this battle (`Veteran.hurt` crossing `maim.hurt`, 0.5), and they live through that blow. The strike loop notes the crossing in `Casualties.maim_checks`: a compare per blow, and a push only when it crosses. Hurt resets each battle, so a person is checked at most once a battle.
+- **The roll is its own step.** A new serial system, `combat::maims`, runs after `casualties` in `MilitarySet::Combat` whenever a check was noted (its `run_if`). It can't be a pass of `casualties`, which runs only on ticks when someone fell, and most battle ticks have no death. For each check, in SpawnId order, for those still alive after the tick's blows: `SimSeed::stream(rng_key("sim_military::saga::maim") ^ SpawnId, tick)` draws whether they're maimed (`maim.chance`, 0.25) and which part, by weight: hand 4, eye 3, leg 3.
+- **At most once in a life.** Wounds never heal. After a maim, less than half their health is left, so losing another half would kill them first, and a killing blow never maims. The code enforces it as well: a person with a maim is never rolled again. If M4b brings healing, a second maim is a decision for then.
+- **Who never.** Beasts (no `Veteran`), militia and villagers (their wounds stay untold); the guard armies of monuments and bands for hire are ordinary soldiers and can be maimed.
+
+**What a maim does** (run only, through the holder, read from `Veteran`'s cached nudges, fixed-point, exact no-ops at 1.0):
+
+| Part | Effect | Read where |
+| --- | --- | --- |
+| Hand | Their blows land at ×0.85 attack | `resolve_strikes`, on the striker's `Veteran` (already borrowed for `rank_gain`) |
+| Eye | Their guard at ×0.9 defence | `resolve_strikes`, on the victim's `Veteran` (already borrowed) |
+| Leg | Their pace at ×0.85 in a chase, in a rout and when catching up with their place in the band; a captain's (the champion's too) only in a rout | `move_soldiers` (one new optional read of `Veteran`'s cached pace) and `move_captains` (in a rout) |
+
+- **A lost leg never slows a march.** A captain's march pace is the whole army's: followers move at their captain's speed (GP-23), and the captain waits for stragglers. A one-legged captain marching at ×0.85 would slow every follower and every order for the rest of the run. So a captain limps only when routing, and a one-legged follower keeps up on the march (followers can move faster than their captain to catch up) and falls behind only in a chase or a rout.
+- Nothing else changes: no morale, desertion or ranks. A maimed captain still leads at the army's pace, and a maimed champion still picks traits.
+- Outside a run, maims are recorded (and shown) but change nothing, so developed, skirmish and `--battle` stdout stay byte-identical.
+
+**Records:**
+- `Service` gains `maim`: the part, the tick and the battle number, if there is one.
+- The maim is a saga note (`Saga.notes`, kind `Maimed`), which the feed tells for your people at 1x–4x and never at 8x.
+- `Casualties.maims` (exempt scratch) carries it to the renderer for the moment it happens.
+- When a maimed person dies, their kept `Fall` copies the part, so the words and the renderer never wound a part that's gone.
+
+**Epithets** (appended to `saga.epithets` as ids 27 to 29, a new kind `scar`, at ranks 8 to 10: above every mocking epithet and below every honourable one, whose ranks moved up to 11 to 29; ids don't change):
+
+| Id | Rank | Rule | Brutal | Mild |
+| --- | --- | --- | --- | --- |
+| 27 | 8 | Lost a hand | One-Hand / Stump | One-Hand |
+| 28 | 9 | Lost an eye | One-Eye / Squint | One-Eye |
+| 29 | 10 | Lost a leg | One-Leg / Hop-Along | One-Leg |
+
+- A scar epithet washes off a mocking one ("Twice-Fled is One-Hand now. Nobody uses the old name.").
+- Any honourable deed replaces it: a maimed legend keeps their honour, and "One-Hand" appears in their biography instead.
+- A Vain soldier takes a scar epithet as mocked (the `mocked` mood, section 10).
+
+**Visuals** (section 20), which agree with the record by construction:
+- **The moment.** In brutal, a lost hand or lower leg flies from the right height with a spray and a small pool, and a lost eye is a burst at the head. In mild it's a dust flick. With Effects off, there's no spray, and in brutal the part and the pool still come.
+- **After.** In the detail band, in both tones and on every backend, the figure carries it: an eye patch (a figure mesh variant), a bound stump at the side for a lost hand (another variant), and a limp, a rocking tilt while moving, for a lost leg. These are a few extra meshes, still batched; the limbless figure can't show more.
+- **Later.** A later kill line and its severed part never take the part already lost (`saga::wound` leaves it out).
+
+**Wounds never heal.** Health never comes back in the sim (open question 10), and a maim is for life by the same rule. The same rule makes a maim once in a life (above). If M4b brings healing, it heals health, never a lost hand, and decides then whether a second maim can come.
+
+**Data:** `progression.ron` `saga.maims: (hurt: 0.5, chance: 0.25, parts: [(part: Hand, weight: 4, attack: 0.85), (part: Eye, weight: 3, defence: 0.9), (part: Leg, weight: 3, pace: 0.85)])`, hashed like the rest of `saga`. The epithet rows join `saga.epithets`, and the words (notes, epithets, the `{maim}` slot) go in saga.ron.
+**Determinism:** the new stream key `sim_military::saga::maim ^ SpawnId` at the tick of the blow; no existing stream moves. The roll is the serial `combat::maims` step, in SpawnId order.
+**Hashing and saving:** `Service.maim`, `Fall`'s maim part, and `Veteran`'s three cached multipliers are hashed and saved. `Casualties.maim_checks` and `maims` are exempt scratch. `SAVE_FORMAT` goes up with the step.
+**Performance:** per blow, one compare; per crossing (a few a tick at the busiest), one stream and a record, in a step that runs only when there's a check; the hot loops read two more fixed-point fields of `Veteran`, which they already hold, and the movement systems one optional read.
+**Tests** (`tests/maims.rs`):
+- `maims_follow_the_rule`:
+  - a scripted blow past half health rolls, and the same seed gives the same maims;
+  - a crossing on a tick when nobody dies is rolled on that tick;
+  - no maim on a killing blow, below the threshold, or for someone already maimed (a second crossing in a later battle, set up by hand);
+  - never a beast or militia.
+- `maims_act_through_their_holder`: one-handed attack ×0.85, one-eyed defence ×0.9, and one-legged pace ×0.85 in a chase and a rout, exactly; a one-legged captain marches the army at full pace and routs at ×0.85.
+- `maims_are_exact_no_ops`: outside a run, and for anyone without a maim, bit-identical blows and movement.
+- `maim_words_and_visuals_agree`:
+  - the note names the part rolled;
+  - the epithet follows rank;
+  - a maimed victim's later wound never takes the lost part;
+  - the renderer's request carries the same part.
+- `save_load` round-trips the records; `bot_run` prints maims per seed.
+**Built:** plan step 8b, at the end of part 1, after the epithets it extends.
 
 ## Decisions (2026-10-12)
 
@@ -1077,18 +1401,63 @@ Defaults from the second review, of the follow-up against the code (change any):
 40. **State that keeps its word:** the Sweetheart's walk home goes through the hashed `Follower.deserting`; moods name people by SpawnId and `NameId`; `Saga` hashes its in-place parts in full; the cached nudges are fixed-point; `Veteran` gains `joined` (sections 10, 13 and 17).
 41. **NFR-09 measures live ticks only,** and in a played run gates the saga's own spans (section 17).
 
+Yours, binding (combat spectacle, 2026-10-12):
+
+42. **Gore particles, render-side only:**
+    - blood spatter on hits and bigger bursts on kills;
+    - blood pools that fade in about a game hour;
+    - severed head, arm and leg chunks that arc, bounce and settle on told kills;
+    - bodies that linger where they fell and fade, after the sim despawns the dead.
+
+    The body part shown is the one the kill line names; both are worked out from the kill record (section 20).
+43. **Over the top in the brutal tone** (Battle Brothers, Dwarf Fortress). The mild tone shows no blood and no parts: dust and falls only.
+44. **Maimed survivors are a sim fact.** A survivor of a bad wound can lose a hand, an eye or a leg. They get a small stat penalty, a service-record line and an epithet (One-Hand, ...), and kill lines and visuals match. It's deterministic, hashed and saved, with run-only effects like the rest of M4c (section 21).
+45. **Kill cam:** about a second of slow motion and a camera nudge when a legend, the champion or a captain dies near the camera. It has an options toggle and never plays during 8x fast-forward. Slow motion is a UI time-scale effect (`Time<Virtual>`), never sim state.
+46. **bevy_hanabi is approved** as a new dependency: pinned `=0.19.0`, `default-features = false`, `features = ["3d"]`, in game_render only ([ADR 0019](adr/0019-combat-effects-and-bevy-hanabi.md)).
+47. **One effects layer with three swappable backends,** in your words: the game turns sim events into render-side effect requests ("blood burst here", "sever arm", "pool", "corpse"), and a backend draws them:
+    - **GPU** (Hanabi) when the adapter supports compute shaders: the full spectacle;
+    - **CPU fallback** (our own small instanced-mesh droplets, a few dozen per burst) when compute shaders are missing (WebGL2, old drivers) or a software adapter (wgpu `DeviceType::Cpu`: lavapipe, llvmpipe, WARP) is detected;
+    - **Off** for headless builds, tests, CI, or the player's choice.
+
+    "Hanabi does only the droplet spray; severed parts, pools and lingering bodies are a handful of ordinary meshes per battle drawn identically on every backend, so only spray density degrades." Selection is automatic from the adapter's capabilities and type, overridable by an Effects setting (Full, Reduced, Off) and a command-line flag that forces each backend. The sim, saves and replays are untouched. Tests and CI never need a GPU (headless builds don't add render plugins, and Hanabi's `gpu_tests` feature is off). The CPU fallback gets a frame-time check on the software renderer.
+
+Defaults for the combat spectacle (change any):
+
+48. **One function names the part** (`Teller::told_wound`, built on `saga::wound`), for the feed and the renderer alike, from the record alone. The `wounds` table is words (saga.ron), not sim data. Fixed text names no body part, and mild never uses `{wound}` (section 20).
+49. **A `Fall` gains its position (`at`), the victim's role and maim, and the killer's epithet as it stood;** `Casualties` gains `struck` (this tick's landed blows) and the victim in `fallen`. These are the only sim-side additions for the effects, and the `Casualties` ones are exempt scratch.
+50. **Hanabi is added in `EffectsPlugin::finish`,** only with compute shaders: `app.add_plugins(HanabiPlugin)`, then `HanabiPlugin.finish(app)` by hand. This needs no direct wgpu dependency, and Bevy still picks the adapter it can present with. The alternatives are kept as fallbacks: creating the renderer by hand (`RenderCreation::Manual`), or probing the adapter before the app with a direct wgpu dependency, which would need your OK (open question 20).
+51. **The machine's choice:** Full on a hardware adapter with compute shaders, Reduced otherwise. Software adapters with compute still load Hanabi, so Full stays possible there, and the setting switches at runtime.
+52. **Effects only inside the detail band;** bodies also in the low-poly band. Per-frame burst caps are ranked told kill > kill > maim > hit, nearest first, with the caps and budgets of section 20 in render.ron.
+53. **Lifetimes are the later of game hours and a real-time floor:** pools 1 game hour (at least 12 s), bodies 3 game hours (at least 30 s). The effect clock follows game speed up to 1x and real time (`Time<Real>`) above it.
+54. **Effects Off turns off the spray only,** as your decision 47 says: bodies, pools and parts are drawn on every backend, Off included, and the mild tone is the switch for gore. (The first version of this default had Off remove bodies too, which contradicted decision 47.)
+55. **The kill cam slows to 0.25x for 1 real second,** nudges the camera 35% toward the death and zooms in 15%, fires at most once per 10 real seconds, at 1x–4x only. A pause the death brings waits for it (open question 21).
+56. **Maims:** a blow past half a person's health this battle, one chance in four, hand, eye or leg (4 : 3 : 3), at most once in a life. The penalties are attack ×0.85, defence ×0.9 and pace ×0.85 (a captain's only in a rout). They're recorded in every preset and act only in a run. Scar epithets (ids 27–29) rank between the mocking and the honourable ones (section 21).
+57. **Effects, kill-cam and tone switches are pulled forward from M6's options screen** (the new-game screen and a small view menu), and stored in the same preferences file.
+58. **`--effects-bench`** measures the effects at their caps without waiting for a clash, which matters on a software renderer.
+
+Defaults from the review of the combat spectacle against the code (change any):
+
+59. **Hits come from the sim's list of landed blows** (`Casualties.struck`, step 1's blow count), never from health drops seen by the renderer: a deserting recruit's health drops by 40 when they take civilian stats again (section 20).
+60. **The collector copies only when `SimTick` has advanced,** so a finished run, whose combat steps no longer clear `Casualties`, never replays its last deaths (section 20).
+61. **The maim roll is its own step, `combat::maims`, after `casualties`,** because `casualties` runs only on ticks when someone fell. A maim comes at most once in a life: wounds never heal, so a second crossing of half health would kill first (section 21).
+62. **A lost leg slows a captain (and the champion) only in a rout,** because a captain's march pace is the army's (section 21).
+63. **Every brutal telling of a severed death names the part** (feed variants, a `terse` twin with `{wound_terse}`, long forms, report lines, fate clauses), and names in a told line are frozen at the death (sections 3 and 20).
+64. **Hanabi's capacities are per asset, in render.ron,** and the GPU burst caps (8 hits and 2 kills a frame) are sized to fit them: about 12 MB of particle buffers in all (section 20).
+65. **No compile-time feature for the GPU backend.** It's one module, the only code that names Hanabi; a feature waits until a Bevy upgrade outpaces bevy_hanabi, so no untested code path rots in the meantime.
+66. **The CPU and Off backends come first (plan step 3b), and Hanabi after the kill lines (step 4b),** so the first playable slice doesn't wait on the new dependency. Your RTX 4070's frame checks are handed over and don't block a step; NFR-10 is ticked only once they're in.
+
 ## Open questions (with recommended defaults)
 
 1. **A light nemesis.** Should the enemy who killed a legend be named in later lines and on the end screen, with an Avenger deed for whoever kills them? This reopens FUN_DESIGN's "nemesis rivals: not adopted" in the smallest way. *Default: yes, words and the deed only, with no AI change.*
 2. **Memorials with effects.** *Resolved 2026-10-12 by your decision 14:* M4c keeps render-only cairns and stones and records rescues; M4b raises sim memorials with small effects for rescues, which become tended graves (section 14, `docs/TOWNS_DESIGN.md`). Villagers mourning near a legend's cairn would still fit M5's memories (SIM-14).
 3. **Gendered epithets ("Spearwife").** *Default: no. Everything stays neutral, and a test bans pronouns and gendered nouns. Tagging given names in `villagers.ron` is possible later; it's hashed data, so the village_day and famine tests would have to be re-run.*
-4. **How graphic.** Invented wound detail ("through the eye") as flavour, with a grave register for militia and rebels. *Default: yes, as written in section 3.*
+4. **How graphic.** *Resolved 2026-10-12 by your decision 43:* over the top in the brutal tone, in words and visuals, with a grave register for militia and rebels. Wound detail now goes through `{wound}`, the same part the renderer shows (section 20).
 5. **Kill lines outside runs** (the skirmish and `--battle`). *Default: yes for records and lines, no for effects.*
-6. **A feed-volume option** (all, mine, legends) besides the tone. *Default: not in M4c; the speed filter covers it, and volume joins M6's options screen. Pulling the tone setting forward from M6 is the one exception.*
+6. **A feed-volume option** (all, mine, legends) besides the tone. *Default: not in M4c; the speed filter covers it, and volume joins M6's options screen. The tone, Effects and Kill cam switches are the exceptions pulled forward from M6 (decision 57).*
 7. **Switching tone mid-run.** *Default: yes, from the switch on the feed; the whole history re-renders.*
 8. **A blow-by-blow battle log** (Dwarf Fortress's combat reports). *Default: not in M4c. If you want it later, it's a saved UI ring like the event feed, for your own armies only.*
 9. **Kinslayer and blood killings in revolts.** They're dark, rare and memorable. *Default: yes.*
-10. **Healing.** Wounds never heal, because the sim has no healing; a twice-wounded legend fights on with half their health or less. *Default: leave it, and say so in the inspector ("fights wounded"); healing is a question for M4b's towns.*
+10. **Healing.** Wounds never heal, because the sim has no healing; a twice-wounded legend fights on with half their health or less. A maim (section 21) is for life by the same rule, and comes at most once in a life: after one, less than half their health is left, so losing another half kills them first. Measuring the threshold against health at the start of each battle would allow a second maim, but then the already wounded would be maimed more easily. *Default: leave it, and say so in the inspector ("fights wounded"); one maim a life; healing is a question for M4b's towns, and if it comes it heals health, never a lost hand, eye or leg.*
 11. **Moving the chronicle's cause phrases into saga.ron,** so they get tones too. *Default: not in M4c (it would change every run hash for words); revisit with M6's options.*
 12. **Starting numbers:**
     - the bar 40 + 15 per told line, at most 10 tier-B lines a battle and 8 told deaths a tick;
@@ -1113,6 +1482,11 @@ Defaults from the second review, of the follow-up against the code (change any):
     - at most 2 mishap, weapon, kin and feud lines a game day passing the 8x filter.
 
     *Default: tune with the bot's counts (quirks, mishaps by kind, weapons, feuds, desertions by cause) and the playtest.*
+19. **Gore on militia and rebels.** Their deaths take grave keys, which never use `{wound}`, so no part ever leaves them, and their lines stay grave. Should they bleed, in the brutal tone, like anyone struck? *Default: yes, sprays, bursts and pools (blood is physical, and a defended village shouldn't look bloodless), but never a severed part, so "over the top" stops at the soldiers, raiders and beasts.*
+20. **How Hanabi is gated.** Decision 50 adds it in our plugin's `finish`, which relies on Bevy fixing the finish loop's range when it starts and accepting new plugins until it has finished (both checked in bevy_app 0.19.1's source). Bevy is pinned exactly, and step 4b's smoke runs guard it. The cleaner alternative probes the adapter before the app starts, with a direct `wgpu = "=29.0.4"` dependency (already in the lockfile, a new direct dependency nonetheless), and costs tens to hundreds of milliseconds at startup. *Default: decision 50, no new dependency; switch to `RenderCreation::Manual` (no dependency) if the smoke test ever fails, and ask before adding wgpu.*
+21. **Slow motion before an auto-pause.** The champion's death, and your legend's, pause the game in the same frame today. *Default: the pause waits about 1.3 real seconds for the kill cam, during which the sim moves about 3 ticks. The alternative skips the slow motion for deaths that pause and keeps only the camera nudge, which runs on real time and plays over a frozen spray.*
+22. **Severing rates.** About half of limb wounds and a third of head wounds on told deaths sever, and always on a single blow, a tier-A victim or a legend's kill. *Default: as written; tune on screenshots and the playtest ("grim, not numbing" applies to pictures too).*
+23. **Kill cam for the enemy's captains.** A raider captain dying near your camera is a moment too, but captains fall often in a big run. *Default: yes, any faction's captains, champion and legends, with the 10-second cooldown; if it fires too often in the playtest, limit it to your own people and enemy legends.*
 
 ## Later (not in M4c)
 
@@ -1124,3 +1498,6 @@ Defaults from the second review, of the follow-up against the code (change any):
 - **Healing and festering wounds (M4b).**
 - **Grief at home (M5):** villagers remembering their dead (SIM-14).
 - **Hero memorials (M4b):** decision 14 and `docs/TOWNS_DESIGN.md`.
+- **Decals and blood on things:** Bevy 0.19's forward decals need a depth prepass on the camera, and clustered decals need compute shaders, so pools are flat meshes for now; blood on figures, weapons and buildings waits for an art pass.
+- **Figures with limbs:** a figure that can show a missing arm or leg, and ragdoll falls, need new figure art (M6's polish).
+- **A web build:** Hanabi needs WebGPU; on WebGL2 the CPU fallback draws the spray, which section 20 already covers.
