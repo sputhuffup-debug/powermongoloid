@@ -6,9 +6,15 @@ step 6, fallout, with the seat calibration (`ce4d66e`). Gate: [M4A_PLAN.md](../M
 MP3 row of its execution plan; baselines: [baseline.md](baseline.md) and `baseline/*.out`; the previous gates:
 [MP1.md](MP1.md) and [MP2.md](MP2.md). Run on 2026-10-13, 4 cores, `-j 2`, `--test-threads=2`,
 `CARGO_INCREMENTAL=0`. **Nothing in the code or data was changed by this gate** (see "What was not changed"
-at the end); the only file added is this page.
+at the end); the only file added is this page. **The two failures were then fixed in code, after the gate,
+by the MP3 fixer: section 0.** No data changed, and no hash moved.
 
-**Verdict: RED, on two items; everything else is green.**
+**After the fixes: GREEN.** The cost is back to the M4 binary's (live ticks 1 to 4,800, 48 interleaved pairs:
+**-0.1%**, 95% interval -3.6% to +3.4%), and the bot's `retaken` now counts at most one retake per reprisal,
+with a new column for the towns the rival conquered. Every state hash is unchanged (three replays in both
+threading modes, the guarded stdout, `bot_run` day for day), so every other result on this page stands.
+
+**The gate's verdict: RED, on two items; everything else is green** (both fixed in section 0).
 1. **Cost (NFR-11).** On the live ticks the MP3 tree costs about **+5% to +6%** more than the M4 binary
    (paired mean +5.9% over 42 pairs, 95% interval +3.2% to +8.5%; median of the 30-pair run +6.2%), against a
    limit of +5%. MP2's window-1 flag persists (+7.8%) and window 2 joins it (+5.8%). The cause is the Decide
@@ -42,13 +48,118 @@ tests only), and the playtest below (section 9) is the first time a human sees a
 | 3 | Bot replay with the whole fallout chain, seed 3, to its loss at tick 80,110 (468 commands) | both replays "replay ok ... checkpoints=82", `state_hash=0x22a3784a1c5c14db` |
 | 3 | A replay with a bandit band | **none exists**: no bot run on this tree raises one (seeds 1 to 13) |
 | 4 | Guarded stdout, developed, skirmish, battle (release) | all three byte-identical to `baseline/*.out` (`cmp` silent; sha256 equal) |
-| 5 | Cost, seed 7 steady, live windows 1 and 2, 42 interleaved pairs against the M4 binary | **FAIL (at the limit): paired mean +5.9% (+3.2% to +8.5%), paired median +5.7%**; window 1 +7.8% (persists), window 2 +5.8%; the run ends on tick 7,035, so window 3 is partly dead; section 5 |
+| 5 | Cost, seed 7 steady, live windows 1 and 2, 42 interleaved pairs against the M4 binary | **FAIL (at the limit): paired mean +5.9% (+3.2% to +8.5%), paired median +5.7%**; window 1 +7.8% (persists), window 2 +5.8%; the run ends on tick 7,035, so window 3 is partly dead; section 5. **Fixed (section 0): -0.1% over 48 pairs (-3.6% to +3.4%)** |
 | 5 | Stage check, bot run seed 42 (lost at tick 87,913): Lordship's own stages incl. `fallout::step` | **2.0 us a tick, 0.087% of the 2.307 ms mean tick** (limit 5%); worst 250-tick window 0.64% |
 | 6 | `bot_run` (release, `--ignored`), wins | **4 of 5** (limit: at least 3): pass; quiet limit 999 of 1000 on every seed: pass |
 | 6 | `bot_run`, win-day floor (no seed before day 14) | **pass**: the earliest win is day 17.5 (seed 2) |
 | 6 | `bot_run`, median within 14.4 to 22.4 | **pass**: 19.9 with the lost seed counted at its end day, 19.6 over the four wins |
-| 6 | Lane A's open note: how each lost town was lost | every ownership change of a town of the bot's has an event (80 of 80 eventful flips; the other 24 are the rival's lands freed at the seat's fall, by design); **FAIL: the bot's `retaken` over-counts** |
+| 6 | Lane A's open note: how each lost town was lost | every ownership change of a town of the bot's has an event (80 of 80 eventful flips; the other 24 are the rival's lands freed at the seat's fall, by design); **FAIL: the bot's `retaken` over-counts**. **Fixed (section 0): at most one retake per reprisal; the rival's conquests have their column** |
 | 7 | `influence` ten-day envoy check (release, `--ignored`) | passes: seed 1 invited on day 7, seed 42 on day 8 |
+
+## 0. The fixes (MP3 fixer, after the gate)
+
+Both failures were diagnosed at the root and fixed in code. **No data changed and no state hash moved**, so
+`bot_run`, the scenario tests and every figure of sections 2 to 9 play exactly as gated. Recorded in
+[ADR 0020](../adr/0020-lordship.md) "As built: Merge point 3".
+
+### 0.1 Cost (NFR-11): where it went, and the fix
+
+**Diagnosis by instruction counts** (callgrind, which is deterministic where the wall clock swings 10 to 15%
+a run), the botless seed-7 run, ticks 2 to 4,800, every thread counted:
+
+| Binary | Instructions per tick | Against M4 |
+| --- | --- | --- |
+| M4 (`sim_headless_m4`) | 7.90 million | |
+| the gated tree (`sim_headless_mp3`) | 8.34 million | **+5.5%** |
+| the fixed tree (`sim_headless_fix2`) | 7.68 million | **-2.9%** |
+
+Per function (main thread, `--single-threaded`, 4,800 ticks), the gated tree's excess was:
+- **`ai::decide`, +1.25 billion (+12%)**: step 2's two serial passes over all 4,500 villagers (the claims
+  read before anyone decides, and the second pass that looked for carters who took the same delivery), and
+  about 300 more instructions in each of the 2.3 million decisions. Inside a decision, the biggest cost was
+  pre-existing: every decision drew its Idle option's wander spot (`idle_spot`, a fresh ChaCha8 stream: 1.2
+  billion, a fifth of all scoring), although Idle seldom wins.
+- **`resolve_transfers`, +0.57 billion (+86%)**: the same orders, but gathering them from every agent cost
+  twice M4's per agent (the closure is no longer inlined once sim_economy grew; `collect` steps the query
+  with `next`).
+
+**The fix** (`crates/sim_agents/src/ai.rs`, `crates/sim_economy/src/goods.rs`; each change is exact, which the
+unchanged hashes confirm):
+1. The Idle candidate carries its anchor (home or the green), and `AiWorld::goal_of` draws the spot only for
+   the option chosen. The draw is keyed by villager and tick, so it is the same spot whenever it is drawn.
+2. The trace's best three come from `ai::top_three` (no sort, no allocation), the first three of the stable
+   sort the trace used; `top_three_matches_a_stable_sort` pins it.
+3. Step 2's second pass is gone: carters who take a free input delivery are noted as they choose, inside the
+   parallel pass, then sorted by SpawnId; only the losers are fetched and sent back.
+4. The claims pass and `resolve_transfers` fold over their queries (`for_each`), which takes Bevy's
+   dense-table path.
+
+**Wall clock**, live ticks only (`--run --seed 7 --difficulty steady --ticks 4800 --timings --stats-every
+2400`: the run ends on tick 7,035 on this island, so ticks 1 to 4,800 are windows 1 and 2 of the plan's run
+and the `total` line is their live total), nothing else running:
+
+| Comparison | Pairs | Total (live), median of medians | Paired mean (95% interval) | Paired median | Decide |
+| --- | --- | --- | --- | --- | --- |
+| M4 to the gated tree (three-way run, this session) | 24 | +4.5% | +3.3% (-1.0 to +7.6) | +3.0% | +10.7% |
+| M4 to the fixed tree (three-way run) | 24 | +1.2% | -0.1% (-5.1 to +5.0) | +3.2% | -3.5% |
+| the gated tree to the fixed tree (three-way run) | 24 | -3.1% | -2.9% (-7.5 to +1.8) | -3.4% | **-12.8% (t = -5.2)** |
+| M4 to the fixed tree (second session, two-way) | 24 | -0.8% | -0.1% (-5.3 to +5.0) | -0.7% | -4.7% |
+| **M4 to the fixed tree, both sessions** | **48** | **+0.4%** | **-0.1% (-3.6 to +3.4)** | **+1.2%** | **-4.3%** |
+
+By window over the 48 pairs: window 1 -0.3% (median of medians; paired mean +1.3%), window 2 -3.7% (-0.8%).
+Act is -3.1% against M4 (resolve_transfers); Move reads +3% to +5% against both M4 and the gated tree, with no
+code or work changed there (the same paths are searched: the hashes are equal), so it is the stage clock's
+split, not cost. The plan's command as specified, three pairs at 7,200 ticks: total -3.6% (window 3 holds 165
+dead ticks in the fixed run, as in the gated one), Decide -6.6%. The `run ended: lost at tick 7035 (killed in
+battle)` line is unchanged (the island's, not the fix's). **NFR-11 passes: the live cost is M4's, with the
+interval's top under +5%.** Raw outputs: `scratchpad/m4a/fixa_cost_*` (three-way), `fixb_cost_*`,
+`fixs_cost_*`; callgrind in `scratchpad/cg/`.
+
+### 0.2 The bot's `retaken`, and the column the line lacked
+
+`crates/sim_headless/src/bot.rs`, `Bot::takes` (reporting only):
+- **A retake is now the first change of hands of the town a `RivalReprisal` named, after the band was sent,
+  counted once per reprisal**, and if it is a rival `Conquest`; the line says how many the reprisal band
+  itself made: `retaken N (by its band M)`. It can no longer exceed `reprisals`.
+- **New column: `lost to the rival: raids R reprisals P other O`**, the player's towns the rival conquered
+  (a rival `Conquest` whose previous owner was the player), by whose captain took them: a `RivalRaid` band's,
+  a `RivalReprisal` band's, or another (an heir, who has no event of his own).
+- Unit test `retakes_follow_the_reprisal` (seed 3's Thornbrook as the fixture: a raid band's conquest before
+  the vow, the reprisal, the raid band's conquest after it, the reprisal band's Duncombe; then a revolt that
+  comes first, and a band's own retake).
+
+`bot_run` on the fixed tree (release, 505 s): **the same five runs** (won on days 19.9, 17.5, 19.3 and 20.3,
+seed 3 lost on day 33.4; the same command counts), now reporting:
+
+| Seed | Vows | Reprisals | Retaken (by its band) | Lost to the rival: raids / reprisals / other | Defied | Revolts | Lost in all (run summary) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 0 | 0 | 0 (0) | 3 / 0 / 0 | 3 | 0 | 6 |
+| 2 | 2 | 0 | 0 (0) | 0 / 0 / 0 | 1 | 0 | 1 |
+| 3 | 1 | 1 | **1 (0)** (was 2) | 10 / 1 / 0 | 2 | 2 | 15 |
+| 4 | 1 | 1 | 0 (0) | 0 / 0 / 0 | 0 | 0 | 0 |
+| 5 | 0 | 0 | 0 (0) | 2 / 0 / 0 | 0 | 0 | 2 |
+
+The line now adds up: defiances, revolts and the rival's conquests make every lost town of the run summary
+(seed 1: 3 + 3 = 6; seed 3: 2 + 2 + 11 = 15), and the conquests agree with section 6.4's probe (3, 11 and 2,
+one of seed 3's by the reprisal band). Seed 3's retake is the raid band's conquest of Thornbrook 107 ticks
+after the reprisal left; the reprisal band took Duncombe instead. Outside the gate set: seed 11 now reads
+`reprisals 2 retaken 2 (by its band 1)` (was 3) and seed 42 `reprisals 2 retaken 1 (by its band 0)` (was 3).
+
+### 0.3 Checks re-run on the fixed tree
+
+| Check | Result |
+| --- | --- |
+| `cargo fmt --all --check`; `cargo clippy -j 2 --workspace --all-targets -- -D warnings` | clean |
+| `RUSTDOCFLAGS="-D warnings" cargo doc -j 2 --workspace --no-deps` | clean |
+| Full suite (five batches, as section 2; `scratchpad/m4a/fix_suite.sh`, log `fix_full.log`) | **451 passed, 0 failed, 4 ignored** in 27.8 minutes (the gate's 449 plus the two new unit tests); every `tests/tests/*.rs` file ran; determinism 13 of 13 |
+| Run replay, seed 42 (`mp3.ron`); bot replays, seed 4 to its win (`mp3_bot4.ron`) and seed 3 to its loss (`mp3_bot3.ron`) | all "replay ok", threaded and `--single-threaded`, **the gate's hashes**: `0x229a7b1dece4a34e`, `0xb340346612c91ec5`, `0x22a3784a1c5c14db` |
+| A 4,800-tick botless seed-7 run | `0x701744d957fa2d24`, the gated binary's |
+| Guarded stdout: developed, skirmish, battle | `cmp` silent against `baseline/*.out` |
+| `bot_run` (release, `--ignored`) | passes, 4 of 5, the same days (0.2) |
+| Docs: ARCHITECTURE.md (the Decide row), TESTING.md (the two unit tests, the `bot_run` line), ADR 0020 | updated |
+
+Not re-run (nothing they measure changed, and every hash is equal): the bot-run stage check of 5.4 (the
+Lordship stages are untouched) and the ten-day envoy check.
 
 ## 1. Build and lint
 
@@ -452,7 +563,7 @@ Seed 1: target #15 (net 0.712, goodwill 0.509), invited on **day 7**. Seed 42: t
 
 ## What was not changed
 
-No code, no data, no test, no doc other than this page. Four temporary things existed and were removed before
+By the gate itself (the fixes of section 0 came after it): no code, no data, no test, no doc other than this page. Four temporary things existed and were removed before
 the end: `tests/tests/mp3_probe.rs` (the per-seed counts and ownership log; deleted after each of its two runs,
 `git status` clean after), the stage probe's four edits in `crates/` (restored with `git checkout -- crates`;
 the tree was rebuilt clean afterwards and the release binary's sha256 equals the gated binary's), the
