@@ -345,11 +345,11 @@ fn every_lordship_type_round_trips() {
         Agent, Assignment, Deed, DeedLog, Edicts, Enlisted, LoyaltyTerm, LoyaltyTerms, Mustered,
         Owner, Rationed, Specialty, Villager,
     };
-    use sim_core::{BuildKind, Dues, Table, WorkFocus};
+    use sim_core::{BuildKind, Cause, Dues, Table, WorkFocus};
     use sim_economy::{Construction, GoodId, Occupation, Workplace};
     use sim_military::{
-        Bandits, Fallout, Influence, PendingBand, RivalBand, RivalState, Steward, TakenBy, Tenure,
-        Veteran, Vow,
+        Bandits, Fallout, Influence, PendingBand, PendingVow, RivalBand, RivalState, Steward,
+        TakenBy, Tenure, Veteran, Vow,
     };
 
     let mut app = headless_app(HeadlessConfig::run(SEED, RunConfig::default()));
@@ -445,8 +445,13 @@ fn every_lordship_type_round_trips() {
         settlement: t0.1,
         men: 7,
         due: 500,
+        brooding: true,
     });
     world.resource_mut::<Fallout>().last_violent = Some(4);
+    world.resource_mut::<Fallout>().vows.push(PendingVow {
+        settlement: t1.1,
+        cause: Cause::Sack { captain: 3 },
+    });
     world.resource_mut::<RivalState>().reprisal = Some(Vow {
         settlement: t1.1,
         due: 900,

@@ -312,12 +312,15 @@
             seat_radius: 30.0,
             levy_every_days: 2.0,
             levy_size: 6,
-            defence_steps: [(0.0, 0.0), (5.0, 0.25), (10.0, 0.5), (20.0, 0.75), (30.0, 1.0)],
+            defence_steps: [(0.0, 1.5), (5.0, 2.0), (10.0, 2.25), (20.0, 2.5), (30.0, 2.75)],
             raid_from_day: 10.0,
             raid_every_days: 3.0,
             raid_size: 10,
-            // M4a (GP-31, GP-33): reprisals (from step 6) and the seat's defence
-            // at an empty realm, as a share of its clock (1.0 at a full realm).
+            // M4a (GP-31, GP-33): reprisals and the seat's defence at an empty
+            // realm, as a share of its clock (1.0 at a full realm). Step 6's
+            // seat calibration raised `defence_steps` so a seat whose realm is
+            // intact holds until about day 14 (docs/m4a/STEP6.md); taking,
+            // turning or freeing its towns brings it down toward `realm_floor`.
             reprisal_from_day: 6.0,
             reprisal_size: 8,
             reprisal_min_garrison: 8,
@@ -332,12 +335,15 @@
             seat_radius: 30.0,
             levy_every_days: 2.0,
             levy_size: 6,
-            defence_steps: [(0.0, 0.0), (5.0, 0.25), (10.0, 0.5), (20.0, 0.75), (30.0, 1.0)],
+            defence_steps: [(0.0, 1.5), (5.0, 2.0), (10.0, 2.25), (20.0, 2.5), (30.0, 2.75)],
             raid_from_day: 8.0,
             raid_every_days: 2.0,
             raid_size: 12,
-            // M4a (GP-31, GP-33): reprisals (from step 6) and the seat's defence
-            // at an empty realm, as a share of its clock (1.0 at a full realm).
+            // M4a (GP-31, GP-33): reprisals and the seat's defence at an empty
+            // realm, as a share of its clock (1.0 at a full realm). Step 6's
+            // seat calibration raised `defence_steps` so a seat whose realm is
+            // intact holds until about day 14 (docs/m4a/STEP6.md); taking,
+            // turning or freeing its towns brings it down toward `realm_floor`.
             reprisal_from_day: 5.0,
             reprisal_size: 10,
             reprisal_min_garrison: 8,
@@ -352,12 +358,15 @@
             seat_radius: 30.0,
             levy_every_days: 1.5,
             levy_size: 8,
-            defence_steps: [(0.0, 0.25), (4.0, 0.5), (8.0, 0.75), (16.0, 1.0), (24.0, 1.5)],
+            defence_steps: [(0.0, 1.75), (4.0, 2.25), (8.0, 2.5), (16.0, 2.75), (24.0, 3.25)],
             raid_from_day: 8.0,
             raid_every_days: 2.5,
             raid_size: 14,
-            // M4a (GP-31, GP-33): reprisals (from step 6) and the seat's defence
-            // at an empty realm, as a share of its clock (1.0 at a full realm).
+            // M4a (GP-31, GP-33): reprisals and the seat's defence at an empty
+            // realm, as a share of its clock (1.0 at a full realm). Step 6's
+            // seat calibration raised `defence_steps` so a seat whose realm is
+            // intact holds until about day 14 (docs/m4a/STEP6.md); taking,
+            // turning or freeing its towns brings it down toward `realm_floor`.
             reprisal_from_day: 5.0,
             reprisal_size: 12,
             reprisal_min_garrison: 8,

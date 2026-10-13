@@ -385,7 +385,10 @@ pub fn step(world: &mut World) {
     let (threat, hunger, fights) = inputs(world);
     let w = p.weights;
     let tension = w.threat * threat + w.hunger * hunger + w.fights * fights - w.quiet * quiet;
-    let mut q = world.query_filtered::<&Captain, With<Raider>>();
+    // GP-33 (M4a): bandits are not the director's bands; they don't count
+    // toward `max_bands` (they do count for tension when near).
+    let mut q =
+        world.query_filtered::<&Captain, (With<Raider>, Without<crate::components::Bandits>)>();
     let roaming = q.iter(world).count() as u32;
     let director = world.resource::<Director>().clone();
     let too_quiet = quiet_for + hour > limit;

@@ -435,6 +435,8 @@ fn settlement_panel(
     take: Res<take::TakeView>,
     // SIM-62 (M4a step 9): a run town's specialty; absent outside a run.
     specialties: Query<&Specialty>,
+    // M4a step 6: the rival's realm, on the seat's panel.
+    fallout: Res<crate::fallout::FalloutView>,
     stocks: Query<&Stockpile>,
     workplaces: Query<&Workplace>,
     villagers: Query<(&Villager, &Occupation, &CombatStats, &Activity), Without<Enlisted>>,
@@ -564,6 +566,12 @@ fn settlement_panel(
         // or how a taking is holding.
         if let Some(facts) = take.get(id.0) {
             s += &take::panel_block(facts);
+        }
+        // GP-31 (M4a step 6): the seat's defence follows its realm.
+        if let Some(line) = fallout.seat_realm(id.0) {
+            s += "\n";
+            s += line;
+            s += "\n";
         }
         s += "\n";
     } else {

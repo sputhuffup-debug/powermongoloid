@@ -18,11 +18,14 @@ use sim_core::{
 use sim_economy::SettlementEconomy;
 use sim_world::{NO_REGION, Settlement, TravelCosts, WorldMap};
 
-use crate::components::{Captain, Raider};
+use crate::components::{Bandits, Captain, Raider};
 use crate::data::Army;
 use crate::director::DirectorData;
-use crate::index::ArmyIndex;
+use crate::index::{ArmyIndex, FighterGrid};
+use crate::influence::Influence;
 use crate::monuments::Guard;
+use crate::progression::Progression;
+use crate::rival::RivalState;
 use crate::spawn::nearest_passable;
 
 /// How often a raider reconsiders (ticks).
@@ -43,6 +46,12 @@ const WITHDRAW_BEYOND: f32 = 10.0;
 /// In a run, a band with nothing to do lingers `band_linger_hours` after
 /// that raid, then withdraws ([`withdraw_tile`], ADR 0018); outside a run
 /// it holds where it is.
+///
+/// GP-33 (M4a, run only): broken men ([`Bandits`]) have their own mind
+/// ([`bandit_target`]): each think they raid the populated town, not the
+/// rival's seat, not their home and not the last raided, with the best
+/// [`crate::fallout::bandit_score`], and count the raid; they never hunt
+/// armies.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // Bevy system parameters.
 pub(crate) fn think(
     tick: Res<SimTick>,
@@ -51,15 +60,29 @@ pub(crate) fn think(
     index: Res<ArmyIndex>,
     villagers: Res<sim_agents::Villagers>,
     (cal, director, map): (Res<Calendar>, Res<DirectorData>, Res<WorldMap>),
-    mut raiders: Query<(Entity, &SpawnId, &Captain, &Position, &mut Raider)>,
+    (rival, grid, progression): (Res<RivalState>, Res<FighterGrid>, Res<Progression>),
+    mut raiders: Query<(
+        Entity,
+        &SpawnId,
+        &Captain,
+        &Position,
+        &mut Raider,
+        Option<&mut Bandits>,
+    )>,
     captains: Query<(Entity, &SpawnId, &Captain, &Position), (Without<Raider>, Without<Guard>)>,
-    settlements: Query<(&SpawnId, &Settlement, &SettlementEconomy, Option<&Owner>)>,
+    settlements: Query<(
+        &SpawnId,
+        &Settlement,
+        &SettlementEconomy,
+        Option<&Owner>,
+        Option<&Influence>,
+    )>,
     mut out: MessageWriter<SimCommand>,
 ) {
     let _span = tracing::info_span!("sim_military::raiders").entered();
     let mut ordered: Vec<_> = raiders.iter_mut().collect();
     ordered.sort_unstable_by_key(|(_, id, ..)| **id);
-    for (e, id, captain, pos, mut raider) in ordered {
+    for (e, id, captain, pos, mut raider, bandits) in ordered {
         if tick.0 < raider.next_think {
             continue;
         }
@@ -76,13 +99,53 @@ pub(crate) fn think(
         if raiding {
             continue;
         }
+        // GP-33: broken men raid where lords are weak.
+        if run.in_run()
+            && let Some(mut b) = bandits
+        {
+            let towns: Vec<BanditView> = settlements
+                .iter()
+                .filter(|(_, _, se, ..)| se.population > 0)
+                .map(|(sid, s, _, owner, influence)| {
+                    let owner = owner.map_or(FactionId::INDEPENDENT, |o| o.faction);
+                    BanditView {
+                        id: sid.0,
+                        centre: s.center,
+                        owner,
+                        garrison: garrison_at(&grid, s.center, owner, army.data.garrison.radius),
+                        player_share: influence.map_or(0.0, |i| i.player),
+                    }
+                })
+                .collect();
+            let target = bandit_target(
+                &progression.data.fallout,
+                &towns,
+                pos.0,
+                &b,
+                rival.seat,
+                raider.last_target,
+            );
+            if let Some(t) = target {
+                raider.last_target = Some(t);
+                b.raids += 1;
+                out.write(SimCommand::ai(
+                    captain.faction,
+                    CommandKind::IssueOrder {
+                        captain: id.0,
+                        order: OrderSpec::GatherFood { settlement: t },
+                        queue: false,
+                    },
+                ));
+            }
+            continue;
+        }
         // GP-16: the director's target first, once.
         let mut just_raided = false;
         if let Some(t) = raider.target {
             if raider.last_target != Some(t)
                 && settlements
                     .iter()
-                    .any(|(sid, _, se, _)| sid.0 == t && se.population > 0)
+                    .any(|(sid, _, se, ..)| sid.0 == t && se.population > 0)
             {
                 raider.last_target = Some(t);
                 out.write(SimCommand::ai(
@@ -117,7 +180,7 @@ pub(crate) fn think(
             // run, the player's).
             let village = settlements
                 .iter()
-                .filter(|(sid, _, se, owner)| {
+                .filter(|(sid, _, se, owner, _)| {
                     se.population > 0
                         && Some(sid.0) != raider.last_target
                         && (!run.in_run() || owner.is_some_and(|o| o.faction == FactionId::PLAYER))
@@ -140,7 +203,7 @@ pub(crate) fn think(
                 _ if run.in_run() && captain.orders.is_empty() => {
                     let mut centres: Vec<(u64, IVec2)> = settlements
                         .iter()
-                        .filter(|(_, _, se, _)| se.population > 0)
+                        .filter(|(_, _, se, ..)| se.population > 0)
                         .map(|(sid, s, ..)| (sid.0, s.center))
                         .collect();
                     centres.sort_unstable_by_key(|c| c.0);
@@ -163,6 +226,66 @@ pub(crate) fn think(
             },
         ));
     }
+}
+
+/// A town as a bandit band sees it (GP-33).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct BanditView {
+    /// Its SpawnId.
+    pub id: u64,
+    /// Its centre.
+    pub centre: IVec2,
+    /// Its owner.
+    pub owner: FactionId,
+    /// The owner's soldiers standing at it.
+    pub garrison: u32,
+    /// The player's influence share there.
+    pub player_share: f32,
+}
+
+/// The owner's soldiers (not militia, not routed) within `radius` of
+/// `at`, from the fighter grid; none for an unowned town.
+fn garrison_at(grid: &FighterGrid, at: IVec2, owner: FactionId, radius: f32) -> u32 {
+    if owner == FactionId::INDEPENDENT {
+        return 0;
+    }
+    let mut n = 0;
+    grid.for_each_within(at.as_vec2(), radius, |e, _| {
+        if !e.routed && e.side.against.is_none() && e.side.faction == owner {
+            n += 1;
+        }
+    });
+    n
+}
+
+/// GP-33: the town a bandit band at `here` raids next: among populated
+/// `towns`, not the rival's `seat`, not the band's home and not `last`,
+/// the best [`crate::fallout::bandit_score`] (ties: the lowest SpawnId).
+pub(crate) fn bandit_target(
+    data: &crate::fallout::FalloutData,
+    towns: &[BanditView],
+    here: IVec2,
+    band: &Bandits,
+    seat: Option<u64>,
+    last: Option<u64>,
+) -> Option<u64> {
+    towns
+        .iter()
+        .filter(|t| Some(t.id) != seat && t.id != band.home && Some(t.id) != last)
+        .map(|t| {
+            let d = (t.centre - here).as_vec2().length();
+            let score = crate::fallout::bandit_score(
+                data,
+                t.owner,
+                band.raids,
+                d,
+                t.garrison,
+                t.player_share,
+            );
+            (score, t.id)
+        })
+        .max_by(|a, b| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)))
+        .map(|(_, id)| id)
 }
 
 /// GP-16 (ADR 0018): where a band at `here` withdraws to, out of reach of

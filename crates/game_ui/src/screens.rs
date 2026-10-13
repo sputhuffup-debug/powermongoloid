@@ -481,7 +481,9 @@ pub fn on_timeline(e: &SimEvent) -> bool {
         SimEventKind::RunStarted
         | SimEventKind::RunEnded
         | SimEventKind::Conquest
-        | SimEventKind::RivalRaid => true,
+        | SimEventKind::RivalRaid
+        | SimEventKind::ReprisalVowed
+        | SimEventKind::RivalReprisal => true,
         _ => e.faction == player || from_me,
     }
 }
@@ -712,6 +714,19 @@ mod tests {
         )));
         assert!(on_timeline(&ev(SimEventKind::Conquest, FactionId::RIVAL)));
         assert!(on_timeline(&ev(SimEventKind::RivalRaid, FactionId::RIVAL)));
+        // M4a step 6: the fallout of a taking.
+        assert!(on_timeline(&ev(
+            SimEventKind::ReprisalVowed,
+            FactionId::RIVAL
+        )));
+        assert!(on_timeline(&ev(
+            SimEventKind::RivalReprisal,
+            FactionId::RIVAL
+        )));
+        assert!(on_timeline(&ev(
+            SimEventKind::BanditsRose,
+            FactionId::PLAYER
+        )));
         // Something taken from you.
         assert!(on_timeline(
             &ev(SimEventKind::MonumentTaken, FactionId::BEASTS).other(FactionId::PLAYER.0 as u64)
