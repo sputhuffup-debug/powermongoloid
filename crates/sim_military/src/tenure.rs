@@ -27,10 +27,24 @@
 use std::collections::VecDeque;
 
 use bevy_ecs::prelude::*;
+use bevy_math::IVec2;
 use serde::{Deserialize, Serialize};
-use sim_agents::{LoyaltyTerm, LoyaltyTerms};
-use sim_core::{Calendar, Cause, FactionId, RunState, SimTick, SpawnId, StateHash, StateHasher};
+use sim_agents::{
+    Deed, Edicts, FoodSecurity, GoodwillLedger, LoyaltyTerm, LoyaltyTerms, Owner, Threat,
+};
+use sim_core::{
+    Calendar, Cause, Dues, FactionId, RunState, SimEvent, SimEventKind, SimTick, SpawnId,
+    StateHash, StateHasher,
+};
+use sim_economy::SettlementEconomy;
+use sim_world::Settlement;
 
+use crate::components::{Bandits, Captain, Equipment};
+use crate::conquest::{garrison_and_rebels, owner_of, transfer, would_be_militia};
+use crate::data::Army;
+use crate::index::FighterGrid;
+use crate::influence::{Influence, Source, field_at};
+use crate::orders::{daily_need, faction_name, goodwill_deed, log, settlement_name};
 use crate::progression::Progression;
 
 /// How a settlement came to its current owner (GP-32, SIM-60). Append only:
@@ -148,6 +162,16 @@ pub struct Tenure {
     pub watched_hours: u8,
     /// No new demand before this tick (a refusal's cooldown).
     pub cool_until: u64,
+    /// The day (counted from 1; 0: never) of the last gift that counted
+    /// (`Deed::Gift`, at most one a day; M4a step 5).
+    pub gift_day: u32,
+    /// The day (counted from 1; 0: never) the town last saw you defend it
+    /// (`Deed::Defended` or an answered drive-off, at most one a day).
+    pub defended_day: u32,
+    /// The tick + 1 (0: never) one of this town's broken men (a
+    /// [`Bandits`] band of this home) last fell: a battle that saw it is
+    /// never this town's defence (M4a step 5).
+    pub kin_fell: u64,
     /// The last [`Tenure::HISTORY`] takings, oldest first, the current one
     /// last (a ring kept for M5's village memories).
     pub history: VecDeque<Taking>,
@@ -178,6 +202,9 @@ impl Tenure {
             weak_days: 0,
             watched_hours: 0,
             cool_until: 0,
+            gift_day: 0,
+            defended_day: 0,
+            kin_fell: 0,
             history: VecDeque::from([Taking { how, by, day }]),
         }
     }
@@ -206,7 +233,8 @@ impl Tenure {
 
     /// A new taking: `how` by `by` at `tick` (day `day`) with `scar`. The
     /// blood, the stir, the bond's promises and the watch start again;
-    /// a demand's cooldown stays; the taking joins the history ring.
+    /// a demand's cooldown and the days of the last gift and defence stay;
+    /// the taking joins the history ring.
     pub fn retake(&mut self, how: TakenBy, by: FactionId, tick: u64, day: u32, scar: f32) {
         self.how = how;
         self.by = by;
@@ -240,6 +268,9 @@ impl StateHash for Tenure {
         h.u8(self.weak_days);
         h.u8(self.watched_hours);
         h.u64(self.cool_until);
+        h.u32(self.gift_day);
+        h.u32(self.defended_day);
+        h.u64(self.kin_fell);
         h.u32(self.history.len() as u32);
         for t in &self.history {
             h.u8(t.how as u8);
@@ -264,6 +295,9 @@ sim_core::save_fields!(Tenure {
     weak_days,
     watched_hours,
     cool_until,
+    gift_day,
+    defended_day,
+    kin_fell,
     history
 });
 
@@ -642,22 +676,50 @@ pub(crate) fn retake(world: &mut World, s: Entity, how: TakenBy, to: FactionId) 
 /// [`crate::influence::contest_term`] (GP-31, M4a step 3: the other side's
 /// lead in the town's `Influence`, or the heartland at the player's
 /// towns), Dues, Table and Steward from
-/// [`crate::govern`]'s `dues_term`, `table_term` and `steward_term`. Awe
-/// and Bond come with M4a step 5 and stay 0 until then. Called by [`step`]
+/// [`crate::govern`]'s `dues_term`, `table_term` and `steward_term`, and
+/// (GP-32, M4a step 5) Awe and Bond ([`awe_term`], [`bond_term`]); a town
+/// paying tribute has no Dues term (it's the deal). Called by [`step`]
 /// hourly and by a taking ([`retake`]); serial steps only.
 pub(crate) fn rebuild_terms(world: &mut World, s: Entity) {
+    rebuild_terms_watched(world, s, None);
+}
+
+/// [`rebuild_terms`] with the hour's watch already known (`watched`), so
+/// [`step`] doesn't look twice.
+fn rebuild_terms_watched(world: &mut World, s: Entity, watched: Option<bool>) {
     let Some(t) = world.get::<Tenure>(s) else {
         return;
     };
+    let tick = world.resource::<SimTick>().0;
+    let tribute = paying_tribute(world, t, tick);
+    let (scar, stir) = (t.scar, t.stir);
+    let bond = bond_term(&world.resource::<Progression>().data.tenure, t);
+    let awe = if tribute {
+        let watched = watched.unwrap_or_else(|| watch(world, s).is_some_and(|w| w.watched));
+        if watched {
+            world.resource::<Progression>().data.demand.awe
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
     // `0.0 - x`, not `-x`: no negative zero for an unscarred town.
     let mut next = LoyaltyTerms::default();
-    next.set(LoyaltyTerm::Resentment, 0.0 - t.scar);
-    next.set(LoyaltyTerm::Stirred, 0.0 - t.stir);
+    next.set(LoyaltyTerm::Resentment, 0.0 - scar);
+    next.set(LoyaltyTerm::Stirred, 0.0 - stir);
+    next.set(LoyaltyTerm::Awe, awe);
+    next.set(LoyaltyTerm::Bond, bond);
     next.set(
         LoyaltyTerm::Contest,
         crate::influence::contest_term(world, s),
     );
-    next.set(LoyaltyTerm::Dues, crate::govern::dues_term(world, s));
+    let dues = if tribute {
+        0.0
+    } else {
+        crate::govern::dues_term(world, s)
+    };
+    next.set(LoyaltyTerm::Dues, dues);
     next.set(LoyaltyTerm::Table, crate::govern::table_term(world, s));
     next.set(LoyaltyTerm::Steward, crate::govern::steward_term(world, s));
     if let Some(mut terms) = world.get_mut::<LoyaltyTerms>(s)
@@ -667,12 +729,550 @@ pub(crate) fn rebuild_terms(world: &mut World, s: Entity) {
     }
 }
 
+/// GP-32: the Bond term of a town with tenure `t` (`tenure` data): an
+/// invited town's `bond + kept_bond x kept`, at most `max_bond`, or
+/// `forsaken_bond` for good once forsaken `forsaken_after` times; 0 for
+/// any other tenure.
+pub fn bond_term(data: &TenureData, t: &Tenure) -> f32 {
+    if t.how != TakenBy::Invited {
+        return 0.0;
+    }
+    if data.forsaken_after > 0 && t.broken >= data.forsaken_after {
+        data.forsaken_bond
+    } else {
+        (data.bond + data.kept_bond * t.kept as f32).min(data.max_bond)
+    }
+}
+
+/// GP-32: the Awe term a submitted town has while it is watched
+/// (`demand.awe`), as `rebuild_terms` last wrote it.
+pub fn awe_term(terms: &LoyaltyTerms) -> f32 {
+    terms.get(LoyaltyTerm::Awe)
+}
+
+/// The tick a town submitted at `since` settles (`demand.settle_days`
+/// later): the tribute lock, the watch and the awe end then.
+pub fn settles_at(world: &World, since: u64) -> u64 {
+    let days = world.resource::<Progression>().data.demand.settle_days;
+    since + world.resource::<Calendar>().days(days)
+}
+
+/// GP-32: whether a town with tenure `t` pays tribute at `tick`: it knelt
+/// to a demand (`Submitted`) and hasn't settled yet ([`settles_at`]).
+pub fn paying_tribute(world: &World, t: &Tenure, tick: u64) -> bool {
+    t.how == TakenBy::Submitted && tick < settles_at(world, t.since)
+}
+
+/// A soldier's strength in a demand or a watch: `armed_weight` if armed,
+/// else 1 (`demand` data).
+pub fn soldier_strength(data: &DemandData, armed: bool) -> f32 {
+    if armed { data.armed_weight } else { 1.0 }
+}
+
+/// GP-32: `faction`'s strength within `radius` of `at`: its soldiers (not
+/// routed, not militia), 1 each or `demand.armed_weight` if armed
+/// ([`soldier_strength`]). Reads this tick's [`FighterGrid`].
+pub fn strength_near(world: &World, at: IVec2, radius: f32, faction: FactionId) -> f32 {
+    let data = world.resource::<Progression>().data.demand;
+    let mut sum = 0.0;
+    world
+        .resource::<FighterGrid>()
+        .for_each_within(at.as_vec2(), radius, |e, _| {
+            if e.side.faction == faction && e.side.against.is_none() && !e.routed {
+                let armed = world.get::<Equipment>(e.entity).is_some_and(|q| q.weapon);
+                sum += soldier_strength(&data, armed);
+            }
+        });
+    sum
+}
+
+/// GP-32: a town's defence against a demand: `militia_weight` per able
+/// adult plus `garrison_weight` per soldier of its owner's garrison.
+pub fn defence(data: &DemandData, able: u32, garrison: u32) -> f32 {
+    data.militia_weight * able as f32 + data.garrison_weight * garrison as f32
+}
+
+/// A demand's comparison at a town (GP-32): what the parley weighs and
+/// what the right-click menu and the panel show ("need N within 40, have
+/// M").
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Parley {
+    /// Residents who would fight (`conquest::would_be_militia`).
+    pub able: u32,
+    /// Its owner's garrison (none at an independent town).
+    pub garrison: u32,
+    /// [`defence`].
+    pub defence: f32,
+    /// Strength needed: `demand.ratio x defence`.
+    pub need: f32,
+    /// The demander's strength within `demand.radius` ([`strength_near`]).
+    pub strength: f32,
+}
+
+impl Parley {
+    /// Whether the town kneels: strength at least the need.
+    pub fn submits(&self) -> bool {
+        self.strength >= self.need
+    }
+
+    /// The need as shown: rounded up.
+    pub fn need_shown(&self) -> u32 {
+        self.need.ceil() as u32
+    }
+
+    /// The strength as shown: rounded down, so it never overstates.
+    pub fn have_shown(&self) -> u32 {
+        self.strength.floor() as u32
+    }
+}
+
+/// GP-32: the demand `faction` would make of town `s` now ([`Parley`]):
+/// its able adults, its owner's garrison (the owner's soldiers within
+/// army.ron `garrison.radius`; none for an independent town), the
+/// defence, the need and `faction`'s strength within `demand.radius` of
+/// its centre. `None` for a non-settlement. Reads this tick's
+/// [`FighterGrid`].
+pub fn parley(world: &World, s: Entity, faction: FactionId) -> Option<Parley> {
+    let center = world.get::<Settlement>(s)?.center;
+    let data = world.resource::<Progression>().data.demand;
+    let owner = owner_of(world, s);
+    let able = would_be_militia(world, s);
+    let garrison = if owner == FactionId::INDEPENDENT {
+        0
+    } else {
+        garrison_and_rebels(world, center, owner).0
+    };
+    let defence = defence(&data, able, garrison);
+    Some(Parley {
+        able,
+        garrison,
+        defence,
+        need: data.ratio * defence,
+        strength: strength_near(world, center, data.radius, faction),
+    })
+}
+
+/// A submitted town's watch at one moment (GP-32, design section 5.2): the
+/// three ways it can be watched and the verdict.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WatchView {
+    /// Your strength within `demand.watch_radius`.
+    pub strength: f32,
+    /// The strength that watches it: `hold_ratio x` its defence (its able
+    /// adults; you are its garrison now).
+    pub hold: f32,
+    /// A town of yours within `watch_radius` has a garrison of at least
+    /// `watch_garrison` (the first by SpawnId).
+    pub garrisoned_by: Option<u64>,
+    /// Your other towns' influence share there (its own power left out; 0
+    /// with influence off).
+    pub share: f32,
+    /// Any of the three holds.
+    pub watched: bool,
+}
+
+/// GP-32: whether the player watches town `s` now ([`WatchView`]): (1)
+/// your strength within `demand.watch_radius` is at least
+/// `hold_ratio` times its defence; (2) a town of yours within that radius
+/// has a garrison (your soldiers within army.ron `garrison.radius`) of at
+/// least `watch_garrison`; (3) your other towns' influence gives you a
+/// share of at least `watch_share` there (`influence::field_at` over every
+/// held town but `s`; never with influence off). No army need stand
+/// beside it. `None` for a non-settlement. Reads this tick's grid.
+pub fn watch(world: &World, s: Entity) -> Option<WatchView> {
+    let center = world.get::<Settlement>(s)?.center;
+    let data = world.resource::<Progression>().data.demand;
+    let player = FactionId::PLAYER;
+    let strength = strength_near(world, center, data.watch_radius, player);
+    let hold = data.hold_ratio * defence(&data, would_be_militia(world, s), 0);
+    let mut towns: Vec<(u64, Entity, IVec2, FactionId, Option<Influence>)> = world
+        .try_query::<(Entity, &SpawnId, &Settlement, &Owner, Option<&Influence>)>()
+        .map(|mut q| {
+            q.iter(world)
+                .filter(|(e, ..)| *e != s)
+                .map(|(e, id, st, o, inf)| (id.0, e, st.center, o.faction, inf.copied()))
+                .collect()
+        })
+        .unwrap_or_default();
+    towns.sort_unstable_by_key(|t| t.0);
+    let reach2 = data.watch_radius * data.watch_radius;
+    let garrisoned_by = towns
+        .iter()
+        .filter(|t| t.3 == player && (t.2 - center).as_vec2().length_squared() <= reach2)
+        .find(|t| garrison_and_rebels(world, t.2, player).0 >= data.watch_garrison)
+        .map(|t| t.0);
+    let inf = world.resource::<Progression>().data.influence;
+    let share = if inf.enabled {
+        let sources: Vec<Source> = towns
+            .iter()
+            .filter_map(|t| t.4.as_ref().and_then(|i| Source::of(t.0, t.2, t.3, i)))
+            .collect();
+        field_at(&inf, &sources, center.as_vec2()).player
+    } else {
+        0.0
+    };
+    let watched =
+        strength >= hold || garrisoned_by.is_some() || (inf.enabled && share >= data.watch_share);
+    Some(WatchView {
+        strength,
+        hold,
+        garrisoned_by,
+        share,
+        watched,
+    })
+}
+
+/// GP-32: a submitted town's tribute, through step 4's write path: its
+/// Dues dial is ordered to Tithe (`Edicts::order_dues(Dues::Tithe, false)`,
+/// a steward's kind of order, not the player's), which `govern::step`
+/// (slot 15, right after this slot) turns at the hour like any setting:
+/// the ordinary `edicts.lock_days` lock, an `EdictSet` with
+/// `Cause::Edict`, and the first tithe in that hour (`orders::lands`).
+/// `govern::refusal` then holds the dial at Tithe until the town settles
+/// ([`settles_at`]): the tribute lock. Called when the town kneels and
+/// hourly while it pays; orders only when the dial is neither at Tithe
+/// nor ordered there.
+pub(crate) fn hold_tribute(world: &mut World, s: Entity) {
+    let Some(e) = world.get::<Edicts>(s) else {
+        return;
+    };
+    let held = match e.pending_dues {
+        Some(d) => d == Dues::Tithe,
+        None => e.dues == Dues::Tithe,
+    };
+    if !held {
+        world
+            .get_mut::<Edicts>(s)
+            .expect("edicts")
+            .order_dues(Dues::Tithe, false);
+    }
+}
+
+/// GP-32 (court): a gift of `food` (food value) from `faction`'s army at
+/// town `s`, in a run: `Deed::Gift` of `court.gift_per_day_of_need x` the
+/// days of the town's need given, at most `court.max_gift`, then times
+/// `court.hungry_mult` when its food security is under `requests.food_days`;
+/// at most one a town a day (`Tenure::gift_day`). Returns the goodwill
+/// posted (0 when none counted).
+pub(crate) fn gift(world: &mut World, s: Entity, faction: FactionId, food: f32) -> f32 {
+    if food <= 0.0 || !world.resource::<RunState>().in_run() {
+        return 0.0;
+    }
+    let tick = world.resource::<SimTick>().0;
+    let today = day_of(world, tick) + 1;
+    let Some(t) = world.get::<Tenure>(s) else {
+        return 0.0;
+    };
+    if t.gift_day == today {
+        return 0.0;
+    }
+    let Some(id) = world.get::<SpawnId>(s).map(|id| id.0) else {
+        return 0.0;
+    };
+    let people = world
+        .get::<SettlementEconomy>(s)
+        .map_or(0, |se| se.population);
+    let need = daily_need(world, people).max(1e-3);
+    let (court, food_days) = {
+        let data = &world.resource::<Progression>().data;
+        (data.court, data.requests.food_days)
+    };
+    let hungry = world
+        .get::<FoodSecurity>(s)
+        .is_some_and(|fs| fs.days < food_days);
+    let mut value = (court.gift_per_day_of_need * food / need).min(court.max_gift);
+    if hungry {
+        value *= court.hungry_mult;
+    }
+    if value <= 0.0 || !value.is_finite() {
+        return 0.0;
+    }
+    world.get_mut::<Tenure>(s).expect("tenure").gift_day = today;
+    world
+        .resource_mut::<GoodwillLedger>()
+        .push(id, faction, value, Deed::Gift);
+    value
+}
+
+/// GP-32 (court): an answered drive-off at town `s` (`requests::complete`):
+/// the day's defence is spent (no `Defended` deed beside the request's
+/// own), and at a town that invited the player, one more promise kept.
+pub(crate) fn drove_off(world: &mut World, s: Entity) {
+    let tick = world.resource::<SimTick>().0;
+    let today = day_of(world, tick) + 1;
+    let Some(mut t) = world.get_mut::<Tenure>(s) else {
+        return;
+    };
+    t.defended_day = today;
+    if t.how == TakenBy::Invited && t.by == FactionId::PLAYER {
+        t.kept = t.kept.saturating_add(1);
+    }
+    rebuild_terms(world, s);
+}
+
+/// GP-32 (court): a drive-off request at town `s` lapsed
+/// (`requests::fail`, request `request`). At a town that invited the
+/// player and is still the player's, it was forsaken: `Deed::Forsaken`
+/// (which spreads), `Tenure::broken` counted, a `Forsaken` event, and at
+/// `tenure.forsaken_after` the bond turns. Returns whether it was.
+pub(crate) fn forsaken(world: &mut World, s: Entity, request: u64) -> bool {
+    let player = FactionId::PLAYER;
+    let Some(t) = world.get::<Tenure>(s) else {
+        return false;
+    };
+    if t.how != TakenBy::Invited || t.by != player || owner_of(world, s) != player {
+        return false;
+    }
+    let (Some(id), Some(center)) = (
+        world.get::<SpawnId>(s).map(|i| i.0),
+        world.get::<Settlement>(s).map(|st| st.center),
+    ) else {
+        return false;
+    };
+    let broken = {
+        let mut t = world.get_mut::<Tenure>(s).expect("tenure");
+        t.broken = t.broken.saturating_add(1);
+        t.broken
+    };
+    goodwill_deed(world, s, player, Deed::Forsaken);
+    world.write_message(
+        SimEvent::new(SimEventKind::Forsaken, player)
+            .subject(id)
+            .other(request)
+            .at(center)
+            .amount(broken as i32)
+            .cause(Cause::Lapsed),
+    );
+    let (name, who) = (settlement_name(world, s), faction_name(world, player));
+    let after = world.resource::<Progression>().data.tenure.forsaken_after;
+    if broken == after {
+        log(
+            world,
+            format!("{name} called on {who} in vain again: the bond is broken"),
+        );
+    } else {
+        log(world, format!("{name} called on {who} in vain"));
+    }
+    rebuild_terms(world, s);
+    true
+}
+
+/// One army's battle report, as [`defended`] reads it.
+struct Fight {
+    captain: u64,
+    foes: Vec<FactionId>,
+    at: IVec2,
+    kills: u32,
+    faction: FactionId,
+    started: u64,
+}
+
+/// GP-32 (court): `Deed::Defended` from the hour's battle reports. A
+/// player army that ended a battle in the last game hour with at least one
+/// kill, against raiders or the rival, with its captain within army.ron
+/// `threat.radius` of an independent or player town, fought for that
+/// town: `goodwill_deeds.defended` toward the player, at most once a town
+/// a day (`Tenure::defended_day`, also spent by an answered drive-off), and
+/// at a town that invited the player one more promise kept. Never for a
+/// battle against bandits whose home is that town ([`Bandits`]: one of
+/// them fell since the battle's first blow (`Tenure::kin_fell`, written in
+/// `combat::casualties`), or a living band of its own stands within the
+/// threat radius of the battle, or a raider report of the hour is that
+/// band's).
+fn defended(world: &mut World, tick: u64) {
+    let hour = world.resource::<Calendar>().ticks_per_hour();
+    let radius = world.resource::<Army>().data.threat.radius;
+    let (player, raiders) = (FactionId::PLAYER, FactionId::RAIDERS);
+    let reports: Vec<Fight> = world
+        .resource::<sim_core::Chronicle>()
+        .reports()
+        .iter()
+        .rev()
+        .take_while(|r| r.tick + hour > tick)
+        .filter(|r| r.tick <= tick)
+        .map(|r| Fight {
+            captain: r.captain,
+            foes: r.foes.clone(),
+            at: r.at,
+            kills: r.kills,
+            faction: r.faction,
+            started: r.started,
+        })
+        .collect();
+    let fights: Vec<&Fight> = reports
+        .iter()
+        .rev()
+        .filter(|r| {
+            r.faction == player
+                && r.kills > 0
+                && r.foes
+                    .iter()
+                    .any(|f| *f == raiders || *f == FactionId::RIVAL)
+        })
+        .collect();
+    if fights.is_empty() {
+        return;
+    }
+    // Bands of broken men by home, and where they stand (captains alive).
+    let bands: Vec<(u64, u64, IVec2)> = world
+        .try_query::<(&SpawnId, &Bandits, &sim_core::Position, &Captain)>()
+        .map(|mut q| {
+            q.iter(world)
+                .map(|(id, b, p, _)| (id.0, b.home, p.0))
+                .collect()
+        })
+        .unwrap_or_default();
+    let raider_captains: Vec<u64> = reports
+        .iter()
+        .filter(|r| r.faction == raiders)
+        .map(|r| r.captain)
+        .collect();
+    let mut towns: Vec<(u64, Entity, IVec2, FactionId)> = world
+        .try_query_filtered::<(Entity, &SpawnId, &Settlement, &Owner), With<Tenure>>()
+        .map(|mut q| {
+            q.iter(world)
+                .map(|(e, id, st, o)| (id.0, e, st.center, o.faction))
+                .collect()
+        })
+        .unwrap_or_default();
+    towns.sort_unstable_by_key(|t| t.0);
+    let today = day_of(world, tick) + 1;
+    let r2 = radius * radius;
+    for Fight {
+        foes, at, started, ..
+    } in fights
+    {
+        for &(id, s, center, owner) in &towns {
+            if !matches!(owner, FactionId::INDEPENDENT | FactionId::PLAYER)
+                || (center - *at).as_vec2().length_squared() > r2
+            {
+                continue;
+            }
+            let own_sons = foes.contains(&raiders)
+                && bands.iter().any(|&(cid, home, pos)| {
+                    home == id
+                        && (raider_captains.contains(&cid)
+                            || (pos - *at).as_vec2().length_squared() <= r2)
+                });
+            if own_sons {
+                continue;
+            }
+            let Some(mut t) = world.get_mut::<Tenure>(s) else {
+                continue;
+            };
+            // One of its own sons fell in the battle's span.
+            if t.kin_fell > *started {
+                continue;
+            }
+            if t.defended_day == today {
+                continue;
+            }
+            t.defended_day = today;
+            if t.how == TakenBy::Invited && t.by == player && owner == player {
+                t.kept = t.kept.saturating_add(1);
+            }
+            goodwill_deed(world, s, player, Deed::Defended);
+        }
+    }
+}
+
+/// GP-32: a submitted town's watch for this hour, its day judged on the
+/// day tick, defiance and settling (design section 5.2). Returns the
+/// hour's watch for the Awe term (`None`: not paying tribute), or `None`
+/// after it defied.
+fn keep_watch(world: &mut World, s: Entity, tick: u64, on_day: bool) -> Option<bool> {
+    let t = world.get::<Tenure>(s)?.clone();
+    if t.how != TakenBy::Submitted || t.by != FactionId::PLAYER {
+        return None;
+    }
+    let cal = world.resource::<Calendar>().clone();
+    let data = world.resource::<Progression>().data.demand;
+    let settle = settles_at(world, t.since);
+    if tick >= settle {
+        // Settled: once, in the hour it crosses the line.
+        if tick < settle + cal.ticks_per_hour() {
+            let (name, who) = (
+                settlement_name(world, s),
+                faction_name(world, FactionId::PLAYER),
+            );
+            log(
+                world,
+                format!("{name} has settled under {who}: the tribute and the watch end"),
+            );
+        }
+        return None;
+    }
+    // The day just ended, if the town knelt before it began.
+    if on_day && t.since + cal.ticks_per_day <= tick {
+        let weak = t.watched_hours < data.watch_hours;
+        let weak_days = if weak {
+            t.weak_days.saturating_add(1)
+        } else {
+            0
+        };
+        {
+            let mut t = world.get_mut::<Tenure>(s).expect("tenure");
+            t.weak_days = weak_days;
+            t.watched_hours = 0;
+        }
+        if data.weak_days > 0 && weak_days >= data.weak_days {
+            defy(world, s, tick);
+            return None;
+        }
+    } else if on_day {
+        world.get_mut::<Tenure>(s).expect("tenure").watched_hours = 0;
+    }
+    hold_tribute(world, s);
+    let watched = watch(world, s).is_some_and(|w| w.watched);
+    if watched {
+        let mut t = world.get_mut::<Tenure>(s).expect("tenure");
+        t.watched_hours = t.watched_hours.saturating_add(1);
+    }
+    Some(watched)
+}
+
+/// GP-32: a submitted town defies the player (two weak days): it goes free
+/// ([`Cause::Defiance`], a `Defied` event), its Dues dial is let go (back
+/// to its default, unlocked, by `govern::step`'s reset), and if any of the player's
+/// soldiers stand at it (army.ron `garrison.radius`) its militia rises
+/// against them for `garrison.revolt_hours`.
+fn defy(world: &mut World, s: Entity, tick: u64) {
+    let Some(center) = world.get::<Settlement>(s).map(|st| st.center) else {
+        return;
+    };
+    let player = FactionId::PLAYER;
+    let soldiers = garrison_and_rebels(world, center, player).0;
+    transfer(world, s, FactionId::INDEPENDENT, Cause::Defiance);
+    // The tribute ends with the town's submission: `govern::step` (slot
+    // 15, in this same pass) resets the edicts of a town not the player's,
+    // so the Dues dial goes back to its default, unlocked.
+    if soldiers > 0 {
+        let hours = world.resource::<Army>().data.garrison.revolt_hours;
+        let until = tick + world.resource::<Calendar>().hours(hours);
+        if let Some(mut threat) = world.get_mut::<Threat>(s) {
+            threat.provoked_by = Some(player);
+            threat.provoked_until = until;
+            threat.level = 1.0;
+        }
+        let (name, who) = (settlement_name(world, s), faction_name(world, player));
+        log(world, format!("{name} takes up arms against {who}"));
+    }
+}
+
 /// SIM-60: progress slot 14, hourly, run only (span
-/// `sim_military::tenure::step`). For each settlement with a [`Tenure`],
-/// in SpawnId order: on the day tick its scar fades by
-/// `tenure.scar_fade_per_day` (unless it was taken this very tick: a
-/// taking's scar stands for its first day tick); then its `LoyaltyTerms`
-/// are rebuilt (`rebuild_terms`).
+/// `sim_military::tenure::step`).
+///
+/// 1. GP-32 (M4a step 5): `Deed::Defended` from the hour's battle
+///    reports (see `defended`).
+/// 2. For each settlement with a [`Tenure`], in SpawnId order: on the day
+///    tick its scar fades by `tenure.scar_fade_per_day` (unless it was
+///    taken this very tick: a taking's scar stands for its first day
+///    tick); a submitted town keeps its watch (GP-32: the hour counted if
+///    watched, see [`watch`]; on the day tick the day just ended judged, a
+///    weak day under `demand.watch_hours` watched hours, and at
+///    `demand.weak_days` weak days in a row it defies you; its tribute
+///    held; it settles after `demand.settle_days`); then its
+///    `LoyaltyTerms` are rebuilt (`rebuild_terms`).
 pub fn step(world: &mut World) {
     let _span = tracing::info_span!("sim_military::tenure::step").entered();
     if !world.resource::<RunState>().in_run() {
@@ -680,6 +1280,7 @@ pub fn step(world: &mut World) {
     }
     let tick = world.resource::<SimTick>().0;
     let on_day = world.resource::<Calendar>().on_day(tick);
+    defended(world, tick);
     let fade = world
         .resource::<Progression>()
         .data
@@ -696,7 +1297,8 @@ pub fn step(world: &mut World) {
         {
             t.scar = (t.scar - fade).max(0.0);
         }
-        rebuild_terms(world, s);
+        let watched = keep_watch(world, s, tick, on_day);
+        rebuild_terms_watched(world, s, watched);
     }
 }
 

@@ -415,6 +415,7 @@ fn draw_card_popup(
     progression: Option<Res<Progression>>,
     names: Option<Res<NameTable>>,
     settlements: Query<(&SpawnId, &Settlement)>,
+    take: Res<crate::panels::take::TakeView>,
 ) {
     let _span = info_span!("game_ui::run_bar::draw_card_popup").entered();
     let (Some(offers), Some(progression), Some(names)) = (offers, progression, names) else {
@@ -465,7 +466,7 @@ fn draw_card_popup(
                 style::font(20.0),
                 TextColor(style::GOLD),
             ));
-            spawn_cards(p, &offer, &progression, &place);
+            spawn_cards(p, &offer, &progression, &place, &|id| take.sworn(id));
             style::button(p, BarButton::Later, "Later", 13.0);
         })
         .id();

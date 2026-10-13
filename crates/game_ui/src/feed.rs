@@ -15,15 +15,17 @@
 //! feed starts again from the loaded feed's last lines, without pausing
 //! on them, and fast-forward stops.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use bevy::prelude::*;
 use game_render::{CameraRig, WorldEpoch};
+use sim_agents::{LoyaltyTerm, LoyaltyTerms, Owner, SettlementLoyalty, Villagers};
 use sim_core::{
-    Calendar, ChronicleEntry, EventFeed, FactionId, FeedEntry, Offers, RunState, SimEvent,
-    SimEventKind, SimTick,
+    Calendar, ChronicleEntry, EventFeed, FactionId, FeedEntry, NameTable, Offers, RunState,
+    SimEvent, SimEventKind, SimTick, SpawnId,
 };
-use sim_military::{Army, DirectorData, MilitaryLog, Progression};
+use sim_military::{Army, DirectorData, MilitaryLog, Progression, Tenure};
+use sim_world::Settlement;
 
 use crate::cards::SentOffers;
 use crate::style;
@@ -41,6 +43,7 @@ impl Plugin for FeedPlugin {
                 Update,
                 (
                     read_feed,
+                    loyalty_holds,
                     show_feed.run_if(resource_changed::<FeedLines>),
                     click_feed.run_if(playing),
                 )
@@ -363,6 +366,100 @@ fn read_feed(world: &mut World, mut cur: Local<Cursors>) {
     }
 }
 
+/// GP-32 (M4a step 5): the term that holds a town above the revolt `line`,
+/// if one does: Awe or Bond, positive, whose removal alone would leave the
+/// town's mean loyalty under the line while the mean itself is not. The
+/// larger wins.
+fn holding_term(mean: f32, terms: &LoyaltyTerms, line: f32) -> Option<(LoyaltyTerm, f32)> {
+    if mean < line {
+        return None;
+    }
+    [LoyaltyTerm::Awe, LoyaltyTerm::Bond]
+        .into_iter()
+        .map(|t| (t, terms.get(t)))
+        .filter(|(_, v)| *v > 0.0 && mean - v < line)
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+}
+
+/// "Gorsefield stays loyal: awe of your army, +0.10": what holds a town of
+/// yours above the revolt line. `kept` is the promises of defence kept
+/// there, for the bond's wording.
+fn holds_line(town: &str, term: LoyaltyTerm, v: f32, kept: u8) -> String {
+    let why = match term {
+        LoyaltyTerm::Bond if kept > 0 => "the bond you kept",
+        LoyaltyTerm::Bond => "the bond you swore",
+        _ => "awe of your army",
+    };
+    format!("{town} stays loyal: {why}, {v:+.2}")
+}
+
+/// Once a town a day at most, a line when Awe or Bond holds a town of yours
+/// above the revolt line ([`holding_term`]). Reads only; what it has told
+/// (a town and the day) is UI-side, forgotten with the world.
+#[allow(clippy::type_complexity)] // Bevy system parameters.
+fn loyalty_holds(
+    mut lines: ResMut<FeedLines>,
+    (calendar, tick, villagers, names, epoch): (
+        Option<Res<Calendar>>,
+        Option<Res<SimTick>>,
+        Option<Res<Villagers>>,
+        Option<Res<NameTable>>,
+        Option<Res<WorldEpoch>>,
+    ),
+    towns: Query<(
+        &SpawnId,
+        &Settlement,
+        &Owner,
+        &SettlementLoyalty,
+        &LoyaltyTerms,
+        Option<&Tenure>,
+    )>,
+    mut told: Local<(Option<u32>, BTreeMap<u64, u64>)>,
+) {
+    let _span = info_span!("game_ui::feed::loyalty_holds").entered();
+    let (Some(cal), Some(tick), Some(vd), Some(names)) = (calendar, tick, villagers, names) else {
+        return;
+    };
+    let epoch = epoch.map_or(0, |e| e.0);
+    if told.0 != Some(epoch) {
+        *told = (Some(epoch), BTreeMap::new());
+    }
+    let day = cal.at(tick.0).day;
+    let line = vd.data.loyalty.revolt_threshold;
+    let mut found: Vec<(u64, Line)> = towns
+        .iter()
+        .filter(|(id, _, owner, ..)| {
+            owner.faction == FactionId::PLAYER && told.1.get(&id.0) != Some(&day)
+        })
+        .filter_map(|(id, s, _, loyalty, terms, tenure)| {
+            if loyalty.residents == 0 {
+                return None;
+            }
+            let (term, v) = holding_term(loyalty.mean, terms, line)?;
+            let kept = tenure.map_or(0, |t| t.kept);
+            Some((
+                id.0,
+                Line {
+                    text: holds_line(names.get(s.name), term, v, kept),
+                    at: Some(s.center),
+                    log: false,
+                },
+            ))
+        })
+        .collect();
+    if found.is_empty() {
+        return;
+    }
+    found.sort_by_key(|(id, _)| *id);
+    for (id, l) in found {
+        told.1.insert(id, day);
+        lines.0.push_back(l);
+    }
+    while lines.0.len() > LINES {
+        lines.0.pop_front();
+    }
+}
+
 /// Draws [`FeedLines`], newest first.
 fn show_feed(
     lines: Res<FeedLines>,
@@ -483,6 +580,57 @@ mod tests {
             "Ashford shared food with Rival (+2.1 days)",
             ME
         ));
+    }
+
+    fn terms(awe: f32, bond: f32) -> LoyaltyTerms {
+        let mut t = LoyaltyTerms::default();
+        t.set(LoyaltyTerm::Awe, awe);
+        t.set(LoyaltyTerm::Bond, bond);
+        t
+    }
+
+    /// GP-32: awe or the bond is named when it alone keeps a town above
+    /// the revolt line, and not otherwise.
+    #[test]
+    fn awe_or_bond_is_named_when_it_holds_a_town() {
+        let line = 0.35;
+        // 0.40 with +0.10 awe: without it 0.30, under the line.
+        assert_eq!(
+            holding_term(0.40, &terms(0.10, 0.0), line),
+            Some((LoyaltyTerm::Awe, 0.10))
+        );
+        assert_eq!(
+            holding_term(0.40, &terms(0.0, 0.08), line),
+            Some((LoyaltyTerm::Bond, 0.08))
+        );
+        // Comfortably above: nothing to say.
+        assert_eq!(holding_term(0.70, &terms(0.10, 0.0), line), None);
+        // Already under the line: it is not holding.
+        assert_eq!(holding_term(0.30, &terms(0.10, 0.0), line), None);
+        // No term, a negative term (a broken bond): nothing.
+        assert_eq!(holding_term(0.40, &terms(0.0, 0.0), line), None);
+        assert_eq!(holding_term(0.40, &terms(0.0, -0.10), line), None);
+        // Both hold it: the larger is named.
+        assert_eq!(
+            holding_term(0.40, &terms(0.06, 0.09), line).map(|t| t.0),
+            Some(LoyaltyTerm::Bond)
+        );
+    }
+
+    #[test]
+    fn the_holding_line_names_the_term() {
+        assert_eq!(
+            holds_line("Gorsefield", LoyaltyTerm::Awe, 0.1, 0),
+            "Gorsefield stays loyal: awe of your army, +0.10"
+        );
+        assert_eq!(
+            holds_line("Woldbrook", LoyaltyTerm::Bond, 0.08, 3),
+            "Woldbrook stays loyal: the bond you kept, +0.08"
+        );
+        assert_eq!(
+            holds_line("Woldbrook", LoyaltyTerm::Bond, 0.05, 0),
+            "Woldbrook stays loyal: the bond you swore, +0.05"
+        );
     }
 
     #[test]

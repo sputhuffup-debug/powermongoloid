@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use bevy::prelude::*;
 use sim_core::{CommandKind, Offer, OfferKind, Stat};
 use sim_military::Progression;
+use sim_military::invitations::SwornTerms;
 
 use crate::style;
 use crate::{UiScreen, UiSet};
@@ -80,12 +81,15 @@ pub fn offer_title(offer: &Offer, place: &dyn Fn(u64) -> String) -> String {
 }
 
 /// The (title, body) of one card: `card` is the offer's choice value.
+/// `sworn` gives what accepting a town's invitation would make it (M4a,
+/// GP-32), when the view has it.
 pub fn card_text(
     kind: OfferKind,
     choice: u8,
     card: u16,
     progression: &Progression,
     place: &dyn Fn(u64) -> String,
+    sworn: &dyn Fn(u64) -> Option<SwornTerms>,
 ) -> (String, String) {
     match kind {
         OfferKind::StartBoon | OfferKind::DominionBoon { .. } => match progression.boon(card) {
@@ -105,10 +109,11 @@ pub fn card_text(
         },
         OfferKind::Invitation { settlement } => {
             if choice == 0 {
-                (
-                    "Accept".into(),
-                    format!("Become the lord of {}.", place(settlement)),
-                )
+                let body = match sworn(settlement) {
+                    Some(terms) => crate::panels::take::sworn_words(&place(settlement), &terms),
+                    None => format!("Become the lord of {}.", place(settlement)),
+                };
+                ("Accept".into(), body)
             } else {
                 ("Decline".into(), "Leave them be, for now.".into())
             }
@@ -145,6 +150,7 @@ pub fn spawn_cards(
     offer: &Offer,
     progression: &Progression,
     place: &dyn Fn(u64) -> String,
+    sworn: &dyn Fn(u64) -> Option<SwornTerms>,
 ) {
     parent
         .spawn(Node {
@@ -154,7 +160,7 @@ pub fn spawn_cards(
         })
         .with_children(|row| {
             for (i, &card) in offer.choices.iter().enumerate() {
-                let (title, body) = card_text(offer.kind, i as u8, card, progression, place);
+                let (title, body) = card_text(offer.kind, i as u8, card, progression, place, sworn);
                 row.spawn((
                     Button,
                     ChoiceButton {
@@ -230,34 +236,78 @@ mod tests {
     fn every_shipped_boon_and_trait_has_a_card() {
         let p = Progression::default_data();
         let place = |_: u64| "Ashmere".to_string();
+        let none = |_: u64| None;
         for (i, _) in p.data.boons.iter().enumerate() {
-            let (t, _) = card_text(OfferKind::StartBoon, 0, i as u16, &p, &place);
+            let (t, _) = card_text(OfferKind::StartBoon, 0, i as u16, &p, &place, &none);
             assert!(!t.starts_with("Boon "), "{t}");
         }
         for (i, _) in p.data.traits.iter().enumerate() {
-            let (t, b) = card_text(OfferKind::Trait { person: 1 }, 0, i as u16, &p, &place);
+            let (t, b) = card_text(
+                OfferKind::Trait { person: 1 },
+                0,
+                i as u16,
+                &p,
+                &place,
+                &none,
+            );
             assert!(!t.starts_with("Trait ") && b.contains('%'), "{t}: {b}");
         }
-        let (t, b) = card_text(OfferKind::Invitation { settlement: 3 }, 0, 0, &p, &place);
+        let (t, b) = card_text(
+            OfferKind::Invitation { settlement: 3 },
+            0,
+            0,
+            &p,
+            &place,
+            &none,
+        );
         assert_eq!(t, "Accept");
         assert!(b.contains("Ashmere"));
+        // GP-32: with the view's terms in hand, the card says what sworn means.
+        let terms = |_: u64| {
+            Some(SwornTerms {
+                seed: 0.75,
+                bond: 0.05,
+            })
+        };
+        let (_, b) = card_text(
+            OfferKind::Invitation { settlement: 3 },
+            0,
+            0,
+            &p,
+            &place,
+            &terms,
+        );
+        assert_eq!(
+            b,
+            "Ashmere offers lordship. Sworn: loyal (starts at 0.75); they will expect you \
+             to defend them."
+        );
+        let (t, _) = card_text(
+            OfferKind::Invitation { settlement: 3 },
+            1,
+            0,
+            &p,
+            &place,
+            &terms,
+        );
+        assert_eq!(t, "Decline");
         // GP-27: the hire card says how many, for how much, and how near.
         let hire = OfferKind::Hire {
             captain: 9,
             men: 12,
             price: 11,
         };
-        let (t, b) = card_text(hire, 0, 0, &p, &place);
+        let (t, b) = card_text(hire, 0, 0, &p, &place, &none);
         assert_eq!(t, "Hire");
         assert!(
             b.contains("12 armed sellswords") && b.contains("11 food") && b.contains("40 tiles"),
             "{b}"
         );
-        assert_eq!(card_text(hire, 1, 1, &p, &place).0, "Decline");
+        assert_eq!(card_text(hire, 1, 1, &p, &place, &none).0, "Decline");
         // Unarmed in the data, unarmed on the card.
         let mut bare = p.clone();
         bare.data.hire.armed = false;
-        let (_, b) = card_text(hire, 0, 0, &bare, &place);
+        let (_, b) = card_text(hire, 0, 0, &bare, &place, &none);
         assert!(b.starts_with("12 sellswords"), "{b}");
     }
 

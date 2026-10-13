@@ -339,7 +339,7 @@ fn spawn_new_game(
                 c.spawn(line(text, 14.0, style::DIM));
                 c.spawn(line("Choose a boon to begin:", 18.0, style::GOLD));
                 match &start {
-                    Some(o) => crate::cards::spawn_cards(c, o, &progression, &place),
+                    Some(o) => crate::cards::spawn_cards(c, o, &progression, &place, &|_| None),
                     None => {
                         c.spawn(line("(no start boon waiting)", 14.0, style::DIM));
                     }

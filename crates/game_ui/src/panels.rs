@@ -24,16 +24,19 @@ use crate::style;
 
 mod govern;
 pub(crate) use govern::GovernView;
+pub(crate) mod take;
 mod why;
 
 pub struct PanelsPlugin;
 
 impl Plugin for PanelsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_panels).add_systems(
-            Update,
-            (villager_panel, settlement_panel).in_set(crate::UiSet::Hud),
-        );
+        app.add_plugins(take::TakePlugin)
+            .add_systems(Startup, spawn_panels)
+            .add_systems(
+                Update,
+                (villager_panel, settlement_panel).in_set(crate::UiSet::Hud),
+            );
         govern::build(app);
     }
 }
@@ -428,6 +431,8 @@ fn settlement_panel(
         Option<Res<Calendar>>,
         Option<Res<SimTick>>,
     ),
+    // M4a step 5: the ways to take it, a submitted town's watch, a bond.
+    take: Res<take::TakeView>,
     stocks: Query<&Stockpile>,
     workplaces: Query<&Workplace>,
     villagers: Query<(&Villager, &Occupation, &CombatStats, &Activity), Without<Enlisted>>,
@@ -552,6 +557,11 @@ fn settlement_panel(
                 s += "\n";
                 s += &why;
             }
+        }
+        // GP-32, UI-11 (M4a step 5): how to take a town that isn't yours,
+        // or how a taking is holding.
+        if let Some(facts) = take.get(id.0) {
+            s += &take::panel_block(facts);
         }
         s += "\n";
     } else {

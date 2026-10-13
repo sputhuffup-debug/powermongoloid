@@ -3,8 +3,12 @@
 
 use bevy::prelude::*;
 use game_render::{CameraRig, surface_point};
-use sim_core::NameTable;
+use sim_agents::Owner;
+use sim_core::{FactionId, NameTable, SpawnId};
+use sim_military::Tenure;
 use sim_world::{Settlement, WorldMap};
+
+use crate::panels::take::{self, TakeView};
 
 /// Labels hide beyond this camera distance (world units).
 const MAX_LABEL_DISTANCE: f32 = 1800.0;
@@ -20,7 +24,7 @@ impl Plugin for SettlementLabelsPlugin {
             (
                 clear_labels.run_if(game_render::epoch_changed),
                 spawn_labels,
-                badge_labels,
+                mark_labels,
                 place_labels,
                 click_labels,
             )
@@ -96,6 +100,52 @@ fn spawn_labels(
     }
 }
 
+/// A label's first line: the town's name and, in a run, its tenure mark
+/// (GP-32, M4a step 5) and whether a submitted town is watched.
+fn label_text(name: &str, mark: Option<String>) -> String {
+    match mark {
+        Some(m) => format!("{name} {m}"),
+        None => name.to_string(),
+    }
+}
+
+/// Writes each label's text (one system, so the two parts never overwrite
+/// each other). The first line is the name with the run town's tenure mark:
+/// sword, broken sword, bent knee, ribbon or eye as ASCII tags, and
+/// "watched" on a submitted town of yours paying tribute (GP-32, M4a step
+/// 5, from the [`TakeView`]). Under it, a line for each edict dial off its
+/// default, with a countdown while the first wave runs (GP-34, M4a step 4,
+/// from the [`GovernView`](crate::panels::GovernView)). Both views refresh
+/// twice a second; this only reads.
+fn mark_labels(
+    take: Res<TakeView>,
+    govern: Res<crate::panels::GovernView>,
+    towns: Query<(&SpawnId, Option<&Tenure>, Option<&Owner>)>,
+    mut labels: Query<(&SettlementLabel, &mut Text)>,
+) {
+    let _span = info_span!("game_ui::labels::mark_labels").entered();
+    for (label, mut text) in &mut labels {
+        let mark = towns
+            .get(label.settlement)
+            .ok()
+            .and_then(|(id, tenure, owner)| {
+                let owner = owner.map_or(FactionId::INDEPENDENT, |o| o.faction);
+                let watched = take.tribute(id.0).map(|t| t.watched_now);
+                tenure.and_then(|t| take::tenure_mark(owner, t.how, watched))
+            });
+        let mut new = label_text(&label.name, mark);
+        if let Some(lines) = govern.badges.get(&label.settlement) {
+            for l in lines {
+                new += "\n";
+                new += l;
+            }
+        }
+        if text.0 != new {
+            text.0 = new;
+        }
+    }
+}
+
 fn click_labels(
     labels: Query<(&Interaction, &SettlementLabel), Changed<Interaction>>,
     mut selection: ResMut<crate::selection::Selection>,
@@ -136,23 +186,16 @@ fn place_labels(
     }
 }
 
-/// GP-34 (M4a): under the name, a line for each edict dial off its default,
-/// with a countdown while the first wave runs. Read from the panel's view,
-/// which refreshes twice a second.
-fn badge_labels(
-    view: Res<crate::panels::GovernView>,
-    mut labels: Query<(&SettlementLabel, &mut Text)>,
-) {
-    for (label, mut text) in &mut labels {
-        let mut s = label.name.clone();
-        if let Some(lines) = view.badges.get(&label.settlement) {
-            for l in lines {
-                s += "\n";
-                s += l;
-            }
-        }
-        if text.0 != s {
-            text.0 = s;
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_label_is_the_name_then_the_mark() {
+        assert_eq!(label_text("Gorsefield", None), "Gorsefield");
+        assert_eq!(
+            label_text("Gorsefield", Some("[bent knee, watched]".into())),
+            "Gorsefield [bent knee, watched]"
+        );
     }
 }

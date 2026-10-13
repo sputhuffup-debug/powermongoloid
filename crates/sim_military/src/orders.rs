@@ -154,9 +154,43 @@ fn validate_spec(
         OrderSpec::Give { settlement } => find_settlement(world, settlement)
             .map(|_| ())
             .ok_or("no such settlement"),
-        // GP-32 (M4a): the parley lands in step 5, the agent in step 7.
-        OrderSpec::Demand { .. } | OrderSpec::Subvert { .. } => Err("not yet"),
+        OrderSpec::Demand { settlement } => validate_demand(world, issuer, settlement),
+        // GP-32 (M4a): the agent lands in step 7.
+        OrderSpec::Subvert { .. } => Err("not yet"),
     }
+}
+
+/// GP-32 (M4a step 5): a Demand is the player's, in a run (the town keeps
+/// a `Tenure`), at an independent or rival town other than the rival's
+/// seat, and not while a refusal's cooldown runs.
+fn validate_demand(
+    world: &mut World,
+    issuer: FactionId,
+    settlement: u64,
+) -> Result<(), &'static str> {
+    if issuer != FactionId::PLAYER {
+        return Err("only the player demands");
+    }
+    let s = find_settlement(world, settlement).ok_or("no such settlement")?;
+    let Some(cool_until) = world.get::<crate::tenure::Tenure>(s).map(|t| t.cool_until) else {
+        return Err("only in a run");
+    };
+    match owner_of(world, s) {
+        f if f == issuer => return Err("your own settlement"),
+        FactionId::INDEPENDENT | FactionId::RIVAL => {}
+        _ => return Err("not a town that can kneel"),
+    }
+    if world
+        .resource::<crate::progression::RunProgress>()
+        .rival_seat
+        == Some(settlement)
+    {
+        return Err("the rival's seat never kneels");
+    }
+    if world.resource::<SimTick>().0 < cool_until {
+        return Err("it refused you lately");
+    }
+    Ok(())
 }
 
 /// The captain `id` if it belongs to `issuer`. Heroes (M4) will never be
@@ -1464,9 +1498,20 @@ fn step_order(world: &mut World, e: Entity, tick: u64) {
                 None => done = true,
             }
         }
-        // GP-32 (M4a): refused by `validate_spec` until steps 5 and 7, so
-        // never queued; dropped if one ever is.
-        OrderSpec::Demand { .. } | OrderSpec::Subvert { .. } => done = true,
+        // GP-32 (M4a step 5): march to the gate and parley for an hour.
+        OrderSpec::Demand { settlement } => match settlement_of(world, settlement) {
+            Some(s) => {
+                let at = center(world, s).unwrap_or(tile);
+                c.goal = Some(at);
+                *world.get_mut::<Captain>(e).expect("captain") = c.clone();
+                done = demand(world, e, s, at, &mut order, tick, &army, &cal);
+                c = world.get::<Captain>(e).expect("captain").clone();
+            }
+            None => done = true,
+        },
+        // GP-32 (M4a): refused by `validate_spec` until step 7, so never
+        // queued; dropped if one ever is.
+        OrderSpec::Subvert { .. } => done = true,
         OrderSpec::Recruit { settlement, .. }
         | OrderSpec::GatherFood { settlement }
         | OrderSpec::Equip { settlement }
@@ -1500,6 +1545,8 @@ fn step_order(world: &mut World, e: Entity, tick: u64) {
                         // settlement's open BringFood request.
                         let delivered = give(world, e, s);
                         crate::requests::delivered(world, s, c.faction, delivered);
+                        // GP-32 (M4a, run only): a gift courts the town.
+                        crate::tenure::gift(world, s, c.faction, delivered);
                     }
                     _ => {}
                 }
@@ -1588,7 +1635,16 @@ fn attack(
             let start = *order.held_since.get_or_insert(tick);
             if tick - start >= cal.hours(rules.hold_hours) {
                 let captain = world.get::<SpawnId>(e).map_or(0, |id| id.0);
-                transfer(world, s, faction, Cause::Conquest { captain });
+                // GP-32 (M4a, run only): a player captain holding at
+                // Aggressive sacks the town; the rival's bands are always
+                // Aggressive, so the sack is the player's rule.
+                let posture = world.get::<Captain>(e).expect("captain").posture;
+                if faction == FactionId::PLAYER && posture == Posture::Aggressive && in_run(world) {
+                    sack(world, e, s);
+                    transfer(world, s, faction, Cause::Sack { captain });
+                } else {
+                    transfer(world, s, faction, Cause::Conquest { captain });
+                }
                 return true;
             }
         }
@@ -1599,6 +1655,143 @@ fn attack(
         }
     }
     false
+}
+
+/// GP-32 (M4a, run only): the sack, at the hold's completion before the
+/// town changes hands: the storehouse's food (keeping nothing) and its
+/// weapons and tools go into the captain's baggage as far as it has room,
+/// with a `Deed::Plunder` and a line in the log. The storehouse only, as
+/// all plunder (ADR 0018).
+fn sack(world: &mut World, captain: Entity, s: Entity) {
+    let faction = world.get::<Captain>(captain).expect("captain").faction;
+    let Some(store) = storehouse(world, s) else {
+        return;
+    };
+    let food = move_food(world, store, captain, f32::MAX);
+    let econ = world.resource::<Economy>().clone();
+    let mut arms = 0;
+    for good in ["weapons", "tools"] {
+        if let Some(g) = good_named(&econ, good) {
+            let have = world.get::<Stockpile>(store).map_or(0, |st| st.get(g));
+            arms += move_good(world, store, captain, g, have);
+        }
+    }
+    world.resource_mut::<ArmyStats>().of(faction).seized += food;
+    goodwill_deed(world, s, faction, Deed::Plunder);
+    let (who, name) = (faction_name(world, faction), settlement_name(world, s));
+    let d = days_text(days_of(world, captain, food));
+    log(
+        world,
+        format!("{who} sacked {name} (+{d} days of food, {arms} arms)"),
+    );
+}
+
+/// Demand (GP-32, M4a step 5), one tick. Returns whether the order is
+/// over.
+///
+/// 0. March on the town; within army.ron `recruit.radius` of its centre
+///    the parley starts.
+/// 1. Parley for `demand.parley_hours`, at the gate (the captain straying
+///    out of reach starts it again). A hostile army (at war with the
+///    captain's faction; never a monument's guard camp) within army.ron
+///    `threat.radius` of the centre breaks it off. At the end the comparison ([`crate::tenure::parley`]):
+///    strength at least `demand.ratio` times the defence and it kneels
+///    ([`transfer_seeded`](crate::conquest::transfer_seeded),
+///    [`Cause::Submission`], loyalty seeded at `demand.seed`, its Dues dial
+///    held at Tithe); otherwise it refuses: `Deed::Threat`, no new demand
+///    for `demand.refuse_cooldown_days`, and the numbers in the log.
+///
+/// A town that became the captain's meanwhile, or refused another demand,
+/// ends the order.
+#[allow(clippy::too_many_arguments)]
+fn demand(
+    world: &mut World,
+    e: Entity,
+    s: Entity,
+    at: IVec2,
+    order: &mut Order,
+    tick: u64,
+    army: &Army,
+    cal: &Calendar,
+) -> bool {
+    let faction = world.get::<Captain>(e).expect("captain").faction;
+    if owner_of(world, s) == faction {
+        return true;
+    }
+    let cool = world
+        .get::<crate::tenure::Tenure>(s)
+        .map_or(u64::MAX, |t| t.cool_until);
+    if tick < cool {
+        return true;
+    }
+    let tile = world.get::<Position>(e).expect("position").0;
+    let near = (at - tile).as_vec2().length() <= army.data.recruit.radius;
+    let names = |world: &World| (faction_name(world, faction), settlement_name(world, s));
+    if !near {
+        order.step = 0;
+        return false;
+    }
+    if order.step == 0 {
+        order.step = 1;
+        order.since = tick;
+        let (who, name) = names(world);
+        log(world, format!("{who} parleys at the gate of {name}"));
+        return false;
+    }
+    let threat = army.data.threat.radius;
+    // A monument's guard camp never leaves its post, so it breaks nothing.
+    let hostile = world
+        .resource::<crate::index::ArmyIndex>()
+        .armies
+        .iter()
+        .any(|a| {
+            army.at_war(a.faction, faction)
+                && world.get::<crate::monuments::Guard>(a.entity).is_none()
+                && a.pos.distance(at.as_vec2() + bevy_math::Vec2::splat(0.5)) < threat
+        });
+    if hostile {
+        let (who, name) = names(world);
+        log(
+            world,
+            format!("{who}'s parley at {name} was broken off: enemies are near"),
+        );
+        return true;
+    }
+    let data = world.resource::<Progression>().data.demand;
+    if tick.saturating_sub(order.since) < cal.hours(data.parley_hours) {
+        return false;
+    }
+    let Some(p) = crate::tenure::parley(world, s, faction) else {
+        return true;
+    };
+    if p.submits() {
+        let captain = world.get::<SpawnId>(e).map_or(0, |id| id.0);
+        let cause = Cause::Submission { captain };
+        crate::conquest::transfer_seeded(world, s, faction, cause, Some(data.seed));
+        crate::tenure::hold_tribute(world, s);
+    } else {
+        goodwill_deed(world, s, faction, Deed::Threat);
+        if let Some(mut t) = world.get_mut::<crate::tenure::Tenure>(s) {
+            t.cool_until = tick + cal.days(data.refuse_cooldown_days);
+        }
+        let (who, name) = names(world);
+        let guards = if p.garrison > 0 {
+            format!(" and {} stand guard", p.garrison)
+        } else {
+            String::new()
+        };
+        log(
+            world,
+            format!(
+                "{name} refuses {who}: {} would fight{guards}; you need {} within {:.0} tiles and have {}",
+                p.able,
+                p.need_shown(),
+                data.radius,
+                p.have_shown()
+            ),
+        );
+    }
+    true
 }
 
 /// Armies feed themselves from settlements they pass, by posture (GP-03):
@@ -1884,7 +2077,8 @@ mod tests {
 
     /// GP-05: an aggressive army holding a village it has broken (Attack
     /// step 2) neither plunders nor provokes it, even when its baggage is
-    /// short, so the militia stays down and the hold takes the village.
+    /// short, so the militia stays down and the hold takes the village (in
+    /// a run, a player captain's hold at Aggressive then sacks it: M4a step 5).
     #[test]
     fn a_held_village_is_neither_plundered_nor_provoked() {
         let (mut app, _) = run_app(42);
@@ -1922,11 +2116,20 @@ mod tests {
             if owner_of(world, a) == FactionId::PLAYER {
                 break;
             }
+            let seized = world.resource::<ArmyStats>().get(FactionId::PLAYER).seized;
+            assert_eq!(seized, before.seized, "plundered the held village");
         }
         let world = app.world_mut();
         let after = world.resource::<ArmyStats>().get(FactionId::PLAYER);
         assert_eq!(after.provocations, before.provocations);
-        assert_eq!(after.seized, before.seized, "plundered the held village");
+        // M4a step 5: held at Aggressive by a player captain in a run, the
+        // hold ends in a sack (the storehouse, at the taking, not before).
+        let sacked = world
+            .resource::<sim_core::Chronicle>()
+            .entries()
+            .iter()
+            .any(|e| matches!(e.event.cause, Cause::Sack { .. }));
+        assert!(sacked, "{:?}", lines(world));
         assert_eq!(owner_of(world, a), FactionId::PLAYER, "{:?}", lines(world));
         assert_eq!(after.conquests, before.conquests + 1);
     }

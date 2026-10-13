@@ -636,6 +636,11 @@ fn fail(world: &mut World, r: &Request, p: &Place) {
     world.write_message(event(SimEventKind::RequestFailed, r, p).cause(Cause::Lapsed));
     let name = settlement_name(world, p.entity);
     log(world, format!("{name}'s request lapsed: {}", r.kind.name()));
+    // GP-32 (M4a step 5): a sworn town whose raid went unanswered was
+    // forsaken (run only: it needs a `Tenure`).
+    if let RequestKind::DriveOff { .. } = r.kind {
+        crate::tenure::forsaken(world, p.entity, r.id);
+    }
 }
 
 /// Pays the reward to `captain` (if any), raises goodwill, and reports.
@@ -651,6 +656,11 @@ fn complete(world: &mut World, r: &Request, p: &Place, captain: Option<Entity>) 
         crate::progression::Feat::Request,
     );
     world.write_message(event(SimEventKind::RequestDone, r, p).cause(Cause::Request { id: r.id }));
+    // GP-32 (M4a step 5): a raid driven off is the day's defence there, and
+    // at a sworn town a promise kept.
+    if let RequestKind::DriveOff { .. } = r.kind {
+        crate::tenure::drove_off(world, p.entity);
+    }
     let (who, name) = (
         faction_name(world, FactionId::PLAYER),
         settlement_name(world, p.entity),
@@ -754,7 +764,6 @@ mod tests {
         let (sid, s, center) = settlements(app.world_mut())[0];
         starve(app.world_mut(), s);
         let data = app.world().resource::<Progression>().data.requests;
-        let g0 = goodwill(&app, s);
         // Ticks 0 and 100 sample low food; the request is posted at 100.
         app.step(101);
         let board = app.world().resource::<RequestBoard>().clone();
@@ -798,7 +807,11 @@ mod tests {
 
         // Done at the next hour (tick 200).
         let tick = app.world().resource::<SimTick>().0;
-        app.step(200 - tick + 1);
+        app.step(200 - tick);
+        // M4a step 5: the gift's own `Deed::Gift` is in by now; the
+        // request's deed comes with the hour.
+        let g0 = goodwill(&app, s);
+        app.step(1);
         let board = app.world().resource::<RequestBoard>().clone();
         assert!(board.of(sid).is_none(), "{:?}", board.open);
         assert!(board.done >= 1);

@@ -20,11 +20,17 @@
 //!    before its next conquest, and (secondary captains) at the settlement
 //!    each holds;
 //! 4. takes the nearest monuments nobody holds early on, answers food
-//!    requests it can spare, and attacks weak settlements (independent or
-//!    the rival's, never the seat) once it outnumbers their estimated
-//!    militia by `CONQUEST_MARGIN` (1.6), and the seat's garrison too when
-//!    the target or the straight march to it lies within `SEAT_BERTH` (80
-//!    tiles) of the seat;
+//!    requests it can spare, and takes weak settlements (independent or
+//!    the rival's, never the seat; M4a step 5, `take_mode`): it demands one
+//!    whose parley its strength (progression.ron `demand.armed_weight` per
+//!    armed man, 1 per unarmed one) beats by
+//!    `DEMAND_MARGIN`, else courts an independent town that likes the
+//!    player with a gift of food, else attacks once it outnumbers the
+//!    estimated militia by `CONQUEST_MARGIN` (1.6), and the seat's garrison
+//!    too when the target or the straight march to it lies within
+//!    `SEAT_BERTH` (80 tiles) of the seat; while a fresh submission has no
+//!    other town of the player's near it, new targets stay within
+//!    `WATCH_BERTH` of it;
 //! 5. appoints captains up to the slots, each garrisoning an owned
 //!    settlement and recruiting there;
 //! 6. marches on the rival's seat with every captain once its soldiers
@@ -37,8 +43,9 @@
 //! 7. governs once a game day (`Bot::govern`, LORDSHIP_DESIGN section
 //!    12): Forge at the best smithy town while it has two days of food,
 //!    Tithe at fed, loyal towns within `GOVERN_RANGE` of a captain, a
-//!    Levy at one big loyal town at a time, never Ration or Feast. Only
-//!    commands the sim would accept are sent.
+//!    Levy at one big loyal town at a time, never Ration or Feast; a town
+//!    paying tribute keeps its Dues at Tithe and is never the levy town.
+//!    Only commands the sim would accept are sent.
 //!
 //! Tie-breaks draw from stream `sim_headless::bot` at the tick. Nothing in
 //! the bot depends on wall time or hash order, so a recorded bot run
@@ -50,20 +57,21 @@ use bevy_ecs::prelude::*;
 use bevy_math::{IVec2, Vec2};
 use rand::RngExt;
 use sim_agents::{
-    CombatStats, Edicts, FoodSecurity, Owner, SettlementLoyalty, Stance, Villager, Villagers,
+    CombatStats, Edicts, FoodSecurity, Goodwill, Owner, SettlementLoyalty, Stance, Villager,
+    Villagers,
 };
 use sim_core::rng::rng_key;
 use sim_core::{
     Calendar, Cause, Checkpoint, Chronicle, ChronicleEntry, CommandKind, CommandLog, Dues,
     FactionId, GovernAct, LoggedCommand, OfferKind, Offers, OrderSpec, Position, RunOutcome,
-    RunState, SimCommand, SimSeed, SimStepper, SimTick, SpawnId, Stat, WorkFocus,
+    RunState, SimCommand, SimEventKind, SimSeed, SimStepper, SimTick, SpawnId, Stat, WorkFocus,
     compute_state_hash,
 };
 use sim_economy::{Economy, GoodId, SettlementEconomy, Stockpile, Workplace, WorkplaceKind};
 use sim_military::progression::Effect;
 use sim_military::{
     Army, ArmyIndex, Captain, Equipment, Follower, Guard, Holder, Progression, RequestBoard,
-    RequestKind, RivalState, RunProgress,
+    RequestKind, RivalState, RunProgress, Tenure, parley, paying_tribute,
 };
 use sim_world::{Monument, Settlement};
 
@@ -152,6 +160,9 @@ struct Town {
     dues: Dues,
     /// Whether a captain of the bot stands within [`GOVERN_RANGE`].
     near: bool,
+    /// It knelt to a demand and pays tribute: its Dues stay at Tithe
+    /// until it settles (M4a step 5), so the bot leaves them alone.
+    tribute: bool,
 }
 
 /// The dial settings the bot wants, as (town, act), in SpawnId order. Pure:
@@ -180,7 +191,11 @@ fn plan_govern(towns: &[Town]) -> Vec<(u64, GovernAct)> {
         towns
             .iter()
             .filter(|t| {
-                t.near && t.pop >= LEVY_POP && t.loyalty >= LEVY_LOYALTY && t.days > TITHE_DAYS
+                t.near
+                    && !t.tribute
+                    && t.pop >= LEVY_POP
+                    && t.loyalty >= LEVY_LOYALTY
+                    && t.days > TITHE_DAYS
             })
             .max_by_key(|t| (t.pop, std::cmp::Reverse(t.id)))
             .map(|t| t.id)
@@ -207,7 +222,9 @@ fn plan_govern(towns: &[Town]) -> Vec<(u64, GovernAct)> {
         } else {
             t.days > TITHE_DAYS && t.loyalty >= TITHE_LOYALTY
         };
-        let dues = if Some(t.id) == levy {
+        let dues = if t.tribute {
+            t.dues
+        } else if Some(t.id) == levy {
             Dues::Levy
         } else if t.near && tithe {
             Dues::Tithe
@@ -219,6 +236,74 @@ fn plan_govern(towns: &[Town]) -> Vec<(u64, GovernAct)> {
         }
     }
     out
+}
+
+/// Demand a town only when the army's projected strength is at least this
+/// much times what the parley needs (M4a step 5, LORDSHIP_DESIGN 12).
+const DEMAND_MARGIN: f32 = 1.1;
+
+/// Court an independent town whose goodwill toward the player is at least
+/// this much (LORDSHIP_DESIGN 5.3, 12).
+const COURT_GOODWILL: f32 = 0.35;
+
+/// Goodwill at which an independent town invites the player in.
+const INVITE_GOODWILL: f32 = 0.5;
+
+/// A town is courted again no sooner than this many ticks after a gift
+/// (three days).
+const COURT_REST: u64 = 7200;
+
+/// Food days beyond the army's `give_keep_days` a court gift needs in the
+/// baggage.
+const COURT_SPARE_DAYS: f32 = 2.0;
+
+/// While a submitted town is the player's only one near, new targets stay
+/// within this many tiles of it (the watch is 80), for this many ticks
+/// after the submission (two days of the ten it pays tribute).
+const WATCH_BERTH: f32 = 70.0;
+const WATCH_TICKS: u64 = 4800;
+
+/// How the bot's takes came about (M4a step 5): counted from the
+/// chronicle at the end of a run, so the step notes can record "takes by
+/// way" per seed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Takes {
+    /// Towns taken by an `Attack` (Conquest events, not sacks).
+    pub attack: u32,
+    /// Towns taken by an `Attack` at Aggressive posture.
+    pub sack: u32,
+    /// Towns that knelt to a demand.
+    pub submitted: u32,
+    /// Towns that invited the player in.
+    pub invited: u32,
+    /// Of those, towns the bot gave food to in the three days before.
+    pub invited_gifted: u32,
+    /// Submitted towns that defied the player.
+    pub defied: u32,
+    /// Demand orders the bot issued.
+    pub demands: u32,
+    /// Demands that ended without the town kneeling.
+    pub refused: u32,
+    /// Gift orders (courting and requests) the bot issued.
+    pub gifts: u32,
+}
+
+impl Takes {
+    /// One line for reports: `takes attack 3 sack 0 submitted 2 ...`.
+    pub fn describe(&self) -> String {
+        format!(
+            "takes attack {} sack {} submitted {} invited {} (gifted {}) | defied {} | demands {} refused {} | gifts {}",
+            self.attack,
+            self.sack,
+            self.submitted,
+            self.invited,
+            self.invited_gifted,
+            self.defied,
+            self.demands,
+            self.refused,
+            self.gifts
+        )
+    }
 }
 
 /// The bot's own record of what each of its captains is doing.
@@ -240,6 +325,11 @@ enum Task {
     Monument(u64, u64),
     /// Taking a settlement by force.
     Attack(u64),
+    /// Making a settlement kneel (M4a step 5).
+    Demand(u64),
+    /// Giving food to an independent town that likes the player, then
+    /// waiting for its invitation (M4a step 5).
+    Court(u64),
     /// Holding an owned settlement (secondary captains).
     Hold(u64),
     /// Waiting at the staging point before the assault.
@@ -280,6 +370,13 @@ pub struct Bot {
     plan: Plan,
     /// The game day `govern` last ran.
     governed: Option<u64>,
+    /// When the bot last gave food at each settlement.
+    gifted: BTreeMap<u64, u64>,
+    /// When each settlement was last courted.
+    courted: BTreeMap<u64, u64>,
+    /// Demands issued, demands that did not end in a submission, gifts
+    /// issued.
+    counts: (u32, u32, u32),
     /// Captains (SpawnIds) the bot leaves to someone else.
     ignored: Vec<u64>,
     /// What the bot decided, with the tick, for reports.
@@ -307,12 +404,15 @@ pub struct BotRun {
     pub chronicle: Vec<ChronicleEntry>,
     /// What the bot decided ([`Bot::notes`]).
     pub notes: Vec<(u64, String)>,
+    /// How its takes came about ([`Takes`]).
+    pub takes: Takes,
 }
 
 /// A settlement as the bot sees it.
 #[derive(Debug, Clone)]
 struct Site {
     id: u64,
+    entity: Entity,
     center: IVec2,
     owner: FactionId,
     pop: u32,
@@ -323,6 +423,14 @@ struct Site {
     food: f32,
     /// Its people standing as militia against the player now.
     militia: u32,
+    /// Its goodwill toward the player.
+    goodwill: f32,
+    /// A refused demand's cooldown ends at this tick.
+    cool_until: u64,
+    /// It knelt to the player and still pays tribute.
+    paying: bool,
+    /// When it came to the player, if it did.
+    since: u64,
 }
 
 /// One of the bot's captains as it sees it.
@@ -379,15 +487,18 @@ impl View {
             &Settlement,
             &SettlementEconomy,
             Option<&Owner>,
+            Option<&Goodwill>,
+            Option<&Tenure>,
         )>();
         let mut sites: Vec<Site> = q
             .iter(world)
-            .filter(|(.., se, _)| se.population > 0)
-            .map(|(e, id, s, se, o)| {
+            .filter(|(_, _, _, se, ..)| se.population > 0)
+            .map(|(e, id, s, se, o, g, t)| {
                 let store = world.get::<Stockpile>(se.storehouse);
                 let food = store.map_or(0.0, |st| st.food_value(&econ));
                 Site {
                     id: id.0,
+                    entity: e,
                     center: s.center,
                     owner: o.map_or(FactionId::INDEPENDENT, |o| o.faction),
                     pop: se.population,
@@ -395,6 +506,10 @@ impl View {
                     spare: food - per_day * se.population as f32,
                     food,
                     militia: militia.get(&e).copied().unwrap_or(0),
+                    goodwill: g.map_or(0.0, |g| g.get(FactionId::PLAYER)),
+                    cool_until: t.map_or(0, |t| t.cool_until),
+                    paying: t.is_some_and(|t| paying_tribute(world, t, tick)),
+                    since: t.map_or(0, |t| t.since),
                 }
             })
             .collect();
@@ -562,6 +677,9 @@ impl Bot {
             shunned: BTreeMap::new(),
             plan: Plan::Grow,
             governed: None,
+            gifted: BTreeMap::new(),
+            courted: BTreeMap::new(),
+            counts: (0, 0, 0),
             ignored: Vec::new(),
             notes: Vec::new(),
         }
@@ -609,7 +727,9 @@ impl Bot {
                     | Task::Recruit(s)
                     | Task::Equip(s)
                     | Task::Give(s)
-                    | Task::Attack(s),
+                    | Task::Attack(s)
+                    | Task::Demand(s)
+                    | Task::Court(s),
                 ) = task
                 {
                     self.shunned.insert(s, tick + 2400);
@@ -674,6 +794,7 @@ impl Bot {
                 work: ed.pending_work.unwrap_or(ed.work),
                 dues: ed.pending_dues.unwrap_or(ed.dues),
                 near: v.caps.iter().any(|c| dist(c.at, s.center) <= GOVERN_RANGE),
+                tribute: v.site(id.0).is_some_and(|s| s.paying),
             })
             .collect();
         towns.sort_unstable_by_key(|t| t.id);
@@ -699,6 +820,45 @@ impl Bot {
         out
     }
 
+    /// How the player's takes in `chronicle` came about, with the bot's
+    /// own demand and gift counts.
+    pub fn takes(&self, chronicle: &[ChronicleEntry]) -> Takes {
+        let mut t = Takes {
+            demands: self.counts.0,
+            refused: self.counts.1,
+            gifts: self.counts.2,
+            ..Takes::default()
+        };
+        for e in chronicle
+            .iter()
+            .filter(|e| e.event.faction == FactionId::PLAYER)
+        {
+            match e.event.kind {
+                SimEventKind::Conquest => {
+                    if matches!(e.event.cause, Cause::Sack { .. }) {
+                        t.sack += 1;
+                    } else {
+                        t.attack += 1;
+                    }
+                }
+                SimEventKind::Submitted => t.submitted += 1,
+                SimEventKind::Invited => {
+                    t.invited += 1;
+                    if self
+                        .gifted
+                        .get(&e.event.subject)
+                        .is_some_and(|g| *g <= e.tick && e.tick - g <= COURT_REST)
+                    {
+                        t.invited_gifted += 1;
+                    }
+                }
+                SimEventKind::Defied => t.defied += 1,
+                _ => {}
+            }
+        }
+        t
+    }
+
     fn note(&mut self, tick: u64, text: String) {
         self.notes.push((tick, text));
     }
@@ -719,7 +879,7 @@ impl Bot {
             .sum();
         let yours: u32 = held.iter().map(|s| s.weapons).sum();
         let text = format!(
-            "day {:.0}: main {} ({} unarmed, {:.1} d food), captains {} (slots {}), soldiers {}, held {} ({} people), seat defence est {:.0} (garrison {}, +{:.2}), plan {:?}, arms in stores {arms} ({yours} yours)",
+            "day {:.0}: main {} ({} unarmed, {:.1} d food), captains {} (slots {}), soldiers {}, held {} ({} people), seat defence est {:.0} (garrison {}, +{:.2}), plan {:?}, arms in stores {arms} ({yours} yours), demands {} (refused {}), gifts {}",
             v.day,
             main.people,
             main.unarmed,
@@ -732,7 +892,10 @@ impl Bot {
             self.seat_defence(v),
             v.garrison,
             v.defence,
-            self.plan
+            self.plan,
+            self.counts.0,
+            self.counts.1,
+            self.counts.2
         );
         self.note(v.tick, text);
     }
@@ -937,7 +1100,33 @@ impl Bot {
         // way to hunger.
         if let Some(t) = current {
             match t {
-                Task::Attack(_) if cap.orders > 0 && cap.days > 0.3 => return t,
+                Task::Attack(_) | Task::Demand(_) if cap.orders > 0 && cap.days > 0.3 => return t,
+                Task::Demand(s) if cap.orders == 0 => {
+                    if v.site(s).is_some_and(|s| s.owner == FactionId::PLAYER) {
+                        self.note(
+                            v.tick,
+                            format!("#{s} knelt to a demand (army {})", cap.people),
+                        );
+                    } else {
+                        self.counts.1 += 1;
+                        self.shunned.insert(s, v.tick + 1200);
+                        self.note(
+                            v.tick,
+                            format!("demand on #{s} came to nothing (army {})", cap.people),
+                        );
+                    }
+                }
+                Task::Court(s) => {
+                    if v.site(s).is_some_and(|x| x.owner == FactionId::PLAYER) {
+                        self.note(v.tick, format!("#{s} took us in after a gift"));
+                    } else if cap.days >= 0.7 {
+                        let waiting = self.gifted.get(&s).is_some_and(|g| v.tick < g + 2400);
+                        let warm = v.site(s).is_some_and(|x| x.goodwill >= INVITE_GOODWILL);
+                        if cap.orders > 0 || waiting && warm {
+                            return t;
+                        }
+                    }
+                }
                 Task::Attack(s) if cap.orders == 0 => {
                     let taken = v.site(s).is_some_and(|s| s.owner == FactionId::PLAYER);
                     let pop = v.site(s).map_or(0, |s| s.pop);
@@ -999,8 +1188,8 @@ impl Bot {
             return Task::Equip(s);
         }
         // Weak settlements nearby.
-        if let Some(s) = self.conquest_target(v, cap) {
-            return Task::Attack(s);
+        if let Some(t) = self.take_mode(world, v, cap) {
+            return t;
         }
         if let Some(s) = recruit {
             return Task::Recruit(s);
@@ -1136,6 +1325,108 @@ impl Bot {
             .map(|s| s.id)
     }
 
+    /// Whether a target at `at` is too far from a fresh submission nobody
+    /// else watches: such a town defies after two weak days (LORDSHIP_DESIGN
+    /// 5.2), so for its first days the army stays near.
+    fn leaves_submission(&self, v: &View, at: IVec2) -> bool {
+        v.sites.iter().any(|p| {
+            p.owner == FactionId::PLAYER
+                && p.paying
+                && v.tick < p.since + WATCH_TICKS
+                && dist(p.center, at) > WATCH_BERTH
+                && !v.sites.iter().any(|o| {
+                    o.id != p.id
+                        && o.owner == FactionId::PLAYER
+                        && dist(o.center, p.center) <= WATCH_BERTH
+                })
+        })
+    }
+
+    /// How to take the nearest town worth taking (LORDSHIP_DESIGN 12,
+    /// M4a step 5): Demand one the army outweighs by `DEMAND_MARGIN`,
+    /// else Court an independent town that likes the player and can be
+    /// given food, else Attack.
+    fn take_mode(&mut self, world: &World, v: &View, cap: &Cap) -> Option<Task> {
+        if let Some(s) = self.demand_target(world, v, cap) {
+            return Some(Task::Demand(s));
+        }
+        if let Some(s) = self.court_target(world, v, cap) {
+            return Some(Task::Court(s));
+        }
+        self.conquest_target(v, cap).map(Task::Attack)
+    }
+
+    /// The best town to demand now: the army's strength (1 each, 1.5
+    /// armed) at least `DEMAND_MARGIN` times what the parley needs.
+    fn demand_target(&self, world: &World, v: &View, cap: &Cap) -> Option<u64> {
+        if cap.days < 1.2 || cap.people < 8 {
+            return None;
+        }
+        let armed = cap.people.saturating_sub(cap.unarmed);
+        let have = armed as f32 * world.resource::<Progression>().data.demand.armed_weight
+            + cap.unarmed as f32;
+        let mut best: Option<(f32, u64)> = None;
+        for s in &v.sites {
+            if s.owner == FactionId::PLAYER
+                || Some(s.id) == v.seat
+                || self.shuns(s.id, v.tick)
+                || v.tick < s.cool_until
+            {
+                continue;
+            }
+            let d = dist(s.center, cap.at);
+            if d > 260.0
+                || v.hostiles_near(s.center, 45.0) > 0
+                || self.leaves_submission(v, s.center)
+            {
+                continue;
+            }
+            // The garrison meets an army on the way past the seat.
+            if dist_to_line(v.seat_center, cap.at, s.center) < SEAT_BERTH
+                && (cap.people as f32) < v.garrison as f32 * CONQUEST_MARGIN + 5.0
+            {
+                continue;
+            }
+            let Some(p) = parley(world, s.entity, FactionId::PLAYER) else {
+                continue;
+            };
+            if have < p.need * DEMAND_MARGIN {
+                continue;
+            }
+            let score = d - s.pop as f32 * 0.3;
+            if best.is_none_or(|b| score < b.0) {
+                best = Some((score, s.id));
+            }
+        }
+        best.map(|b| b.1)
+    }
+
+    /// An independent town that likes the player (goodwill at least
+    /// `COURT_GOODWILL`), near, to give food to with days to spare.
+    fn court_target(&self, world: &World, v: &View, cap: &Cap) -> Option<u64> {
+        let keep = world.resource::<Army>().data.give_keep_days;
+        if cap.days < keep + COURT_SPARE_DAYS {
+            return None;
+        }
+        v.sites
+            .iter()
+            .filter(|s| {
+                s.owner == FactionId::INDEPENDENT
+                    && s.goodwill >= COURT_GOODWILL
+                    && s.goodwill < INVITE_GOODWILL + 0.12
+                    && !self.shuns(s.id, v.tick)
+                    && self
+                        .courted
+                        .get(&s.id)
+                        .is_none_or(|t| v.tick >= t + COURT_REST)
+                    && dist(s.center, cap.at) <= 150.0
+                    && !self.leaves_submission(v, s.center)
+            })
+            .map(|s| (dist(s.center, cap.at), s.id))
+            .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
+            .map(|(_, id)| id)
+    }
+
     /// The nearest settlement the army can take (not the seat, not one
     /// the player owns).
     fn conquest_target(&self, v: &View, cap: &Cap) -> Option<u64> {
@@ -1148,7 +1439,7 @@ impl Bot {
                 continue;
             }
             let d = dist(s.center, cap.at);
-            if d > 260.0 {
+            if d > 260.0 || self.leaves_submission(v, s.center) {
                 continue;
             }
             // The garrison meets an army at the target or on the way past
@@ -1287,6 +1578,8 @@ impl Bot {
                 | Task::Equip(s)
                 | Task::Give(s)
                 | Task::Attack(s)
+                | Task::Demand(s)
+                | Task::Court(s)
                 | Task::Assault(s) => v.site(s).map(|s| s.center),
                 Task::Wander(at) => Some(at),
                 Task::Monument(m, _) => monument_tile(world, m),
@@ -1294,6 +1587,7 @@ impl Bot {
             };
             let work = match task {
                 Task::Attack(_) | Task::Assault(_) => 3600,
+                Task::Court(_) => 3000,
                 Task::Monument(..) => 600,
                 _ => 300,
             };
@@ -1350,7 +1644,21 @@ impl Bot {
                 o
             }
             Task::Equip(s) => vec![OrderSpec::Equip { settlement: s }],
-            Task::Give(s) => vec![OrderSpec::Give { settlement: s }],
+            Task::Give(s) => {
+                self.gifted.insert(s, v.tick);
+                self.counts.2 += 1;
+                vec![OrderSpec::Give { settlement: s }]
+            }
+            Task::Court(s) => {
+                self.gifted.insert(s, v.tick);
+                self.courted.insert(s, v.tick);
+                self.counts.2 += 1;
+                vec![OrderSpec::Give { settlement: s }]
+            }
+            Task::Demand(s) => {
+                self.counts.0 += 1;
+                vec![OrderSpec::Demand { settlement: s }]
+            }
             Task::Monument(m, _) => match monument_tile(world, m) {
                 Some(at) => vec![OrderSpec::MoveTo { x: at.x, y: at.y }],
                 None => Vec::new(),
@@ -1507,6 +1815,8 @@ pub fn play_bot_with(
         }
     }
     let final_hash = compute_state_hash(app.world_mut());
+    let takes = bot.takes(app.world().resource::<Chronicle>().entries());
+    bot.note(app.world().resource::<SimTick>().0, takes.describe());
     let run = BotRun {
         outcome: app.world().resource::<RunState>().outcome,
         cause: app.world().resource::<RunState>().cause,
@@ -1516,6 +1826,7 @@ pub fn play_bot_with(
         final_hash,
         chronicle: app.world().resource::<Chronicle>().entries().to_vec(),
         notes: bot.notes,
+        takes,
     };
     (app, run)
 }
@@ -1535,6 +1846,7 @@ mod tests {
             work: WorkFocus::Balanced,
             dues: Dues::Light,
             near: true,
+            tribute: false,
         }
     }
 
@@ -1565,6 +1877,28 @@ mod tests {
         assert!(plan.contains(&(2, GovernAct::Dues(Dues::Levy))));
         assert!(plan.contains(&(1, GovernAct::Dues(Dues::Tithe))));
         assert!(!plan.iter().any(|(id, _)| *id == 3 || *id == 4));
+    }
+
+    /// A town paying tribute (M4a step 5, merged at MP2) keeps its Dues at
+    /// Tithe and is never the levy town, even when it is the biggest; its
+    /// Work dial is the bot's as anywhere.
+    #[test]
+    fn govern_leaves_a_tributary_at_tithe() {
+        let mut a = town(1);
+        a.pop = 200;
+        a.smithies = 1;
+        a.dues = Dues::Tithe;
+        a.tribute = true;
+        a.days = 0.5;
+        let mut b = town(2);
+        b.pop = 120;
+        let plan = plan_govern(&[a, b]);
+        assert!(
+            !plan
+                .iter()
+                .any(|(id, a)| *id == 1 && matches!(a, GovernAct::Dues(_)))
+        );
+        assert!(plan.contains(&(2, GovernAct::Dues(Dues::Levy))));
     }
 
     /// A forge town under a day of food goes back to Balanced; between one
@@ -1604,5 +1938,84 @@ mod tests {
             5.0
         );
         assert_eq!(dist_to_line(seat, from, from), dist(seat, from));
+    }
+
+    /// M4a step 5: takes are counted by way from the chronicle, and an
+    /// invitation counts as gifted only when the bot gave food there in
+    /// the three days before it.
+    #[test]
+    fn takes_are_counted_by_way() {
+        use sim_core::SimEvent;
+        let entry = |tick, kind, faction, subject, cause| ChronicleEntry {
+            tick,
+            event: SimEvent {
+                subject,
+                cause,
+                ..SimEvent::new(kind, faction)
+            },
+        };
+        let me = FactionId::PLAYER;
+        let log = [
+            entry(
+                10,
+                SimEventKind::Conquest,
+                me,
+                1,
+                Cause::Conquest { captain: 9 },
+            ),
+            entry(
+                20,
+                SimEventKind::Conquest,
+                me,
+                2,
+                Cause::Sack { captain: 9 },
+            ),
+            entry(
+                30,
+                SimEventKind::Submitted,
+                me,
+                3,
+                Cause::Submission { captain: 9 },
+            ),
+            entry(40, SimEventKind::Invited, me, 4, Cause::Invitation),
+            entry(
+                COURT_REST + 5,
+                SimEventKind::Invited,
+                me,
+                5,
+                Cause::Invitation,
+            ),
+            entry(60, SimEventKind::Defied, me, 3, Cause::Defiance),
+            entry(
+                70,
+                SimEventKind::Conquest,
+                FactionId::RIVAL,
+                6,
+                Cause::Conquest { captain: 8 },
+            ),
+        ];
+        let mut bot = Bot::new(1);
+        bot.gifted.insert(4, 30);
+        bot.gifted.insert(5, 1);
+        bot.counts = (3, 1, 2);
+        let t = bot.takes(&log);
+        assert_eq!(
+            t,
+            Takes {
+                attack: 1,
+                sack: 1,
+                submitted: 1,
+                invited: 2,
+                invited_gifted: 1,
+                defied: 1,
+                demands: 3,
+                refused: 1,
+                gifts: 2,
+            }
+        );
+        assert!(
+            t.describe()
+                .starts_with("takes attack 1 sack 1 submitted 1")
+        );
     }
 }
