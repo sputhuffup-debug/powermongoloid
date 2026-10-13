@@ -47,6 +47,16 @@
 //!    paying tribute keeps its Dues at Tithe and is never the levy town.
 //!    Only commands the sim would accept are sent.
 //!
+//! 8. guards against the rival's reprisal (M4a step 6, LORDSHIP_DESIGN
+//!    sections 7 and 12): while `RivalState.reprisal` holds a vow (the
+//!    feed shows it), the secondary captain nearest the player's newest
+//!    holding (the town `rival::newest_holding` would pick, the latest
+//!    `Owner.since`) garrisons it and recruits there up to `REPRISAL_MARGIN`
+//!    (1.5) times the expected band (`reprisal_size` x the rival's
+//!    strength, at most half the seat's garrison). Bandits aimed at a
+//!    rival town and more than `BANDIT_BERTH` (60) tiles from the army
+//!    are left out of its foes for a conquest or demand.
+//!
 //! Tie-breaks draw from stream `sim_headless::bot` at the tick. Nothing in
 //! the bot depends on wall time or hash order, so a recorded bot run
 //! replays.
@@ -265,6 +275,14 @@ const COURT_SPARE_DAYS: f32 = 2.0;
 const WATCH_BERTH: f32 = 70.0;
 const WATCH_TICKS: u64 = 4800;
 
+/// The captain guarding the newest holding against a vowed reprisal
+/// recruits until it has this many times the expected band.
+const REPRISAL_MARGIN: f32 = 1.5;
+
+/// Bandits aimed at a rival town and farther than this from the army are
+/// not counted among the foes of a conquest or demand.
+const BANDIT_BERTH: f32 = 60.0;
+
 /// How the bot's takes came about (M4a step 5): counted from the
 /// chronicle at the end of a run, so the step notes can record "takes by
 /// way" per seed.
@@ -288,13 +306,27 @@ pub struct Takes {
     pub refused: u32,
     /// Gift orders (courting and requests) the bot issued.
     pub gifts: u32,
+    /// Bandit bands that rose from towns the player took (`BanditsRose`).
+    pub bands: u32,
+    /// Raids the bot saw bandit bands start on rival, player and other
+    /// towns (sampled each think).
+    pub raids_rival: u32,
+    pub raids_player: u32,
+    pub raids_other: u32,
+    /// Reprisals vowed, sent and the retakes they led to (a rival
+    /// Conquest of a town a `RivalReprisal` named).
+    pub vows: u32,
+    pub reprisals: u32,
+    pub retakes: u32,
+    /// Revolts against the player.
+    pub revolts: u32,
 }
 
 impl Takes {
     /// One line for reports: `takes attack 3 sack 0 submitted 2 ...`.
     pub fn describe(&self) -> String {
         format!(
-            "takes attack {} sack {} submitted {} invited {} (gifted {}) | defied {} | demands {} refused {} | gifts {}",
+            "takes attack {} sack {} submitted {} invited {} (gifted {}) | defied {} | demands {} refused {} | gifts {} | bandits {} raids rival {} player {} other {} | vows {} reprisals {} retaken {} | revolts {}",
             self.attack,
             self.sack,
             self.submitted,
@@ -303,7 +335,15 @@ impl Takes {
             self.defied,
             self.demands,
             self.refused,
-            self.gifts
+            self.gifts,
+            self.bands,
+            self.raids_rival,
+            self.raids_player,
+            self.raids_other,
+            self.vows,
+            self.reprisals,
+            self.retakes,
+            self.revolts
         )
     }
 }
@@ -379,6 +419,10 @@ pub struct Bot {
     /// Demands issued, demands that did not end in a submission, gifts
     /// issued.
     counts: (u32, u32, u32),
+    /// Bandit raids seen: per band (SpawnId) the raids counted so far, and
+    /// the totals on rival, player and other towns.
+    bandit_raids: BTreeMap<u64, u32>,
+    raid_counts: (u32, u32, u32),
     /// Captains (SpawnIds) the bot leaves to someone else.
     ignored: Vec<u64>,
     /// What the bot decided, with the tick, for reports.
@@ -433,6 +477,18 @@ struct Site {
     paying: bool,
     /// When it came to the player, if it did.
     since: u64,
+    /// `Owner::since`: when its owner took it (the newest holding is the
+    /// player's latest).
+    owned_since: u64,
+}
+
+/// An army at war with the player.
+#[derive(Debug, Clone, Copy)]
+struct Hostile {
+    pos: Vec2,
+    people: u32,
+    /// Bandits whose raid is aimed at a rival town.
+    rival_bound: bool,
 }
 
 /// One of the bot's captains as it sees it.
@@ -462,7 +518,12 @@ struct View {
     garrison: u32,
     defence: f32,
     slots: u32,
-    hostiles: Vec<(Vec2, u32)>,
+    hostiles: Vec<Hostile>,
+    /// The rival's vow of reprisal, if any, and the band to expect.
+    vow: Option<sim_military::Vow>,
+    reprisal_need: u32,
+    /// Bandit bands: (captain, raids, target town) for the counters.
+    bands: Vec<(u64, u32, Option<u64>)>,
 }
 
 impl View {
@@ -512,6 +573,7 @@ impl View {
                     cool_until: t.map_or(0, |t| t.cool_until),
                     paying: t.is_some_and(|t| paying_tribute(world, t, tick)),
                     since: t.map_or(0, |t| t.since),
+                    owned_since: o.map_or(0, |o| o.since),
                 }
             })
             .collect();
@@ -553,13 +615,39 @@ impl View {
         let garrison = sim_military::rival::garrison(world)
             .map_or(0, |g| members.get(&g).map_or(0, |m| m.0) + 1);
         let army = world.resource::<Army>().clone();
+        let mut q = world.query::<(Entity, &SpawnId, &Captain, &sim_military::Bandits)>();
+        let bandits: BTreeMap<Entity, (u64, u32, Option<u64>)> = q
+            .iter(world)
+            .map(|(e, id, c, b)| {
+                let target = match c.orders.front().map(|o| o.spec) {
+                    Some(OrderSpec::GatherFood { settlement }) => Some(settlement),
+                    _ => None,
+                };
+                (e, (id.0, b.raids, target))
+            })
+            .collect();
+        let owner_of = |id: u64| sites.iter().find(|s| s.id == id).map(|s| s.owner);
         let hostiles = world
             .resource::<ArmyIndex>()
             .armies
             .iter()
             .filter(|a| army.at_war(a.faction, FactionId::PLAYER))
-            .map(|a| (a.pos, a.followers + 1))
+            .map(|a| Hostile {
+                pos: a.pos,
+                people: a.followers + 1,
+                rival_bound: bandits
+                    .get(&a.entity)
+                    .and_then(|b| b.2)
+                    .is_some_and(|t| owner_of(t) == Some(FactionId::RIVAL)),
+            })
             .collect();
+        let bands = bandits.values().copied().collect();
+        let vow = rival.reprisal;
+        let reprisal_need = sim_military::rival::clock_data(world).map_or(0, |d| {
+            let band = (d.reprisal_size as f32 * sim_military::rival::strength(world))
+                .min((garrison / 2) as f32);
+            (band * REPRISAL_MARGIN).ceil() as u32
+        });
         let slots = world.resource::<RunProgress>().captain_slots;
         Self {
             tick,
@@ -572,6 +660,9 @@ impl View {
             defence: rival.defence_bonus,
             slots,
             hostiles,
+            vow,
+            reprisal_need,
+            bands,
         }
     }
 
@@ -587,9 +678,30 @@ impl View {
     fn hostiles_near(&self, at: IVec2, r: f32) -> u32 {
         self.hostiles
             .iter()
-            .filter(|(p, _)| p.distance(at.as_vec2()) <= r)
-            .map(|(_, n)| n)
+            .filter(|h| h.pos.distance(at.as_vec2()) <= r)
+            .map(|h| h.people)
             .sum()
+    }
+
+    /// Like [`View::hostiles_near`], for a conquest or demand by the army
+    /// at `from`: bandits aimed at a rival town and more than
+    /// [`BANDIT_BERTH`] tiles from the army are left out (LORDSHIP_DESIGN
+    /// section 12).
+    fn foes_near(&self, at: IVec2, r: f32, from: IVec2) -> u32 {
+        self.hostiles
+            .iter()
+            .filter(|h| !(h.rival_bound && h.pos.distance(from.as_vec2()) > BANDIT_BERTH))
+            .filter(|h| h.pos.distance(at.as_vec2()) <= r)
+            .map(|h| h.people)
+            .sum()
+    }
+
+    /// The player's newest holding, as `rival::newest_holding` picks it.
+    fn newest_holding(&self) -> Option<&Site> {
+        self.sites
+            .iter()
+            .filter(|s| s.owner == FactionId::PLAYER)
+            .min_by_key(|s| (std::cmp::Reverse(s.owned_since), s.id))
     }
 }
 
@@ -682,6 +794,8 @@ impl Bot {
             gifted: BTreeMap::new(),
             courted: BTreeMap::new(),
             counts: (0, 0, 0),
+            bandit_raids: BTreeMap::new(),
+            raid_counts: (0, 0, 0),
             ignored: Vec::new(),
             notes: Vec::new(),
         }
@@ -702,6 +816,7 @@ impl Bot {
         }
         let world = app.world_mut();
         let view = View::read(world, tick, &self.ignored);
+        self.count_raids(&view);
         let mut out = self.offers(world, &view);
         if view.main().is_none() {
             return out;
@@ -829,8 +944,32 @@ impl Bot {
             demands: self.counts.0,
             refused: self.counts.1,
             gifts: self.counts.2,
+            raids_rival: self.raid_counts.0,
+            raids_player: self.raid_counts.1,
+            raids_other: self.raid_counts.2,
             ..Takes::default()
         };
+        let named: Vec<u64> = chronicle
+            .iter()
+            .filter(|e| e.event.kind == SimEventKind::RivalReprisal)
+            .map(|e| e.event.other)
+            .collect();
+        for e in chronicle {
+            match e.event.kind {
+                SimEventKind::BanditsRose => t.bands += 1,
+                SimEventKind::ReprisalVowed => t.vows += 1,
+                SimEventKind::RivalReprisal => t.reprisals += 1,
+                SimEventKind::Conquest
+                    if e.event.faction == FactionId::RIVAL && named.contains(&e.event.subject) =>
+                {
+                    t.retakes += 1;
+                }
+                SimEventKind::Revolt if e.event.faction == FactionId::PLAYER => {
+                    t.revolts += 1;
+                }
+                _ => {}
+            }
+        }
         for e in chronicle
             .iter()
             .filter(|e| e.event.faction == FactionId::PLAYER)
@@ -859,6 +998,22 @@ impl Bot {
             }
         }
         t
+    }
+
+    /// Counts the raids bandit bands started since the last think, by the
+    /// owner of the town they now aim at (for the step notes).
+    fn count_raids(&mut self, v: &View) {
+        for &(id, raids, target) in &v.bands {
+            let seen = self.bandit_raids.insert(id, raids).unwrap_or(0);
+            if raids > seen {
+                let n = raids - seen;
+                match target.and_then(|t| v.site(t)).map(|s| s.owner) {
+                    Some(o) if o == FactionId::RIVAL => self.raid_counts.0 += n,
+                    Some(o) if o == FactionId::PLAYER => self.raid_counts.1 += n,
+                    _ => self.raid_counts.2 += n,
+                }
+            }
+        }
     }
 
     fn note(&mut self, tick: u64, text: String) {
@@ -1381,7 +1536,7 @@ impl Bot {
             }
             let d = dist(s.center, cap.at);
             if d > 260.0
-                || v.hostiles_near(s.center, 45.0) > 0
+                || v.foes_near(s.center, 45.0, cap.at) > 0
                 || self.leaves_submission(v, s.center)
             {
                 continue;
@@ -1451,7 +1606,7 @@ impl Bot {
             // the seat.
             let near_seat = dist_to_line(v.seat_center, cap.at, s.center) < SEAT_BERTH;
             let foes = self.militia(s)
-                + v.hostiles_near(s.center, 45.0) as f32
+                + v.foes_near(s.center, 45.0, cap.at) as f32
                 + if near_seat { v.garrison as f32 } else { 0.0 };
             if (cap.people as f32) < foes * CONQUEST_MARGIN + 5.0 {
                 continue;
@@ -1504,13 +1659,27 @@ impl Bot {
             _ => {}
         }
         let current = self.tasks.get(&cap.id).copied();
+        let guard = self.guard_town(v, cap);
+        // GP-33: the guard goes to the town the rival would retake.
+        if let Some(g) = guard
+            && !matches!(current, Some(Task::Hold(s)) if s == g)
+            && !matches!(current, Some(Task::Recruit(s) | Task::Equip(s)) if s == g)
+        {
+            return Task::Hold(g);
+        }
         if let Some(Task::Hold(s)) = current
             && self.going(v, cap, Task::Hold(s))
         {
-            // Recruit at home when small, at most every half day.
+            // Recruit at home when small, at most every half day (up to
+            // the expected reprisal while a vow stands on this town).
             let home = v.site(s).expect("held");
             let rested = self.recruited.get(&s).is_none_or(|t| v.tick >= t + 1200);
-            if cap.people < 16 && home.pop >= 60 && rested && cap.orders <= 1 {
+            let want = if guard == Some(s) {
+                16.max(v.reprisal_need)
+            } else {
+                16
+            };
+            if cap.people < want && home.pop >= 60 && rested && cap.orders <= 1 {
                 return Task::Recruit(s);
             }
             // Arms from home's storehouse for the unarmed (M4a, SIM-64).
@@ -1559,6 +1728,24 @@ impl Bot {
                 },
                 |s| Task::Hold(s.id),
             )
+    }
+
+    /// While the rival's vow stands: the newest holding, if `cap` is the
+    /// secondary captain nearest to it (ties to the lowest SpawnId) and
+    /// the main army is not already there to guard it.
+    fn guard_town(&self, v: &View, cap: &Cap) -> Option<u64> {
+        v.vow?;
+        let town = v.newest_holding()?;
+        let nearest = v
+            .caps
+            .iter()
+            .filter(|c| !c.champion && c.people >= 2)
+            .min_by(|a, b| {
+                dist(a.at, town.center)
+                    .total_cmp(&dist(b.at, town.center))
+                    .then(a.id.cmp(&b.id))
+            })?;
+        (nearest.id == cap.id).then_some(town.id)
     }
 
     fn food_or_wait(&self, v: &View, cap: &Cap) -> Task {
@@ -2016,6 +2203,7 @@ mod tests {
                 demands: 3,
                 refused: 1,
                 gifts: 2,
+                ..Takes::default()
             }
         );
         assert!(
