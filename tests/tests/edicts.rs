@@ -804,6 +804,14 @@ fn a_tithe_reaches_an_army_within_reach() {
 #[test]
 fn a_levy_musters_and_joins() {
     let mut app = fresh();
+    // M4a step 6: the conquest below would raise broken men two hours later,
+    // idle men first, so the levy's waiting men; this scenario is about the
+    // levy alone.
+    app.world_mut()
+        .resource_mut::<Progression>()
+        .data
+        .fallout
+        .enabled = false;
     let t = pick(&mut app, 60, 1, 70.0);
     take(&mut app, t, Cause::Conquest { captain: 1 });
     stock_food(&mut app, t, 4.0, true);
