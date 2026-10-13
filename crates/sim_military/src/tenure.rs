@@ -647,15 +647,19 @@ pub(crate) fn day_of(world: &World, tick: u64) -> u32 {
 /// in its [`Tenure`], if it has one (run settlements only): the
 /// [`TakenBy::of`] the cause, the scar from `tenure` data and the blood
 /// spilt, the history. Called by `conquest::transfer_seeded` after the
-/// owner changed; returns the taking (`None` outside a run).
+/// owner changed; returns the taking and the blood `to` spilt taking it
+/// ([`Tenure::blood_of`], read before the taking resets it: the broken
+/// men's count, GP-33), or `None` outside a run.
 pub(crate) fn record_taking(
     world: &mut World,
     s: Entity,
     cause: Cause,
     to: FactionId,
-) -> Option<TakenBy> {
+) -> Option<(TakenBy, u32)> {
     let how = TakenBy::of(cause, to);
-    retake(world, s, how, to)
+    let blood = world.get::<Tenure>(s)?.blood_of(to);
+    retake(world, s, how, to)?;
+    Some((how, blood))
 }
 
 /// Writes a taking `how` by `to` into `s`'s [`Tenure`], if it has one,

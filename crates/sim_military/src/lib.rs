@@ -127,7 +127,7 @@ pub use components::{
 pub use conquest::{militia_or_foes_near, owner_of, taking_kind, transfer, transfer_seeded};
 pub use data::{Army, RankGain, VeteranData};
 pub use director::{Director, DirectorData, Personality, RaiderBandData, TensionWeights};
-pub use fallout::{Fallout, FalloutData, PendingBand};
+pub use fallout::{Fallout, FalloutData, PendingBand, PendingVow};
 pub use govern::{EdictsData, Steward, StewardsData};
 pub use index::{ArmyIndex, ArmyInfo, FighterGrid, Side};
 pub use influence::{Influence, InfluenceData};
@@ -143,7 +143,7 @@ pub use progression::{
     rebuild_modifiers, report_start, setup_run,
 };
 pub use requests::{Request, RequestBoard, RequestKind, Reward};
-pub use rival::{RivalBand, RivalData, RivalState, Vow};
+pub use rival::{Realm, RivalBand, RivalData, RivalState, Vow};
 pub use soldiers::slot_offset;
 pub use spawn::{ArmySpec, Skirmish, nearest_passable, setup_battle, setup_skirmish, spawn_army};
 pub use tenure::{

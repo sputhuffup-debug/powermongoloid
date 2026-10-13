@@ -308,6 +308,75 @@ pub fn clock_data(world: &World) -> Option<RivalData> {
     world.resource::<Progression>().rival(difficulty).cloned()
 }
 
+/// GP-31 (M4a step 6): the rival's realm as it stands: the towns of
+/// [`RivalState::realm`] (the seat left out) the rival still owns, and
+/// their starting people over the realm's.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Realm {
+    /// Towns of the starting realm the rival still owns.
+    pub towns_held: u32,
+    /// Towns in the starting realm.
+    pub towns: u32,
+    /// Their starting people.
+    pub people_held: u32,
+    /// The starting realm's people.
+    pub people: u32,
+}
+
+impl Realm {
+    /// The realm share: starting people held over the starting total (1.0
+    /// for an empty starting realm).
+    pub fn share(&self) -> f32 {
+        if self.people == 0 || self.people_held >= self.people {
+            1.0
+        } else {
+            self.people_held as f32 / self.people as f32
+        }
+    }
+}
+
+/// GP-31: the rival's realm (`None` outside a run, or with no seat).
+/// Counting starting people, not today's residents, keeps its own levies
+/// from moving it (LORDSHIP_DESIGN section 6.1).
+pub fn realm(world: &World) -> Option<Realm> {
+    let state = world.resource::<RivalState>();
+    state.seat?;
+    let mut q = world.try_query::<(&SpawnId, &Owner)>()?;
+    let mut held: Vec<u64> = q
+        .iter(world)
+        .filter(|(_, o)| o.faction == FactionId::RIVAL)
+        .map(|(id, _)| id.0)
+        .collect();
+    held.sort_unstable();
+    let mut r = Realm::default();
+    for &(s, people) in &state.realm {
+        r.towns += 1;
+        r.people += people;
+        if held.binary_search(&s).is_ok() {
+            r.towns_held += 1;
+            r.people_held += people;
+        }
+    }
+    Some(r)
+}
+
+/// GP-31: the seat's defence as a share of its clock at realm share
+/// `share`: `realm_floor + (1 - realm_floor) x share`, exactly 1.0 at a
+/// full realm.
+pub fn realm_factor(realm_floor: f32, share: f32) -> f32 {
+    if share >= 1.0 {
+        1.0
+    } else {
+        realm_floor + (1.0 - realm_floor) * share.max(0.0)
+    }
+}
+
+/// GP-28, GP-31: the seat's defence bonus on `day`: its clock
+/// (`defence_on(day) x strength`) times [`realm_factor`].
+pub fn seat_bonus(data: &RivalData, day: f32, strength: f32, share: f32) -> f32 {
+    data.defence_on(day) * strength * realm_factor(data.realm_floor, share)
+}
+
 /// GP-28: before the first tick of a run, hands the rival region's
 /// populated settlements to the rival (quietly, with loyalty at
 /// `start_loyalty`: no conquest is reported), seats the rival at `seat`,
@@ -441,7 +510,10 @@ pub fn clock(world: &mut World) {
     let cal = world.resource::<Calendar>().clone();
     let strength = strength(world);
     let day = tick as f32 / cal.ticks_per_day as f32;
-    let bonus = data.defence_on(day) * strength;
+    // GP-31 (M4a): the seat's defence follows its realm (exactly the
+    // clock's at a full realm).
+    let share = realm(world).map_or(1.0, |r| r.share());
+    let bonus = seat_bonus(&data, day, strength, share);
     if world.resource::<RivalState>().defence_bonus != bonus {
         world.resource_mut::<RivalState>().defence_bonus = bonus;
     }
@@ -463,6 +535,97 @@ pub fn clock(world: &mut World) {
             state.next_raid += every;
         }
     }
+    // GP-33 (M4a): a vow come due is kept from `reprisal_from_day`.
+    if world
+        .resource::<RivalState>()
+        .reprisal
+        .is_some_and(|v| tick >= v.due)
+        && day >= data.reprisal_from_day
+    {
+        reprisal(world, &data, strength);
+    }
+}
+
+/// GP-33: the player's newest holding: the populated town it took last
+/// (the latest `Owner::since`, ties to the lowest SpawnId).
+pub fn newest_holding(world: &World) -> Option<(u64, Entity)> {
+    let mut q = world.try_query::<(Entity, &SpawnId, &Owner)>()?;
+    q.iter(world)
+        .filter(|(_, _, o)| o.faction == FactionId::PLAYER)
+        .min_by_key(|(_, id, o)| (std::cmp::Reverse(o.since), **id))
+        .map(|(e, id, _)| (id.0, e))
+}
+
+/// GP-33: keeps the rival's vow: splits `reprisal_size x strength` people
+/// (times `turned_mult` against a town turned within
+/// `subvert.fragile_days`; at most half the garrison) off the seat's
+/// garrison under a lead drawn from stream `sim_military::rival::reprisal`,
+/// pinned to the player's newest holding ([`newest_holding`]). It waits
+/// while the player holds nothing or the garrison has fewer than
+/// `reprisal_min_garrison` followers. The band counts in
+/// [`RivalState::raids`] (the garrison's books), the vow is spent and the
+/// next scheduled raid is pushed back half a period. Reports
+/// `RivalReprisal` with `Cause::Reprisal`.
+fn reprisal(world: &mut World, data: &RivalData, strength: f32) {
+    let Some((target, town)) = newest_holding(world) else {
+        return;
+    };
+    let Some(g) = garrison(world) else {
+        return;
+    };
+    let mut q = world.query::<&Follower>();
+    let followers = q.iter(world).filter(|f| f.captain == g).count() as u32;
+    if followers < data.reprisal_min_garrison {
+        return;
+    }
+    let tick = world.resource::<SimTick>().0;
+    let cal = world.resource::<Calendar>().clone();
+    let fragile = world.get::<crate::tenure::Tenure>(town).is_some_and(|t| {
+        t.how == crate::tenure::TakenBy::Subverted
+            && tick.saturating_sub(t.since)
+                < cal.days(world.resource::<Progression>().data.subvert.fragile_days)
+    });
+    let mut size = data.reprisal_size as f32 * strength;
+    if fragile {
+        size *= data.turned_mult;
+    }
+    let Some((lead_id, size)) = split_band(
+        world,
+        g,
+        size.round() as u32,
+        "sim_military::rival::reprisal",
+        Some(target),
+    ) else {
+        log(
+            world,
+            "The rival had no men to spare for its reprisal".into(),
+        );
+        return;
+    };
+    {
+        let mut state = world.resource_mut::<RivalState>();
+        state.reprisal = None;
+        state.next_raid += cal.days(data.raid_every_days).max(1) / 2;
+    }
+    let at = world.resource::<RivalState>().seat_center;
+    world.write_message(
+        SimEvent::new(SimEventKind::RivalReprisal, FactionId::RIVAL)
+            .subject(lead_id)
+            .other(target)
+            .at(at)
+            .amount(size as i32)
+            .cause(sim_core::Cause::Reprisal { settlement: target }),
+    );
+    let name = world.get::<Settlement>(town).map_or_else(
+        || "?".to_string(),
+        |s| {
+            world
+                .resource::<sim_core::NameTable>()
+                .get(s.name)
+                .to_string()
+        },
+    );
+    log(world, format!("The rival sent {size} men to retake {name}"));
 }
 
 /// Enlists up to `size` villagers of the rival's lands into the seat's
@@ -529,6 +692,34 @@ fn raid(world: &mut World, size: u32) {
     let Some(g) = garrison(world) else {
         return;
     };
+    let Some((lead_id, size)) = split_band(world, g, size, "sim_military::rival", None) else {
+        log(world, "The rival had no men to spare for a raid".into());
+        return;
+    };
+    let at = world.resource::<RivalState>().seat_center;
+    world.write_message(
+        SimEvent::new(SimEventKind::RivalRaid, FactionId::RIVAL)
+            .subject(lead_id)
+            .at(at)
+            .amount(size as i32)
+            .cause(sim_core::Cause::Raid { captain: lead_id }),
+    );
+    log(world, format!("The rival sent {size} men raiding"));
+}
+
+/// Splits a band of up to `size` people (at most half the garrison `g`'s
+/// followers) off the garrison under a follower drawn from stream `key`
+/// at the tick, aggressive, with a [`RivalBand`] (`pinned` to a town, or
+/// not), counted in [`RivalState::raids`]. Returns the lead's SpawnId and
+/// the band's size, or `None` (nothing changed) when that would be fewer
+/// than two.
+fn split_band(
+    world: &mut World,
+    g: Entity,
+    size: u32,
+    key: &str,
+    pinned: Option<u64>,
+) -> Option<(u64, u32)> {
     let mut q = world.query::<(Entity, &SpawnId, &Follower)>();
     let mut members: Vec<(SpawnId, Entity)> = q
         .iter(world)
@@ -538,29 +729,20 @@ fn raid(world: &mut World, size: u32) {
     members.sort_unstable();
     let size = size.min(members.len() as u32 / 2);
     if size < 2 {
-        log(world, "The rival had no men to spare for a raid".into());
-        return;
+        return None;
     }
     let tick = world.resource::<SimTick>().0;
     let seed = *world.resource::<SimSeed>();
-    let mut rng = seed.stream(rng_key("sim_military::rival"), tick);
+    let mut rng = seed.stream(rng_key(key), tick);
     let (lead_id, lead) = members[rng.random_range(0..members.len())];
     split_army(world, g, lead, Some(size - 1), Posture::Aggressive);
     world.entity_mut(lead).insert(RivalBand {
         target: None,
         next_think: tick,
-        pinned: None,
+        pinned,
     });
     world.resource_mut::<RivalState>().raids += 1;
-    let at = world.resource::<RivalState>().seat_center;
-    world.write_message(
-        SimEvent::new(SimEventKind::RivalRaid, FactionId::RIVAL)
-            .subject(lead_id.0)
-            .at(at)
-            .amount(size as i32)
-            .cause(sim_core::Cause::Raid { captain: lead_id.0 }),
-    );
-    log(world, format!("The rival sent {size} men raiding"));
+    Some((lead_id.0, size))
 }
 
 /// GP-28: when the player takes the seat, every other settlement the rival
@@ -586,7 +768,8 @@ pub fn free_lands(world: &mut World) {
 }
 
 /// `SimInputSet::Ai`, after the raiders: each raiding band ([`RivalBand`],
-/// SpawnId order) reconsiders every 300 ticks. It goes for the nearest of
+/// SpawnId order) reconsiders every 300 ticks. A reprisal goes for the
+/// town it is pinned to (GP-33) while the player holds it. Otherwise it goes for the nearest of
 /// the player's settlements (`Attack`, after `GatherFood` when its baggage
 /// holds less than a day) and the player's monuments (`MoveTo`, to hold
 /// it), ties to the lowest SpawnId; with neither, it hunts the player's
@@ -622,17 +805,30 @@ pub fn think(
         let nearest = |a: &(f32, u64, IVec2, bool), b: &(f32, u64, IVec2, bool)| {
             a.0.total_cmp(&b.0).then(a.1.cmp(&b.1))
         };
-        let target = settlements
-            .iter()
-            .filter(|(_, _, o)| o.faction == FactionId::PLAYER)
-            .map(|(sid, s, _)| (s.center.as_vec2().distance(here), sid.0, s.center, true))
-            .chain(
-                monuments
-                    .iter()
-                    .filter(|(_, _, h)| h.faction == FactionId::PLAYER)
-                    .map(|(mid, p, _)| (p.0.as_vec2().distance(here), mid.0, p.0, false)),
-            )
-            .min_by(nearest);
+        // GP-33 (M4a): a reprisal goes for the town it was pinned to while
+        // the player holds it; once it doesn't, the band raids as any.
+        let pinned = band.pinned.and_then(|p| {
+            settlements
+                .iter()
+                .find(|(sid, _, o)| sid.0 == p && o.faction == FactionId::PLAYER)
+                .map(|(sid, s, _)| (s.center.as_vec2().distance(here), sid.0, s.center, true))
+        });
+        if band.pinned.is_some() && pinned.is_none() {
+            band.pinned = None;
+        }
+        let target = pinned.or_else(|| {
+            settlements
+                .iter()
+                .filter(|(_, _, o)| o.faction == FactionId::PLAYER)
+                .map(|(sid, s, _)| (s.center.as_vec2().distance(here), sid.0, s.center, true))
+                .chain(
+                    monuments
+                        .iter()
+                        .filter(|(_, _, h)| h.faction == FactionId::PLAYER)
+                        .map(|(mid, p, _)| (p.0.as_vec2().distance(here), mid.0, p.0, false)),
+                )
+                .min_by(nearest)
+        });
         let idle = captain.orders.is_empty();
         let mut orders: Vec<(OrderSpec, bool)> = Vec::new();
         match target {
@@ -764,6 +960,32 @@ mod tests {
             .validate()
             .is_err()
         );
+    }
+
+    /// GP-31: a full realm is exactly the clock; an empty one its floor.
+    #[test]
+    fn the_realm_factor() {
+        assert_eq!(realm_factor(0.4, 1.0), 1.0);
+        assert_eq!(realm_factor(0.4, 0.0), 0.4);
+        assert!((realm_factor(0.4, 0.5) - 0.7).abs() < 1e-6);
+        let full = Realm {
+            towns_held: 3,
+            towns: 3,
+            people_held: 300,
+            people: 300,
+        };
+        assert_eq!(full.share(), 1.0);
+        assert_eq!(Realm::default().share(), 1.0, "an empty starting realm");
+        let half = Realm {
+            people_held: 150,
+            ..full
+        };
+        assert_eq!(half.share(), 0.5);
+        let r = Progression::default_data()
+            .rival(Difficulty::Steady)
+            .unwrap()
+            .clone();
+        assert_eq!(seat_bonus(&r, 12.0, 0.8, 1.0), r.defence_on(12.0) * 0.8);
     }
 
     /// GP-28: a levy enlists the rival's own villagers into the seat's

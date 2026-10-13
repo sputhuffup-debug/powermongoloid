@@ -317,7 +317,7 @@ Runs: GP-21, GP-27 and SIM-34 (M4, see [M4_PLAN.md](../M4_PLAN.md)). The start, 
 | `rival[].seat_radius` | The seat's defence bonus covers the rival's people (soldiers and militia) within this many tiles of its centre |
 | `rival[].levy_every_days` | Days between levies (the first on this day). A levy enlists real villagers of the rival's settlements into the garrison (`enlist_into`), one per settlement in SpawnId order round and round (idle people first), and reports `RivalLevy`; they walk to the seat. A garrison that was wiped out is raised again at the seat by the levy. Greater than 0 |
 | `rival[].levy_size` | Villagers enlisted at each levy (rounded after `RivalStrength`) |
-| `rival[].defence_steps` | `(day, bonus)` pairs, ascending days: from that day, blows on the rival's people near the seat are divided by their `Defence` multiplier plus `bonus` (x `RivalStrength`), so 0.5 takes half again as many blows. It stands in for walls until M5's sieges. Before the first step the bonus is 0 |
+| `rival[].defence_steps` | `(day, bonus)` pairs, ascending days: from that day, blows on the rival's people near the seat are divided by their `Defence` multiplier plus `bonus` (x `RivalStrength`), so 0.5 takes half again as many blows. It stands in for walls until M5's sieges. Before the first step the bonus is 0. In a run (M4a step 6) the clock's bonus is scaled by the realm share (`realm_floor`). Step 6's seat calibration raised the shipped steps so a seat whose realm is intact holds: steady and chaotic `(0, 1.5), (5, 2.0), (10, 2.25), (20, 2.5), (30, 2.75)`, harsh `(0, 1.75), (4, 2.25), (8, 2.5), (16, 2.75), (24, 3.25)` (docs/m4a/STEP6.md) |
 | `rival[].raid_from_day` | The first raid leaves on this day (about day 10, minute 40 at 1x, on steady) |
 | `rival[].raid_every_days` | Days between raids after the first. Greater than 0 |
 | `rival[].raid_size` | People in a raiding band, its captain included (at least 2), but at most half the garrison's followers: the band is split off the garrison (`orders::split_army`, its share of the baggage by head count), so raids weaken the seat. A garrison of fewer than four followers sends nobody. The band (`RivalBand`, aggressive) goes for the nearest of the player's settlements (`Attack`) and monuments (stands at it), else hunts the player's nearest army, else goes home; it reports `RivalRaid` |
@@ -421,10 +421,10 @@ M4a "Lordship" ([LORDSHIP_DESIGN.md](../LORDSHIP_DESIGN.md) section 10, [ADR 002
 | `fallout.sack_mult` | ... times this for a sack ... |
 | `fallout.haste_days`, `fallout.haste_mult` | ... times `haste_mult` if your previous violent take was under `haste_days` ago |
 | `fallout.min_band`, `fallout.max_men` | Under `min_band` men, no band; at most `max_men` (`min_band` <= `max_men`) |
-| `fallout.max_bands` | Bandit bands alive at most; a waiting band's town broods |
-| `fallout.brood_scar` | A brooding town's scar deepens by this |
+| `fallout.max_bands` | Bandit bands alive at most (captains with `Bandits`); a band due at the cap waits in `Fallout.pending` and its town broods once |
+| `fallout.brood_scar` | A brooding town's scar deepens by this, once per waiting band, at most `tenure.max_sack_scar` |
 | `fallout.delay_hours` | Game hours between the taking and the rising |
-| `fallout.food_days` | Days of food a band rises with |
+| `fallout.food_days` | Days of food a band rises with (it then lives by plunder; starving men desert and walk home) |
 | `fallout.weights` (`rival`, `player`, `independent`) | Bandits' target weights by owner |
 | `fallout.turn_after_raids` | After this many raids the rival's weight drops to the player's |
 | `fallout.distance_scale`, `fallout.garrison_scale` | A target's score: `weight / ((1 + d / distance_scale) x (1 + garrison / garrison_scale) x (1 + your share))`. Both above 0 |
@@ -473,7 +473,7 @@ The pacing director (GP-16, `sim_military::director`, run only). Once a game hou
 | `personalities[].spacing_hours` | At least this many hours (divided by the restless roads' `RaiderPace`) between bands brought for low tension, and before the first one (> 0). Bands against quiet ignore it |
 | `personalities[].raider_band` (`min`, `max`, `per_day`, `armed`) | A band's people, its captain included: `min` on day 0, `per_day` more per day of the run (rounded down), at most `max` (1 <= min <= max); `armed` gives every raider a weapon |
 | `personalities[].max_bands` | Bands for low tension come only while fewer than this many raider bands roam (bands against quiet always come) |
-| `personalities[].auto_pause` | `SimEventKind`s the game pauses on when one arrives (UI, M4 step 10) |
+| `personalities[].auto_pause` | `SimEventKind`s the game pauses on when one arrives (UI, M4 step 10). M4a step 6 adds `ReprisalVowed` and `Defied` on steady and chaotic (a bandit rising, the player's own doing, does not pause) |
 | `spawn_distance` | A band appears between these many tiles (min, max) from its target village (or the champion), on the nearest passable tile in a region other than the rival's; 24 seeded tries, else no band that hour |
 | `band_food_days` | Days of food in a band's baggage |
 | `band_linger_hours` | Game hours a band stays by the village it was sent to raid, once it has raided it and has nothing else to do (no prey, no village of the player's): the village hides and its drive-off request stands. Then it withdraws to a passable tile 10 tiles beyond army.ron `threat.radius` from the nearest settlement and at least `threat.radius` from every one, so the village goes back to work (`raiders::withdraw_tile`, ADR 0018). At least 0. Optional: director text saved without it reads 12. Checked by `a_band_with_nothing_to_do_lingers_then_withdraws` (tests/tests/director.rs), `withdrawing_walks_out_of_reach_of_every_settlement` (raiders.rs) and `the_default_linger_matches_the_shipped_data` |

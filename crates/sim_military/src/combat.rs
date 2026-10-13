@@ -315,9 +315,21 @@ pub(crate) fn casualties(world: &mut World) {
             .and_then(|a| world.get::<crate::components::Bandits>(a))
             .map(|b| b.home)
             && let Some(town) = crate::orders::find_settlement(world, home)
-            && let Some(mut t) = world.get_mut::<crate::tenure::Tenure>(town)
         {
-            t.kin_fell = tick + 1;
+            if let Some(mut t) = world.get_mut::<crate::tenure::Tenure>(town) {
+                t.kin_fell = tick + 1;
+            }
+            // GP-33 (M4a step 6): "you killed our sons in the woods": a
+            // bandit slain by the player's blow is a killing at his home,
+            // as a dead militiaman's is.
+            let by_player = world
+                .resource::<Casualties>()
+                .slain_by
+                .iter()
+                .any(|&(v, f)| v == e && f == FactionId::PLAYER);
+            if by_player {
+                crate::orders::goodwill_deed(world, town, FactionId::PLAYER, Deed::Killing);
+            }
         }
         let enlisted = world.get::<Enlisted>(e).is_some();
         if enlisted {
@@ -404,6 +416,16 @@ fn succeed(world: &mut World, fallen: Entity, captain: Captain, loss: f32, tick:
     // GP-28: a rival raiding band goes on raiding under its heir.
     if let Some(band) = world.get::<RivalBand>(fallen).copied() {
         world.entity_mut(heir).insert(band);
+    }
+    // GP-33 (M4a, run only): so does a raider band, and broken men stay
+    // broken men (outside a run an heir of raiders loses its AI, as in M3).
+    if world.resource::<sim_core::RunState>().in_run() {
+        if let Some(raider) = world.get::<crate::components::Raider>(fallen).copied() {
+            world.entity_mut(heir).insert(raider);
+        }
+        if let Some(b) = world.get::<crate::components::Bandits>(fallen).copied() {
+            world.entity_mut(heir).insert(b);
+        }
     }
     world.resource_mut::<MilitaryLog>().push(
         tick,

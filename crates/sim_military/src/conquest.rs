@@ -88,7 +88,10 @@ pub fn taking_kind(cause: Cause) -> SimEventKind {
 ///   credits the champion's rank.
 /// - M4a (SIM-60, run only): records the taking in the settlement's
 ///   [`Tenure`](crate::tenure::Tenure) (`tenure::record_taking`):
-///   how (from the cause), by whom, the scar, the history.
+///   how (from the cause), by whom, the scar, the history; then queues
+///   its fallout (`fallout::queue_taking`, GP-33: a player's conquest or
+///   sack raises broken men, a take from the rival or under its shadow a
+///   vow), spawning nothing.
 /// - A faction (not the independents) that held no settlement before gets
 ///   its seat (where `Return` leads) at this one's centre.
 /// - GP-28: when the player takes the rival's seat in a run, the run ends
@@ -133,8 +136,17 @@ pub fn transfer_seeded(
     if !revolt_like {
         crate::progression::champion::credit(world, to, crate::progression::Feat::Settlement);
     }
-    // SIM-60 (M4a): how it was taken, where the town keeps a tenure.
-    crate::tenure::record_taking(world, s, cause, to);
+    // GP-33 (M4a): the rival's shadow over the town, read before the
+    // taking refreshes the influence field.
+    let rival_share = world
+        .get::<crate::influence::Influence>(s)
+        .map_or(0.0, |i| i.rival);
+    // SIM-60 (M4a): how it was taken, where the town keeps a tenure; the
+    // blood the taker spilt is read before the taking resets it.
+    if let Some((_, blood)) = crate::tenure::record_taking(world, s, cause, to) {
+        // GP-33: the broken men and the rival's vow, queued for slot 16.
+        crate::fallout::queue_taking(world, s, cause, to, change.previous, blood, rival_share);
+    }
     if landless {
         world.resource_mut::<Factions>().set_seat(to, center);
     }
