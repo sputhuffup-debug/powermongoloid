@@ -433,6 +433,8 @@ fn settlement_panel(
     ),
     // M4a step 5: the ways to take it, a submitted town's watch, a bond.
     take: Res<take::TakeView>,
+    // M4a step 6: the rival's realm, on the seat's panel.
+    fallout: Res<crate::fallout::FalloutView>,
     stocks: Query<&Stockpile>,
     workplaces: Query<&Workplace>,
     villagers: Query<(&Villager, &Occupation, &CombatStats, &Activity), Without<Enlisted>>,
@@ -562,6 +564,12 @@ fn settlement_panel(
         // or how a taking is holding.
         if let Some(facts) = take.get(id.0) {
             s += &take::panel_block(facts);
+        }
+        // GP-31 (M4a step 6): the seat's defence follows its realm.
+        if let Some(line) = fallout.seat_realm(id.0) {
+            s += "\n";
+            s += line;
+            s += "\n";
         }
         s += "\n";
     } else {

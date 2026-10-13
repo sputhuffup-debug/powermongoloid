@@ -23,6 +23,7 @@ pub mod army;
 mod cards;
 #[cfg(feature = "debug_ui")]
 mod debug_panel;
+mod fallout;
 mod feed;
 mod labels;
 mod panels;
@@ -93,6 +94,7 @@ impl Plugin for UiPlugin {
                 cards::CardsPlugin,
                 run_bar::RunBarPlugin,
                 feed::FeedPlugin,
+                fallout::FalloutViewPlugin,
                 tooltip::TooltipPlugin,
                 saves::SavesUiPlugin,
             ));

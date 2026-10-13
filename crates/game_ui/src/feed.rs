@@ -289,7 +289,15 @@ fn read_feed(world: &mut World, mut cur: Local<Cursors>) {
             }
         }
     }
-    let texts = sim_military::describe_entries(world, &told);
+    let mut texts = sim_military::describe_entries(world, &told);
+    // GP-33 (M4a step 6): a vow gives the hour it comes due, not a span.
+    let cal = world.resource::<Calendar>();
+    for (e, text) in told.iter().zip(texts.iter_mut()) {
+        if e.event.kind == SimEventKind::ReprisalVowed {
+            let due = crate::fallout::when(e.event.other, cal);
+            *text = crate::fallout::vow_feed_text(text, e.event.amount, &due);
+        }
+    }
     // Merge by tick; within a tick, events before the log's lines.
     let mut new: Vec<(u64, u8, Line)> = told
         .iter()

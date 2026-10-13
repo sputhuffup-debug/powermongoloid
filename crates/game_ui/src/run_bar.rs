@@ -3,7 +3,8 @@
 //! strength and the next step of its clock, your captain slots, your sphere
 //! ("Sphere 7, warming 3", M4a) and the overlay; then the offers waiting
 //! for you as buttons that open their cards, the fast-forward button
-//! (GP-16) and "Abandon run".
+//! (GP-16) and "Abandon run". M4a step 6 adds lines for the rival's realm,
+//! a pending vow of reprisal and the broken men abroad.
 
 use std::collections::BTreeSet;
 
@@ -187,6 +188,7 @@ fn update_run_bar(
     progress: Option<Res<RunProgress>>,
     rival: Option<Res<RivalState>>,
     progression: Option<Res<Progression>>,
+    fallout: Res<crate::fallout::FalloutView>,
     overlay: Res<Overlay>,
     captains: Query<(Entity, &Captain)>,
     followers: Query<&Follower>,
@@ -276,6 +278,15 @@ fn update_run_bar(
     s += &format!(" | Overlay: {} (O)", overlay.mode.name());
     if let Some(legend) = overlay.mode.legend() {
         s += &format!(": {legend}");
+    }
+    // GP-31, GP-33 (M4a step 6): the rival's realm, a pending vow, the
+    // broken men abroad.
+    for line in [&fallout.realm_line, &fallout.vow_line, &fallout.bands_line]
+        .into_iter()
+        .flatten()
+    {
+        s += "\n";
+        s += line;
     }
     text.0 = s;
 }

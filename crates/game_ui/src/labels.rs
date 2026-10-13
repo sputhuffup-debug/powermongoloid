@@ -120,6 +120,7 @@ fn label_text(name: &str, mark: Option<String>) -> String {
 fn mark_labels(
     take: Res<TakeView>,
     govern: Res<crate::panels::GovernView>,
+    fallout: Res<crate::fallout::FalloutView>,
     towns: Query<(&SpawnId, Option<&Tenure>, Option<&Owner>)>,
     mut labels: Query<(&SettlementLabel, &mut Text)>,
 ) {
@@ -133,6 +134,16 @@ fn mark_labels(
                 let watched = take.tribute(id.0).map(|t| t.watched_now);
                 tenure.and_then(|t| take::tenure_mark(owner, t.how, watched))
             });
+        // GP-33 (M4a step 6): a town the rival has vowed to retake.
+        let vow = towns
+            .get(label.settlement)
+            .ok()
+            .and_then(|(id, ..)| fallout.vow_mark(id.0));
+        let mark = match (mark, vow) {
+            (Some(m), Some(v)) => Some(format!("{m} {v}")),
+            (None, Some(v)) => Some(v.to_string()),
+            (m, None) => m,
+        };
         let mut new = label_text(&label.name, mark);
         if let Some(lines) = govern.badges.get(&label.settlement) {
             for l in lines {
