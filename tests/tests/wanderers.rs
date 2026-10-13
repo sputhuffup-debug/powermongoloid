@@ -11,7 +11,8 @@
 //!   `Give`s, which answers the request: the hamlet's volunteers join. It
 //!   then lives off the land, moving on when a spot is bare. At day 5 it
 //!   is fed (food in the baggage, nobody hungry, nobody gone) and has more
-//!   than ten followers.
+//!   than ten followers. The director is quiet, so none of its raider
+//!   bands meets the band.
 //! - `a_band_on_bare_rock_deserts_then_starves`: the same band stands on
 //!   rock painted around its start before the first tick, more than
 //!   `upkeep.forage_radius` from every settlement (so it can't help itself
@@ -220,6 +221,12 @@ fn fresh_ground(app: &mut App, from: IVec2, radius: u16) -> Option<IVec2> {
 #[test]
 fn a_band_that_forages_and_answers_a_request_is_fed_and_grows() {
     let (mut app, champion) = start();
+    // No director's bands: they are not this scenario's business, and
+    // since M4a step 2 (the smithy chain) the island's towns are fed sooner
+    // and ask for food less, so the director fills the quiet with bands
+    // earlier (ticks 2100 and 3500 on this seed, not 3000), and one of
+    // them fell on the band and killed a man.
+    quiet_director(&mut app);
     let home = app.world().get::<Position>(champion).unwrap().0;
     let (hamlet, hamlet_id, centre) = nearest_hamlet(&mut app, home);
     let people = app

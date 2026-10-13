@@ -44,6 +44,9 @@ use sim_world::{Settlement, SettlementSize, SizeTier};
 const SEED: u64 = 42;
 /// The prefix gives up if the hamlet hasn't fallen by then.
 const CONQUEST_WITHIN: u64 = 4_000;
+/// Days of food in the plundered hamlet's homes, which the raid can't
+/// plunder (`stock_homes`; see [`a_plundered_village_loses_faith`]).
+const LARDER_DAYS: f32 = 0.7;
 
 fn tick(app: &App) -> u64 {
     app.world().resource::<SimTick>().0
@@ -449,13 +452,19 @@ fn stock_homes(app: &mut App, s: Entity, days: f32) {
 /// 0.02 a day) lowers the hamlet's loyalty target, and without more food it
 /// would sink below the revolt line on the second day and go free on the
 /// third (the starved branch covers a revolt). So the scenario's food
-/// changes, never the data (M4A_PLAN): the hamlet's homes hold a small
-/// larder of 0.3 days, which the raid can't plunder.
+/// changes, never the data (M4A_PLAN): the hamlet's homes hold a larder
+/// the raid can't plunder ([`LARDER_DAYS`]). Step 1 set it at 0.3 days.
+/// Since step 2 (the smithy chain) carters bring the farms' food into the
+/// storehouse sooner, so the raid finds and seizes twice as much (17.7
+/// against 8.7) and at 0.3 days the hamlet still went free on the third
+/// day; 0.7 days keeps the second day's mean above the revolt line, and
+/// the hamlet still eats the larder down (0.8 days would let it recover
+/// on the third day).
 #[test]
 fn a_plundered_village_loses_faith() {
     let (mut app, s) = conquered(SEED);
     let (_, seed) = conquest_tick_and_seed(&mut app, s);
-    stock_homes(&mut app, s, 0.3);
+    stock_homes(&mut app, s, LARDER_DAYS);
     let champion = champion(&mut app);
     let id = spawn_id(&app, s);
     let at = center(&app, s);

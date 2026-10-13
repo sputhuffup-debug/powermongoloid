@@ -28,7 +28,9 @@
 //!   raid, and six hours later it stands beyond `threat.radius` of every
 //!   settlement, and the village is no longer afraid (threat under 0.3).
 //!   The director is silenced once the band has come, so no second band
-//!   frightens the village.
+//!   frightens the village, and the band's baggage is filled past
+//!   `gather_target_days` as it comes, so its raid takes nothing and
+//!   provokes no one (a plunder raises the militia, which would kill it).
 
 mod common;
 
@@ -36,11 +38,13 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
 use common::*;
-use sim_agents::Threat;
+use sim_agents::{Threat, Villagers};
 use sim_core::{
-    Calendar, Chronicle, EventFeed, OrderSpec, RunState, SimEventKind, SimStepper, SimTick, SpawnId,
+    Calendar, Chronicle, EventFeed, FactionId, OrderSpec, RunState, SimEventKind, SimStepper,
+    SimTick, SpawnId,
 };
-use sim_military::{Captain, Director, DirectorData, Progression, Raider, RunProgress};
+use sim_economy::{Economy, Stockpile};
+use sim_military::{Captain, Director, DirectorData, Follower, Progression, Raider, RunProgress};
 
 const SEED: u64 = 42;
 
@@ -239,6 +243,19 @@ fn a_band_with_nothing_to_do_lingers_then_withdraws() {
     // No more bands: a second one aimed at the same village would frighten
     // it whatever the first does.
     quiet_director(&mut app);
+    // The band comes fed, so its raid takes nothing and provokes no one: a
+    // plunder that takes food raises the militia (GP-06), which kills an
+    // unarmed band of five, and then there is no band left to linger.
+    // Since M4a step 2 (the smithy chain) carters bring the farms' food
+    // into the storehouse, so the target holds hundreds of units when the
+    // band comes (before, its storehouse stood empty and the raid found
+    // nothing). A day beyond the target covers what it eats on the way.
+    let target_days = app
+        .world()
+        .resource::<sim_military::Army>()
+        .data
+        .gather_target_days;
+    let fed = provision(&mut app, cap, target_days + 1.0);
     let raiding = |app: &App| {
         matches!(
             app.world()
@@ -259,6 +276,16 @@ fn a_band_with_nothing_to_do_lingers_then_withdraws() {
         );
     }
     let raided = tick(&app);
+    let raid = app
+        .world()
+        .resource::<sim_military::ArmyStats>()
+        .get(FactionId::RAIDERS);
+    println!(
+        "the band came with {fed:.1} days of food; its raid seized {:.1}, provoked {}",
+        raid.seized, raid.provocations
+    );
+    assert_eq!(raid.seized, 0.0, "a fed band's raid takes nothing");
+    assert_eq!(raid.provocations, 0, "nobody took up arms");
     let (s, centre) = villages(&mut app)
         .into_iter()
         .find(|v| v.1 == target)

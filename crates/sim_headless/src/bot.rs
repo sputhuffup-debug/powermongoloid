@@ -15,7 +15,10 @@
 //!    settlements, asks independents, forages when nothing else is near;
 //! 3. grows it: recruits in non-rival settlements (owned ones first, at
 //!    most an eighth of a village per visit, each village rested half a
-//!    day), takes arms from storehouses holding weapons;
+//!    day), takes arms from storehouses holding weapons: where it
+//!    recruits, at a settlement within `ARMS_STOP` tiles (not the rival's)
+//!    before its next conquest, and (secondary captains) at the settlement
+//!    each holds;
 //! 4. takes the nearest monuments nobody holds early on, answers food
 //!    requests it can spare, and attacks weak settlements (independent or
 //!    the rival's, never the seat) once it outnumbers their estimated
@@ -84,6 +87,20 @@ const ASSAULT_MARGIN: f32 = 1.5;
 /// The main army keeps growing to at least this many people.
 const MIN_ARMY: u32 = 40;
 
+/// M4a (SIM-64, weapons exist since the smithy chain): the main army turns
+/// aside to arm at a settlement (not the rival's) within this many tiles
+/// holding at least [`ARMS_MIN`] weapons before it looks for its next
+/// conquest.
+const ARMS_STOP: f32 = 80.0;
+
+/// The fewest weapons in a storehouse worth a stop for the main army (a
+/// neutral army takes half of them).
+const ARMS_MIN: u32 = 4;
+
+/// A secondary captain takes arms at the settlement it holds at most this
+/// often (ticks): a neutral army takes half the stock each time.
+const ARMS_REST: u64 = 600;
+
 /// GP-27: hire a band only if, after paying, the baggage still holds this
 /// many days of food for the main army and the newcomers.
 pub const HIRE_RESERVE_DAYS: f32 = 0.5;
@@ -135,6 +152,8 @@ pub struct Bot {
     due: BTreeMap<u64, u64>,
     /// When each settlement was last recruited from.
     recruited: BTreeMap<u64, u64>,
+    /// When a secondary captain last took arms at each settlement.
+    armed: BTreeMap<u64, u64>,
     /// Failed attacks per settlement (raises its militia estimate).
     failed: BTreeMap<u64, u32>,
     /// Settlements a captain couldn't reach in time, left alone until the
@@ -419,6 +438,7 @@ impl Bot {
             tasks: BTreeMap::new(),
             due: BTreeMap::new(),
             recruited: BTreeMap::new(),
+            armed: BTreeMap::new(),
             failed: BTreeMap::new(),
             seen: BTreeMap::new(),
             shunned: BTreeMap::new(),
@@ -511,8 +531,9 @@ impl Bot {
             .filter(|s| s.owner != FactionId::RIVAL)
             .map(|s| s.weapons)
             .sum();
+        let yours: u32 = held.iter().map(|s| s.weapons).sum();
         let text = format!(
-            "day {:.0}: main {} ({} unarmed, {:.1} d food), captains {} (slots {}), soldiers {}, held {} ({} people), seat defence est {:.0} (garrison {}, +{:.2}), plan {:?}, arms in stores {arms}",
+            "day {:.0}: main {} ({} unarmed, {:.1} d food), captains {} (slots {}), soldiers {}, held {} ({} people), seat defence est {:.0} (garrison {}, +{:.2}), plan {:?}, arms in stores {arms} ({yours} yours)",
             v.day,
             main.people,
             main.unarmed,
@@ -787,6 +808,10 @@ impl Bot {
         if let Some(s) = recruit.filter(|_| cap.people < 30) {
             return Task::Recruit(s);
         }
+        // Arms close at hand, before the next fight.
+        if let Some(s) = self.arms_stop(v, cap) {
+            return Task::Equip(s);
+        }
         // Weak settlements nearby.
         if let Some(s) = self.conquest_target(v, cap) {
             return Task::Attack(s);
@@ -902,6 +927,31 @@ impl Bot {
 
     /// The nearest settlement the army can take (not the seat, not one
     /// the player owns).
+    /// A settlement not the rival's within [`ARMS_STOP`] tiles whose
+    /// storehouse holds at least [`ARMS_MIN`] weapons, nearest first, when
+    /// at least five of `cap`'s men are unarmed and it is fed for the walk.
+    /// (A neutral army takes half the arms, unpaid and without provoking
+    /// anyone, at an independent settlement too.)
+    fn arms_stop(&self, v: &View, cap: &Cap) -> Option<u64> {
+        if cap.unarmed < 5 || cap.days < 1.5 {
+            return None;
+        }
+        v.sites
+            .iter()
+            .filter(|s| {
+                s.owner != FactionId::RIVAL
+                    && s.weapons >= ARMS_MIN
+                    && !self.shuns(s.id, v.tick)
+                    && dist(s.center, cap.at) <= ARMS_STOP
+            })
+            .min_by(|a, b| {
+                dist(a.center, cap.at)
+                    .total_cmp(&dist(b.center, cap.at))
+                    .then(a.id.cmp(&b.id))
+            })
+            .map(|s| s.id)
+    }
+
     fn conquest_target(&self, v: &View, cap: &Cap) -> Option<u64> {
         if cap.days < 1.5 || cap.people < 20 {
             return None;
@@ -981,21 +1031,34 @@ impl Bot {
             if cap.people < 16 && home.pop >= 60 && rested && cap.orders <= 1 {
                 return Task::Recruit(s);
             }
+            // Arms from home's storehouse for the unarmed (M4a, SIM-64).
+            let rested = self.armed.get(&s).is_none_or(|t| v.tick >= t + ARMS_REST);
+            if cap.unarmed > 0 && home.weapons >= 2 && rested && cap.orders <= 1 {
+                self.armed.insert(s, v.tick);
+                return Task::Equip(s);
+            }
             return Task::Hold(s);
         }
-        if let Some(t @ Task::Recruit(s)) = current {
+        if let Some(t @ (Task::Recruit(s) | Task::Equip(s))) = current {
             return match cap.front {
-                Some(OrderSpec::Recruit { .. } | OrderSpec::GatherFood { .. }) => t,
+                Some(
+                    OrderSpec::Recruit { .. }
+                    | OrderSpec::GatherFood { .. }
+                    | OrderSpec::Equip { .. },
+                ) => t,
                 _ => Task::Hold(s),
             };
         }
         // An owned settlement no other captain holds, nearest first.
+        // (A secondary captain taking arms at home still holds it.)
+        let main = v.main().map(|m| m.id);
         let held: Vec<u64> = self
             .tasks
             .iter()
             .filter(|(id, _)| **id != cap.id)
-            .filter_map(|(_, t)| match t {
+            .filter_map(|(id, t)| match t {
                 Task::Hold(s) | Task::Recruit(s) => Some(*s),
+                Task::Equip(s) if Some(*id) != main => Some(*s),
                 _ => None,
             })
             .collect();
@@ -1086,13 +1149,15 @@ impl Bot {
                 // Keep at least a day and a half of food for everyone.
                 let fed = (cap.people as f32 * (cap.days / 1.5 - 1.0)).max(2.0) as u32;
                 let count = (pop / 8).min(fed).clamp(2, 20) as u16;
-                let mut o = vec![
-                    OrderSpec::Recruit {
-                        settlement: s,
-                        count,
-                    },
-                    OrderSpec::GatherFood { settlement: s },
-                ];
+                let mut o = vec![OrderSpec::Recruit {
+                    settlement: s,
+                    count,
+                }];
+                // The recruits come unarmed: arm them there (M4a, SIM-64).
+                if v.site(s).is_some_and(|s| s.weapons >= 2) {
+                    o.push(OrderSpec::Equip { settlement: s });
+                }
+                o.push(OrderSpec::GatherFood { settlement: s });
                 if !cap.champion {
                     o.push(OrderSpec::Garrison { settlement: s });
                 }
