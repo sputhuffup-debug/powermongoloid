@@ -13,11 +13,20 @@
 //!    - it isn't the player's, nor the rival's seat, and no invitation of
 //!      it is pending or cooling down (`RunProgress::invite_cooldown`);
 //!    - its goodwill toward the player is at least `invitations.goodwill`;
-//!    - a player captain stands within `invitations.radius` of its centre;
+//!    - a player captain stands within `invitations.radius` of its centre
+//!      (or, M4a, it sends envoys: see below);
 //!    - its owner is weak: it is independent, or its residents' mean
 //!      loyalty is below `invitations.weak_loyalty` and its garrison (the
 //!      owner's soldiers within army.ron `garrison.radius`) is smaller than
 //!      the player's soldiers within `invitations.radius`.
+//!
+//!   M4a's envoys (GP-31, step 3): an independent town that
+//!   `influence::step` flagged at the day tick ([`Influence::envoy`]: it
+//!   lies inside the player's sphere and likes the player enough) needs no
+//!   captain near; it is invited "by envoys". The flag is set for at most
+//!   `influence.max_envoys_per_day` towns a day, so at most that many
+//!   captain-free invitations come a day; posting the invitation spends
+//!   the flag. Nothing changes when `influence.enabled` is false.
 //!
 //! Only the player is invited: only the player answers offers in M4.
 //! [`answer`] (from `progression::choose`) accepts with
@@ -35,6 +44,7 @@ use sim_world::Settlement;
 
 use crate::conquest::{garrison_and_rebels, transfer};
 use crate::index::FighterGrid;
+use crate::influence::Influence;
 use crate::orders::{faction_name, find_settlement, log, settlement_name};
 use crate::progression::{Progression, RunProgress};
 use crate::requests::nearest_player_captain;
@@ -76,6 +86,7 @@ pub fn step(world: &mut World) {
         })
         .collect();
     let seat = world.resource::<RunProgress>().rival_seat;
+    let envoys = world.resource::<Progression>().data.influence.enabled;
     let mut q = world.query::<(
         Entity,
         &SpawnId,
@@ -83,29 +94,44 @@ pub fn step(world: &mut World) {
         &Owner,
         &Goodwill,
         &SettlementLoyalty,
+        Option<&Influence>,
     )>();
-    let mut places: Vec<(u64, Entity, IVec2, FactionId, f32, f32)> = q
+    let mut places: Vec<Place> = q
         .iter(world)
-        .map(|(e, id, st, o, g, sl)| {
-            (
-                id.0,
-                e,
-                st.center,
-                o.faction,
-                g.get(FactionId::PLAYER),
-                sl.mean,
-            )
+        .map(|(e, id, st, o, g, sl, inf)| Place {
+            id: id.0,
+            s: e,
+            center: st.center,
+            owner: o.faction,
+            goodwill: g.get(FactionId::PLAYER),
+            loyalty: sl.mean,
+            envoy: envoys && inf.is_some_and(|i| i.envoy),
         })
         .collect();
-    places.sort_unstable_by_key(|p| p.0);
-    for (id, s, center, owner, goodwill, loyalty) in places {
+    places.sort_unstable_by_key(|p| p.id);
+    for Place {
+        id,
+        s,
+        center,
+        owner,
+        goodwill,
+        loyalty,
+        envoy,
+    } in places
+    {
         if owner == FactionId::PLAYER
             || Some(id) == seat
             || pending.contains(&id)
             || tick < world.resource::<RunProgress>().invite_cooldown(id)
             || goodwill < data.goodwill
-            || nearest_player_captain(world, center, data.radius).is_none()
         {
+            continue;
+        }
+        // GP-31 (M4a): an independent town flagged at dawn sends envoys
+        // when no captain is near.
+        let near = nearest_player_captain(world, center, data.radius).is_some();
+        let by_envoys = !near && envoy && owner == FactionId::INDEPENDENT;
+        if !near && !by_envoys {
             continue;
         }
         let weak = owner == FactionId::INDEPENDENT
@@ -126,8 +152,31 @@ pub fn step(world: &mut World) {
             settlement_name(world, s),
             faction_name(world, FactionId::PLAYER),
         );
-        log(world, format!("{name} invites {who} to rule it"));
+        if by_envoys {
+            // The day's envoys are spent: never two invitations of one flag.
+            if let Some(mut inf) = world.get_mut::<Influence>(s) {
+                inf.envoy = false;
+            }
+            log(
+                world,
+                format!("{name} sends envoys: it invites {who} to rule it"),
+            );
+        } else {
+            log(world, format!("{name} invites {who} to rule it"));
+        }
     }
+}
+
+/// A settlement as [`step`] weighs it.
+struct Place {
+    id: u64,
+    s: Entity,
+    center: IVec2,
+    owner: FactionId,
+    goodwill: f32,
+    loyalty: f32,
+    /// Flagged at dawn to send envoys (`Influence::envoy`, influence on).
+    envoy: bool,
 }
 
 /// The player's soldiers (not routed) within `radius` of `at`.

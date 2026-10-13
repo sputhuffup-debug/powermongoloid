@@ -427,6 +427,7 @@ fn every_lordship_type_round_trips() {
         power: 2.5,
         player: 0.4,
         rival: 0.1,
+        envoy: true,
     };
     {
         let mut e = world.get_mut::<Edicts>(t0.0).unwrap();

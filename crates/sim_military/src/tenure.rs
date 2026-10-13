@@ -15,9 +15,11 @@
 //!   and rebuilds the town's terms at once.
 //! - [`step`] (progress slot 14, hourly, run only) rebuilds each town's
 //!   `sim_agents::LoyaltyTerms` from its tenure and the terms other modules
-//!   expose (`influence::contest_term`, `govern::dues_term`,
-//!   `govern::table_term`, `govern::steward_term`), and on the day tick
-//!   fades scars by `tenure.scar_fade_per_day`.
+//!   expose (`influence::contest_term`, live from M4a step 3,
+//!   `govern::dues_term`, `govern::table_term`, `govern::steward_term`),
+//!   and on the day tick fades scars by `tenure.scar_fade_per_day`. Slot 13
+//!   (`influence::step`) runs just before it, so the Contest term reads the
+//!   hour's field.
 //!
 //! The data blocks of the ways to take a town live here too: `tenure`,
 //! `demand`, `court` and `subvert` (progression.ron).
@@ -619,21 +621,26 @@ pub(crate) fn record_taking(
 
 /// Writes a taking `how` by `to` into `s`'s [`Tenure`], if it has one,
 /// with the scar the blood `to` spilt there gives it
-/// ([`Tenure::blood_of`]), and rebuilds the town's `LoyaltyTerms` at once
-/// ([`rebuild_terms`]), so the terms change in the same tick as the owner.
+/// ([`Tenure::blood_of`]), refreshes the influence field (GP-31,
+/// `influence::refresh_field`: the town's power now counts for its new
+/// owner, with its new scar and loyalty) and rebuilds the town's
+/// `LoyaltyTerms` at once ([`rebuild_terms`]), so the terms, the Contest
+/// term included, change in the same tick as the owner.
 pub(crate) fn retake(world: &mut World, s: Entity, how: TakenBy, to: FactionId) -> Option<TakenBy> {
     let blood = world.get::<Tenure>(s)?.blood_of(to);
     let scar = world.resource::<Progression>().data.tenure.scar(how, blood);
     let tick = world.resource::<SimTick>().0;
     let day = day_of(world, tick);
     world.get_mut::<Tenure>(s)?.retake(how, to, tick, day, scar);
+    crate::influence::refresh_field(world);
     rebuild_terms(world, s);
     Some(how)
 }
 
 /// SIM-60: rebuilds `s`'s `LoyaltyTerms` (if it has them and a
 /// [`Tenure`]): Resentment `-scar`, Stirred `-stir`, Contest from
-/// [`crate::influence::contest_term`], Dues, Table and Steward from
+/// [`crate::influence::contest_term`] (GP-31, M4a step 3: the other side's
+/// lead in the town's `Influence`, or the owner's heartland), Dues, Table and Steward from
 /// [`crate::govern`]'s `dues_term`, `table_term` and `steward_term`. Awe
 /// and Bond come with M4a step 5 and stay 0 until then. Called by [`step`]
 /// hourly and by a taking ([`retake`]); serial steps only.
@@ -756,12 +763,14 @@ mod tests {
 
     /// SIM-60: `step` writes the Resentment term from the scar every hour
     /// and fades the scar by 0.02 at each day tick; outside a run (no
-    /// `Tenure`) it does nothing.
+    /// `Tenure`) it does nothing. Influence is off, so the scar is the
+    /// whole bias (the Contest term is `influence`'s, tested there).
     #[test]
     fn scars_fade_and_write_the_resentment_term() {
         let (mut app, _) = run_app(42);
         let (_, s, _) = settlements(app.world_mut())[0];
         let world = app.world_mut();
+        world.resource_mut::<Progression>().data.influence.enabled = false;
         transfer(world, s, FactionId::PLAYER, Cause::Conquest { captain: 1 }).unwrap();
         let scar = world.get::<Tenure>(s).unwrap().scar;
         assert!((scar - 0.12).abs() < 1e-6, "{scar}");

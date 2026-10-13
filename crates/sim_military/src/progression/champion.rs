@@ -65,13 +65,16 @@ pub struct ChampionData {
 }
 
 impl ChampionData {
-    /// Points `feat` earns.
+    /// Points `feat` earns. `Feat::Realm` earns progression.ron's
+    /// `influence.rank_points` instead ([`credit`] reads it there), so it
+    /// is 0 here.
     pub fn points_for(&self, feat: Feat) -> u32 {
         match feat {
             Feat::Battle => self.points.battle,
             Feat::Monument => self.points.monument,
             Feat::Settlement => self.points.settlement,
             Feat::Request => self.points.request,
+            Feat::Realm => 0,
         }
     }
 
@@ -103,6 +106,10 @@ pub enum Feat {
     Settlement,
     /// Answered a village's request.
     Request,
+    /// Held a realm: once a day, per `influence.rank_people` people the
+    /// player holds (M4a, GP-31; `influence::step`, design question 16).
+    /// Its points are `influence.rank_points`.
+    Realm,
 }
 
 /// The champion's rank and points (SIM-35). On the champion only; it moves
@@ -126,17 +133,25 @@ impl StateHash for ChampionRank {
 /// a run, or for a faction with no champion). The rank follows at the next
 /// [`rank_ups`].
 pub fn credit(world: &mut World, faction: FactionId, feat: Feat) {
-    if faction == FactionId::INDEPENDENT || !world.resource::<RunState>().in_run() {
+    credit_times(world, faction, feat, 1);
+}
+
+/// SIM-35: [`credit`] `times` over in one go: `faction`'s champion earns
+/// `times` x the points of `feat` (`champion.points`, or
+/// `influence.rank_points` for `Feat::Realm`, M4a).
+pub fn credit_times(world: &mut World, faction: FactionId, feat: Feat, times: u32) {
+    if times == 0 || faction == FactionId::INDEPENDENT || !world.resource::<RunState>().in_run() {
         return;
     }
     let Some(champion) = super::champion_of(world, faction) else {
         return;
     };
-    let points = world
-        .resource::<Progression>()
-        .data
-        .champion
-        .points_for(feat);
+    let data = &world.resource::<Progression>().data;
+    let each = match feat {
+        Feat::Realm => data.influence.rank_points,
+        _ => data.champion.points_for(feat),
+    };
+    let points = each.saturating_mul(times);
     if let Some(mut r) = world.get_mut::<ChampionRank>(champion) {
         r.points = r.points.saturating_add(points);
     }

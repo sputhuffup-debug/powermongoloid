@@ -5,7 +5,9 @@
 //! ^ captain` at the day's start tick), every populated settlement in
 //! SpawnId order whose centre is within `drifters.radius` of the captain,
 //! that is independent or the player's, and whose goodwill toward the
-//! player is at least `drifters.goodwill`, sends a seeded number of
+//! player is at least `drifters.goodwill` (less `influence.drifter_ease`
+//! inside the player's sphere, M4a, GP-31: a realm draws volunteers; its
+//! `Influence` net at least `influence.sphere`), sends a seeded number of
 //! volunteers in `drifters.per_settlement`, at most `drifters.max_per_day`
 //! per captain. They are real villagers: the first of recruiting's
 //! candidates (working-age, civilian, idle first), enlisted with
@@ -25,6 +27,7 @@ use sim_core::{
 use sim_world::Settlement;
 
 use crate::components::Captain;
+use crate::influence::{Influence, in_sphere};
 use crate::orders::{enlist_into, faction_name, log, recruit_candidates, settlement_name};
 use crate::progression::{Progression, RunProgress};
 
@@ -37,6 +40,15 @@ pub fn draw(world: &mut World) {
     }
     let _span = tracing::info_span!("sim_military::drifters").entered();
     let data = world.resource::<Progression>().data.drifters;
+    let influence = world.resource::<Progression>().data.influence;
+    // GP-31 (M4a): the goodwill line inside the player's sphere.
+    let line = |inf: Option<&Influence>| {
+        if influence.enabled && inf.is_some_and(|i| in_sphere(&influence, i)) {
+            data.goodwill - influence.drifter_ease
+        } else {
+            data.goodwill
+        }
+    };
     let mut q = world.query::<(Entity, &SpawnId, &Captain, &Position)>();
     let mut captains: Vec<(u64, Entity, IVec2)> = q
         .iter(world)
@@ -44,12 +56,19 @@ pub fn draw(world: &mut World) {
         .map(|(e, id, _, p)| (id.0, e, p.0))
         .collect();
     captains.sort_unstable_by_key(|c| c.0);
-    let mut q = world.query::<(Entity, &SpawnId, &Settlement, &Owner, &Goodwill)>();
+    let mut q = world.query::<(
+        Entity,
+        &SpawnId,
+        &Settlement,
+        &Owner,
+        &Goodwill,
+        Option<&Influence>,
+    )>();
     let mut places: Vec<(u64, Entity, IVec2)> = q
         .iter(world)
-        .filter(|(.., o, g)| {
+        .filter(|(.., o, g, inf)| {
             matches!(o.faction, FactionId::INDEPENDENT | FactionId::PLAYER)
-                && g.get(FactionId::PLAYER) >= data.goodwill
+                && g.get(FactionId::PLAYER) >= line(*inf)
         })
         .map(|(e, id, st, ..)| (id.0, e, st.center))
         .collect();
@@ -203,5 +222,48 @@ mod tests {
         let (_, _, (new, left), feed) = run(false);
         assert_eq!((new, left), (0, 0), "not liked enough");
         assert!(feed.is_empty());
+    }
+
+    /// GP-31 (M4a, design question 16): a sphere draws volunteers. A
+    /// village liked a little below `drifters.goodwill` (but within
+    /// `influence.drifter_ease` of it) sends drifters when it lies inside
+    /// the player's sphere (net at least `influence.sphere`), and none when
+    /// it lies outside or influence is switched off.
+    #[test]
+    fn a_sphere_eases_the_drifters_line() {
+        let run = |net: f32, enabled: bool| {
+            let (mut app, start) = run_app(42);
+            let world = app.world_mut();
+            let mut p = world.resource_mut::<Progression>();
+            p.data.drifters.per_settlement = (2, 2);
+            p.data.influence.enabled = enabled;
+            let data = world.resource::<Progression>().data.clone();
+            let home = world.get::<Position>(start.champion).unwrap().0;
+            let (_, s, center) = settlements(world)
+                .into_iter()
+                .find(|(_, _, c)| (*c - home).as_vec2().length() > 2.0 * data.drifters.radius)
+                .expect("a village far from the champion");
+            let line = data.drifters.goodwill - data.influence.drifter_ease / 2.0;
+            world
+                .get_mut::<Goodwill>(s)
+                .unwrap()
+                .set(FactionId::PLAYER, line);
+            // Slot 5 reads the hour's influence before slot 13 refreshes it.
+            *world.get_mut::<Influence>(s).unwrap() = Influence {
+                player: net,
+                ..Default::default()
+            };
+            let cap = spawn_army(
+                world,
+                &ArmySpec::new(FactionId::PLAYER, center + IVec2::new(20, 0), 5),
+            );
+            let men0 = followers(world, cap).len();
+            app.step(1);
+            followers(app.world_mut(), cap).len() - men0
+        };
+        let sphere = crate::influence::InfluenceData::default().sphere;
+        assert_eq!(run(sphere, true), 2, "inside the sphere");
+        assert_eq!(run(sphere - 0.01, true), 0, "outside it");
+        assert_eq!(run(sphere, false), 0, "influence switched off");
     }
 }
