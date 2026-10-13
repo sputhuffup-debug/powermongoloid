@@ -754,8 +754,8 @@ fn work_wave(world: &mut World, s: Entity, focus: WorkFocus, data: &EdictsData, 
             break;
         }
         // Balanced sends a worker who came from idleness back to it.
-        let back_to_idle = focus == WorkFocus::Balanced
-            && h.assigned.is_some_and(|a| a.from == Occupation::Idle);
+        let back_to_idle =
+            focus == WorkFocus::Balanced && h.assigned.is_some_and(|a| a.from == Occupation::Idle);
         let ok = if back_to_idle {
             sim_agents::jobs::reassign(world, h.e, Occupation::Idle)
         } else {
