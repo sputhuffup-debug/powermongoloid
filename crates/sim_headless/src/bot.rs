@@ -23,7 +23,7 @@
 //!    requests it can spare, and takes weak settlements (independent or
 //!    the rival's, never the seat; M4a step 5, `take_mode`): it demands one
 //!    whose parley its strength (progression.ron `demand.armed_weight` per
-//!    armed man, 1 per unarmed one) beats by
+//!    armed man, `demand.unarmed_weight` per unarmed one) beats by
 //!    `DEMAND_MARGIN`, else courts an independent town that likes the
 //!    player with a gift of food, else attacks once it outnumbers the
 //!    estimated militia by `CONQUEST_MARGIN` (1.6), and the seat's garrison
@@ -69,6 +69,7 @@ use sim_core::{
 };
 use sim_economy::{Economy, GoodId, SettlementEconomy, Stockpile, Workplace, WorkplaceKind};
 use sim_military::progression::Effect;
+use sim_military::tenure::soldier_strength;
 use sim_military::{
     Army, ArmyIndex, Captain, Equipment, Follower, Guard, Holder, Progression, RequestBoard,
     RequestKind, RivalState, RunProgress, Tenure, parley, paying_tribute,
@@ -258,7 +259,8 @@ const COURT_REST: u64 = 7200;
 const COURT_SPARE_DAYS: f32 = 2.0;
 
 /// While a submitted town is the player's only one near, new targets stay
-/// within this many tiles of it (the watch is 80), for this many ticks
+/// within this many tiles of it (inside the watch's `demand.watch_radius`,
+/// 125), for this many ticks
 /// after the submission (two days of the ten it pays tribute).
 const WATCH_BERTH: f32 = 70.0;
 const WATCH_TICKS: u64 = 4800;
@@ -1356,15 +1358,18 @@ impl Bot {
         self.conquest_target(v, cap).map(Task::Attack)
     }
 
-    /// The best town to demand now: the army's strength (1 each, 1.5
-    /// armed) at least `DEMAND_MARGIN` times what the parley needs.
+    /// The best town to demand now: the army's strength (by the parley's
+    /// own rule, `tenure::soldier_strength`: `demand.armed_weight` armed,
+    /// `demand.unarmed_weight` unarmed) at least `DEMAND_MARGIN` times what
+    /// the parley needs.
     fn demand_target(&self, world: &World, v: &View, cap: &Cap) -> Option<u64> {
         if cap.days < 1.2 || cap.people < 8 {
             return None;
         }
+        let data = world.resource::<Progression>().data.demand;
         let armed = cap.people.saturating_sub(cap.unarmed);
-        let have = armed as f32 * world.resource::<Progression>().data.demand.armed_weight
-            + cap.unarmed as f32;
+        let have = armed as f32 * soldier_strength(&data, true)
+            + cap.unarmed as f32 * soldier_strength(&data, false);
         let mut best: Option<(f32, u64)> = None;
         for s in &v.sites {
             if s.owner == FactionId::PLAYER

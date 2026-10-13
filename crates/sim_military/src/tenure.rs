@@ -415,8 +415,11 @@ pub struct DemandData {
     pub militia_weight: f32,
     /// Defence per soldier of its owner's garrison.
     pub garrison_weight: f32,
-    /// Strength of an armed soldier (1 unarmed).
+    /// Strength of an armed soldier.
     pub armed_weight: f32,
+    /// Strength of an unarmed soldier (MP2: half, so a demand needs a real
+    /// army).
+    pub unarmed_weight: f32,
     /// Residents' loyalty after kneeling.
     pub seed: f32,
     /// The Awe term while watched.
@@ -449,9 +452,10 @@ impl Default for DemandData {
             militia_weight: 0.25,
             garrison_weight: 1.0,
             armed_weight: 1.5,
+            unarmed_weight: 0.5,
             seed: 0.45,
             awe: 0.1,
-            watch_radius: 80.0,
+            watch_radius: 125.0,
             hold_ratio: 0.75,
             watch_hours: 6,
             watch_garrison: 4,
@@ -473,6 +477,7 @@ impl DemandData {
             self.militia_weight,
             self.garrison_weight,
             self.armed_weight,
+            self.unarmed_weight,
             self.awe,
             self.watch_radius,
             self.hold_ratio,
@@ -764,14 +769,19 @@ pub fn paying_tribute(world: &World, t: &Tenure, tick: u64) -> bool {
 }
 
 /// A soldier's strength in a demand or a watch: `armed_weight` if armed,
-/// else 1 (`demand` data).
+/// else `unarmed_weight` (`demand` data). The parley, the watch, the
+/// right-click menu's forecast and the bot all count by this one rule.
 pub fn soldier_strength(data: &DemandData, armed: bool) -> f32 {
-    if armed { data.armed_weight } else { 1.0 }
+    if armed {
+        data.armed_weight
+    } else {
+        data.unarmed_weight
+    }
 }
 
 /// GP-32: `faction`'s strength within `radius` of `at`: its soldiers (not
-/// routed, not militia), 1 each or `demand.armed_weight` if armed
-/// ([`soldier_strength`]). Reads this tick's [`FighterGrid`].
+/// routed, not militia), `demand.armed_weight` each if armed, else
+/// `demand.unarmed_weight` ([`soldier_strength`]). Reads this tick's [`FighterGrid`].
 pub fn strength_near(world: &World, at: IVec2, radius: f32, faction: FactionId) -> f32 {
     let data = world.resource::<Progression>().data.demand;
     let mut sum = 0.0;

@@ -17,8 +17,9 @@
 //!   watched hours) and it is free again, its militia up against the few
 //!   soldiers you left there.
 //! - `a_garrisoned_neighbour_or_a_sphere_keeps_it_watched`: no army need
-//!   stand within 80 tiles: a garrisoned town of yours, or your other towns'
-//!   influence (never the town's own power), keeps it kneeling.
+//!   stand within `demand.watch_radius` (125 tiles): a garrisoned town of
+//!   yours, or your other towns' influence (never the town's own power),
+//!   keeps it kneeling.
 //! - `a_submitted_town_settles`: after `demand.settle_days` the tribute
 //!   lock, the watch and the awe end; `how` stays `Submitted`.
 //! - `gifts_and_defence_court_a_town`: a gift's goodwill (once a day), a
@@ -367,7 +368,13 @@ fn demand_submits_at_the_ratio() {
     assert_eq!(before.garrison, 0, "an independent town has no garrison");
     assert!((before.defence - data.militia_weight * before.able as f32).abs() < 1e-4);
     assert!((before.need - data.ratio * before.defence).abs() < 1e-4);
-    assert_eq!(before.strength, 5.0, "five unarmed men within 40 tiles");
+    // MP2: an unarmed man counts `unarmed_weight` (half), so five are 2.5.
+    assert_eq!(data.unarmed_weight, 0.5, "the shipped value");
+    assert_eq!(
+        before.strength,
+        5.0 * data.unarmed_weight,
+        "five unarmed men within 40 tiles"
+    );
     let gw = goodwill(&app, big);
     let mut log = Log::default();
     order(&mut app, 1, small, OrderSpec::Demand { settlement: big_id });
@@ -377,7 +384,7 @@ fn demand_submits_at_the_ratio() {
     let line = log.find("refuses").cloned().expect("a refusal line");
     println!("  {line:?}; cooldown until {}", t.cool_until);
     assert_eq!(owner_of(&app, big), FactionId::INDEPENDENT);
-    assert!(line.1.contains("would fight") && line.1.contains("within 40 tiles and have 5"));
+    assert!(line.1.contains("would fight") && line.1.contains("within 40 tiles and have 2"));
     assert!(t.cool_until >= line.0 + (data.refuse_cooldown_days * tpd(&app) as f32) as u64);
     assert!(
         deeds(&app, big, Deed::Threat)
@@ -593,8 +600,9 @@ fn a_submitted_town_defies_when_left() {
     assert_eq!(threat.provoked_by, Some(P), "its militia rises at the gate");
 }
 
-/// GP-32: a garrisoned town of yours within 80 tiles, or your other towns'
-/// influence, watches a submitted town with no army near it.
+/// GP-32: a garrisoned town of yours within `demand.watch_radius` (125
+/// tiles), or your other towns' influence, watches a submitted town with no
+/// army near it.
 #[test]
 fn a_garrisoned_neighbour_or_a_sphere_keeps_it_watched() {
     // (a) A garrisoned neighbour, influence off.
@@ -612,13 +620,9 @@ fn a_garrisoned_neighbour_or_a_sphere_keeps_it_watched() {
         .collect();
     let towns = free_towns(&mut app);
     // The run island's towns stand at least about 100 tiles apart, so no
-    // town has a neighbour within the shipped 80 (STEP5.md, open issues):
-    // the scenario widens the watch to 125 to test the rule.
-    app.world_mut()
-        .resource_mut::<Progression>()
-        .data
-        .demand
-        .watch_radius = 125.0;
+    // town had a neighbour within step 5's 80 (STEP5.md, open issues): MP2
+    // ships a watch of 125 tiles, which this scenario set itself before.
+    assert_eq!(demand_data(&app).watch_radius, 125.0, "the shipped value");
     // A town of 100 or more (so the soldiers next door can't watch it by
     // their strength alone) with a neighbour within 120 tiles, the nearest
     // pair first.

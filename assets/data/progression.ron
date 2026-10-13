@@ -445,6 +445,11 @@
     ),
 
     // GP-32 (step 5): demanding submission, and the watch over the land.
+    // Your strength counts each armed soldier `armed_weight` and each
+    // unarmed one `unarmed_weight` (MP2: half, so a demand needs a real
+    // army). The watch reaches 125 tiles (MP2: the run island's towns stand
+    // about 100 tiles or more apart, so at 80 no garrisoned neighbour ever
+    // watched a submitted town).
     demand: (
         radius: 40.0,
         parley_hours: 1.0,
@@ -452,9 +457,10 @@
         militia_weight: 0.25,
         garrison_weight: 1.0,
         armed_weight: 1.5,
+        unarmed_weight: 0.5,
         seed: 0.45,
         awe: 0.1,
-        watch_radius: 80.0,
+        watch_radius: 125.0,
         hold_ratio: 0.75,
         watch_hours: 6,
         watch_garrison: 4,

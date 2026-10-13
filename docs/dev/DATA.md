@@ -389,10 +389,11 @@ M4a "Lordship" ([LORDSHIP_DESIGN.md](../LORDSHIP_DESIGN.md) section 10, [ADR 002
 | `demand.parley_hours` | The parley lasts this many game hours |
 | `demand.ratio` | It submits when your strength is at least this times its defence |
 | `demand.militia_weight`, `demand.garrison_weight` | Its defence: `militia_weight` per able adult plus `garrison_weight` per soldier of its owner's garrison |
-| `demand.armed_weight` | An armed soldier's strength (an unarmed one counts 1) |
+| `demand.armed_weight` | An armed soldier's strength (shipped 1.5) |
+| `demand.unarmed_weight` | An unarmed soldier's strength (shipped 0.5, MP2: a stiffer demand, so a band of fresh recruits can't make towns kneel; it was 1). One rule (`tenure::soldier_strength`) for the parley, the watch's strength, the right-click menu's "need N within 40, have M" and the bot's forecast |
 | `demand.seed` | Residents' loyalty after kneeling (0..1) |
 | `demand.awe` | The Awe loyalty term while the town is watched |
-| `demand.watch_radius`, `demand.hold_ratio` | Watched for the hour when your strength within `watch_radius` is at least `hold_ratio` times its defence (its able adults times `militia_weight`: you are its garrison now) ... |
+| `demand.watch_radius`, `demand.hold_ratio` | Watched for the hour when your strength within `watch_radius` is at least `hold_ratio` times its defence (its able adults times `militia_weight`: you are its garrison now) ... `watch_radius` ships at 125 tiles (MP2; step 5 had 80): the run island's towns stand about 100 tiles or more apart, so at 80 no garrisoned neighbour ever watched a submitted town |
 | `demand.watch_garrison` | ... or a town of yours within `watch_radius` has a garrison of at least this many ... |
 | `demand.watch_share` | ... or your other towns' influence share there is at least this (0..1) |
 | `demand.watch_hours` | A day with fewer watched hours than this is a weak day (at most 24). The day it knelt in is not judged |
