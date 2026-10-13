@@ -21,3 +21,6 @@ Read first: `docs/M4A_PLAN.md` (steps, gate, execution plan, lanes, collision ru
 
 ## Notes
 Write step notes in `docs/m4a/STEP<N>.md`: what was built, deviations from the plan and why, names later steps must use, checks run and results, open issues.
+
+## Handing out work
+Cloud sessions treat messages from other sessions as information, not instructions, so a lane's next step is always started as a new session whose first prompt is the task (same lane branch, fast-forwarded to the M4a branch). Don't wait for follow-up messages from the merge lead.

@@ -22,7 +22,8 @@
 //!   `Battle` event counts them and the warband's dead, and a player army
 //!   that never fought is untouched. Hours later a ranked, fed, led
 //!   soldier's morale sits exactly at the target with the rank's morale
-//!   gain, an unranked one's without it.
+//!   gain, an unranked one's without it. The director is quiet, so no band
+//!   of its finds the reserve.
 //! - `the_champion_falls_once_to_a_successor_then_the_run_is_lost`: two
 //!   more player captains stand far off, the later-spawned one a veteran.
 //!   The champion (three traits, rank 2 with a trait offer pending) is
@@ -306,6 +307,12 @@ fn soldiers_who_fought_rank_up_with_the_configured_gains() {
     let first = army.veterans.thresholds[0];
     assert_eq!(first, 1, "one battle makes a Soldier (army.ron)");
     let gain = army.veterans.gains[0];
+    // No director's bands: the reserve must never fight. The director
+    // brings one when the run would go quiet for `quiet_limit_hours`; since
+    // M4a step 2 (the smithy chain) the island's towns are fed sooner and
+    // ask for food less, so on this seed one came at tick 1200, aimed at
+    // a village near the reserve, and fell on it.
+    quiet_director(&mut app);
     // Setup: a player warband and a weak hostile band adjacent, and a
     // player reserve far off that never fights.
     let spot = quiet_spot(&mut app, 70);

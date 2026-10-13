@@ -79,6 +79,27 @@ fn choose_food_boon(app: &mut App) {
     choose(app, offer, food as u8);
 }
 
+/// Fills `captain`'s baggage (a setup edit between ticks) with the most
+/// nourishing food to `days` of its band's need: above army.ron
+/// `gather_target_days`, its GatherFood has no room and takes nothing.
+fn provision(app: &mut App, captain: Entity, days: f32) -> f32 {
+    let people = 1 + {
+        let world = app.world_mut();
+        let mut q = world.query::<&Follower>();
+        q.iter(world).filter(|f| f.captain == captain).count()
+    };
+    let world = app.world_mut();
+    let econ = world.resource::<Economy>().clone();
+    let per_day = world.resource::<Villagers>().data.needs.hunger_per_day;
+    let food = *econ.foods_by_value().last().expect("a food");
+    let want = days * per_day * people as f32;
+    let mut bag = world.get_mut::<Stockpile>(captain).expect("a baggage");
+    while bag.food_value(&econ) < want {
+        assert_eq!(bag.add(food, 1), 1, "the baggage is full");
+    }
+    bag.food_value(&econ) / (per_day * people as f32)
+}
+
 #[test]
 fn three_days_never_go_quiet() {
     let mut app = run_app(SEED);
