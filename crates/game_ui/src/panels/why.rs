@@ -1241,9 +1241,9 @@ mod tests {
         assert_eq!(w.pull_name(Pull::Hunger, -0.5), "hunger");
     }
 
-    /// Where the owner leads the other side by the sphere's width, the
-    /// Contest term is a bonus and reads "heartland", not a pull, at either
-    /// side's towns.
+    /// A positive Contest term is a bonus and reads "heartland", not a
+    /// pull. The sim gives it only at the player's towns (deep in the
+    /// player's sphere); the name does not depend on the owner.
     #[test]
     fn a_positive_contest_is_the_heartland() {
         let d = data();

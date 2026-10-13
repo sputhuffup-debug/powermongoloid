@@ -640,7 +640,8 @@ pub(crate) fn retake(world: &mut World, s: Entity, how: TakenBy, to: FactionId) 
 /// SIM-60: rebuilds `s`'s `LoyaltyTerms` (if it has them and a
 /// [`Tenure`]): Resentment `-scar`, Stirred `-stir`, Contest from
 /// [`crate::influence::contest_term`] (GP-31, M4a step 3: the other side's
-/// lead in the town's `Influence`, or the owner's heartland), Dues, Table and Steward from
+/// lead in the town's `Influence`, or the heartland at the player's
+/// towns), Dues, Table and Steward from
 /// [`crate::govern`]'s `dues_term`, `table_term` and `steward_term`. Awe
 /// and Bond come with M4a step 5 and stay 0 until then. Called by [`step`]
 /// hourly and by a taking ([`retake`]); serial steps only.

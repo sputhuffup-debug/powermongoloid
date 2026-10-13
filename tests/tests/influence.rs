@@ -20,8 +20,8 @@
 //!   `field_at` makes of the held towns.
 //! - `the_rival_contests_the_border`: a town in the other side's sphere
 //!   carries a negative Contest term, and its loyalty ends a day lower
-//!   than with influence off; a town deep in its owner's sphere carries
-//!   the heartland bonus instead.
+//!   than with influence off; a town of yours deep in your sphere carries
+//!   the heartland bonus instead (never the rival's towns in its own).
 //! - `envoys_come_without_a_captain`: with free towns inside the sphere
 //!   that like you enough, one invites you with no captain within 40
 //!   tiles, never two in a day; the next dawn sends another; the card
@@ -368,7 +368,8 @@ fn a_held_town_warms_its_neighbour() {
 /// `-0.25 x` the lead), and a day on its residents are less loyal than
 /// with influence off; a town of yours deep in your own sphere carries the
 /// heartland bonus instead, and your border town beside the rival's lands
-/// the rival's pull.
+/// the rival's pull. The heartland is the player's only: the rival's towns
+/// deep in its own sphere carry none.
 #[test]
 fn the_rival_contests_the_border() {
     let scene = |enabled: bool| {
@@ -481,6 +482,24 @@ fn the_rival_contests_the_border() {
     assert!(i.rival > i.player, "the rival leads at the border");
     assert!((t + d.contest * (i.rival - i.player)).abs() < 1e-5);
     assert!(t < 0.0);
+
+    // The heartland is yours only: the rival's towns deep in its own
+    // sphere carry no bonus (design section 6, "your heartland").
+    let seat = seat_id(&app);
+    let mut deep = 0;
+    for (e, id, at, _) in villages(&mut app) {
+        if id == seat || owner_of(&app, e) != FactionId::RIVAL {
+            continue;
+        }
+        let town = Town { e, id, at };
+        let i = influence_at(&app, town);
+        if i.rival - i.player >= d.sphere {
+            assert_eq!(contest(&app, town), 0.0, "the rival's #{id}: {i:?}");
+            deep += 1;
+        }
+    }
+    println!("  the rival's towns deep in its sphere, no heartland: {deep}");
+    assert!(deep >= 1, "a rival town leads by the sphere's width");
 }
 
 /// Tops up the champion's baggage with grain. A band with no one to feed
@@ -630,9 +649,10 @@ fn envoys_come_without_a_captain() {
 
 /// The step-3 done-when on the shipped tuning: a free town between two of
 /// yours, strangers at the start, invites you with no army near within ten
-/// days. Ten game days of the real schedule; run it with `--ignored`.
+/// days. Ten game days of the real schedule; run it with `--ignored` at
+/// merge points (CI does not run it).
 #[test]
-#[ignore = "ten game days; run with --ignored (release in CI)"]
+#[ignore = "ten game days; run with --ignored at merge points (not in CI)"]
 fn a_free_town_between_two_of_yours_invites_within_ten_days() {
     for seed in [1u64, 42] {
         let mut app = run(seed);
@@ -793,7 +813,7 @@ fn the_seat_is_never_swayed() {
         "any other town of that net would warm"
     );
     assert!(
-        influence::contest_value(&d, inf.rival, inf.player) < 0.0,
+        influence::contest_value(&d, FactionId::RIVAL, inf.rival, inf.player) < 0.0,
         "and a rival's other town would feel the pull"
     );
     assert!(!inf.envoy);

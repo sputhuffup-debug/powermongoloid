@@ -26,7 +26,9 @@
 //!   captain near; it is invited "by envoys". The flag is set for at most
 //!   `influence.max_envoys_per_day` towns a day, so at most that many
 //!   captain-free invitations come a day; posting the invitation spends
-//!   the flag. Nothing changes when `influence.enabled` is false.
+//!   the flag, and an unspent flag goes stale at the next day tick (this
+//!   step reads no flag then: slot 13 sets the new day's after it). Nothing
+//!   changes when `influence.enabled` is false.
 //!
 //! Only the player is invited: only the player answers offers in M4.
 //! [`answer`] (from `progression::choose`) accepts with
@@ -86,7 +88,11 @@ pub fn step(world: &mut World) {
         })
         .collect();
     let seat = world.resource::<RunProgress>().rival_seat;
-    let envoys = world.resource::<Progression>().data.influence.enabled;
+    // A flag is the day's: on the day tick (slot 7 runs before slot 13
+    // sets the new day's flags) yesterday's unspent flags are stale, or a
+    // town flagged yesterday could send envoys at dawn and the new day's
+    // flagged town an hour later, two in a day.
+    let envoys = world.resource::<Progression>().data.influence.enabled && !cal.on_day(tick);
     let mut q = world.query::<(
         Entity,
         &SpawnId,

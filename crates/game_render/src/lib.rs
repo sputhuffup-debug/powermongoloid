@@ -14,7 +14,9 @@
 //! - [`monuments`]: landmark models per monument kind with the holder's
 //!   pennant (GP-23, M4).
 //! - [`overlay`]: terrain tints for ownership, goodwill and loyalty, food
-//!   security and monuments, cycled with O (M4).
+//!   security and monuments, cycled with O (M4); since M4a also the
+//!   influence field of both spheres with its front, sphere edges and
+//!   invitation rings (UI-12).
 //! - [`WorldEpoch`]: bumped when the sim world is replaced in-process, so
 //!   caches keyed by sim entities or chunk revisions clear.
 //!

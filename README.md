@@ -35,7 +35,7 @@ New to the game? [How to win your first run](docs/PLAY_GUIDE.md) is a beginner's
 | Offers | Waiting offers (dominion boons, traits, invitations, sellswords for hire) are buttons in the run bar under the clock: click one to see its cards, click a card to choose, *Later* to close |
 | Fast-forward | *>> Next event* in the run bar: 8x until the next notable event, then pause. The game also pauses on the events the difficulty's director lists (raiders, rival raids, a fallen champion) |
 | Event feed | Bottom left: the chronicle's sentences (why things happened, battle reports) and your warband's log (dimmer); click a line to move the camera there |
-| Overlays | O cycles ownership, goodwill / loyalty, food security, monuments, off |
+| Overlays | O cycles ownership, goodwill / loyalty, food security, monuments, influence, off |
 | Monuments | Hover one for its kind, bonus and holder |
 | Abandon a run | *Abandon run* in the run bar, twice. The end screen shows the run summary, the timeline (mouse wheel scrolls) and your battle reports, and offers *New run* and *Same seed again* |
 

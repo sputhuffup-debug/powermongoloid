@@ -142,8 +142,9 @@ pub struct InfluenceData {
     pub max_envoys_per_day: u32,
     /// The Contest term per share the other side leads by.
     pub contest: f32,
-    /// The Contest term in its owner's heartland (the owner's share leads
-    /// by at least `sphere`).
+    /// The Contest term in the player's heartland (a town of the player's
+    /// where the player's share leads the rival's by at least `sphere`;
+    /// never at the rival's towns).
     pub heartland: f32,
     /// The overlay's "warming" line (net).
     pub warming: f32,
@@ -327,14 +328,16 @@ pub fn field_at<'a>(
     }
 }
 
-/// GP-31: the Contest loyalty term at a town whose owner has share `own`
-/// and the other side `other`: `-contest x (other - own)` where the other
-/// side leads; `heartland` where the owner leads by at least `sphere`; 0
-/// otherwise.
-pub fn contest_value(data: &InfluenceData, own: f32, other: f32) -> f32 {
+/// GP-31: the Contest loyalty term at a town held by `owner`, whose share
+/// is `own` and the other side's `other`: `-contest x (other - own)` where
+/// the other side leads; `heartland` in the player's heartland (the player
+/// holds it and leads by at least `sphere`; the design's "your heartland",
+/// never at the rival's towns, whose loyalty the rival's own field must not
+/// prop up); 0 otherwise.
+pub fn contest_value(data: &InfluenceData, owner: FactionId, own: f32, other: f32) -> f32 {
     if other > own {
         0.0 - data.contest * (other - own)
-    } else if own - other >= data.sphere {
+    } else if owner == FactionId::PLAYER && own - other >= data.sphere {
         data.heartland
     } else {
         0.0
@@ -572,7 +575,7 @@ pub fn contest_term(world: &World, s: Entity) -> f32 {
         FactionId::RIVAL => (inf.rival, inf.player),
         _ => return 0.0,
     };
-    contest_value(data, own, other)
+    contest_value(data, owner.faction, own, other)
 }
 
 #[cfg(test)]
@@ -712,20 +715,32 @@ mod tests {
         assert!(Source::of(7, c, FactionId::PLAYER, &Influence::default()).is_none());
     }
 
-    /// GP-31: the Contest term is `-0.25 x` the other side's lead, +0.05 in
-    /// the owner's heartland (a lead of at least the sphere's 0.5) and 0
+    /// GP-31: the Contest term is `-0.25 x` the other side's lead at either
+    /// side's towns, +0.05 in the player's heartland (a lead of at least the
+    /// sphere's 0.5 at a town of the player's; never at the rival's) and 0
     /// between.
     #[test]
     fn the_contest_follows_the_lead() {
         let d = data();
-        assert!(near(contest_value(&d, 0.1, 0.5), -0.1));
-        assert!(near(contest_value(&d, 0.0, 0.9), -0.225));
-        assert_eq!(contest_value(&d, 0.3, 0.3), 0.0);
-        assert_eq!(contest_value(&d, 0.4, 0.1), 0.0);
-        assert_eq!(contest_value(&d, 0.6, 0.1), d.heartland);
-        assert_eq!(contest_value(&d, 0.7, 0.0), d.heartland);
-        assert!(contest_value(&d, 0.1, 0.5).is_sign_negative());
-        assert!(contest_value(&d, 0.0, 0.0).is_sign_positive(), "no -0.0");
+        for owner in [FactionId::PLAYER, FactionId::RIVAL] {
+            assert!(near(contest_value(&d, owner, 0.1, 0.5), -0.1));
+            assert!(near(contest_value(&d, owner, 0.0, 0.9), -0.225));
+            assert_eq!(contest_value(&d, owner, 0.3, 0.3), 0.0);
+            assert_eq!(contest_value(&d, owner, 0.4, 0.1), 0.0);
+            assert!(contest_value(&d, owner, 0.1, 0.5).is_sign_negative());
+            assert!(
+                contest_value(&d, owner, 0.0, 0.0).is_sign_positive(),
+                "no -0.0"
+            );
+        }
+        // The heartland is the player's: the rival's towns deep in its own
+        // sphere get nothing (LORDSHIP_DESIGN section 6, "your heartland").
+        let you = FactionId::PLAYER;
+        assert_eq!(contest_value(&d, you, 0.6, 0.1), d.heartland);
+        assert_eq!(contest_value(&d, you, 0.7, 0.0), d.heartland);
+        assert_eq!(contest_value(&d, FactionId::RIVAL, 0.6, 0.1), 0.0);
+        assert_eq!(contest_value(&d, FactionId::RIVAL, 0.9, 0.0), 0.0);
+        assert!(contest_value(&d, FactionId::RIVAL, 0.9, 0.0).is_sign_positive());
     }
 
     /// GP-31: a day's warmth is `0.12 x (net - 0.1)` above the warming
@@ -935,7 +950,10 @@ mod tests {
                     FactionId::PLAYER
                 };
                 let (own, other) = (inf.shares().of(owner), inf.shares().of(other));
-                assert_eq!(term, contest_value(&d, own, other), "town #{id}");
+                assert_eq!(term, contest_value(&d, owner, own, other), "town #{id}");
+                if owner == FactionId::RIVAL {
+                    assert!(term <= 0.0, "no heartland at the rival's #{id}");
+                }
             }
         }
 
@@ -1113,39 +1131,111 @@ mod tests {
         assert_eq!(flagged(world), vec![close.0], "just under, with its warmth");
     }
 
-    /// GP-31: the seat is never swayed. Even with the player holding the
-    /// towns nearest it and the field tilted the player's way, the rival's
-    /// seat gets no influence deed, no envoys and no Contest term.
+    /// GP-31: a flag is the day's. A town flagged yesterday that never sent
+    /// its envoys (its goodwill stayed under the line all day) and comes to
+    /// like the player just before dawn sends none at the dawn tick, where
+    /// the invitation step runs before the new day's flags are set (else a
+    /// stale flag at dawn and the new day's an hour later would make two
+    /// in a day); off the day tick a flag is honoured.
+    #[test]
+    fn a_stale_envoy_flag_sends_no_one_at_dawn() {
+        let (mut app, liked) = sphere_with_candidates();
+        let world = app.world_mut();
+        let line = world.resource::<Progression>().data.invitations.goodwill;
+        let (id, town, _) = liked[0];
+        world.get_mut::<Influence>(town).unwrap().envoy = true;
+        world
+            .get_mut::<Goodwill>(town)
+            .unwrap()
+            .set(FactionId::PLAYER, line);
+        let invited = |world: &World| {
+            world
+                .resource::<Offers>()
+                .pending
+                .iter()
+                .any(|o| o.kind == OfferKind::Invitation { settlement: id })
+        };
+        let day = world.resource::<Calendar>().ticks_per_day;
+        world.resource_mut::<SimTick>().0 = day;
+        crate::invitations::step(world);
+        assert!(!invited(world), "a stale flag at the dawn tick");
+        let tph = world.resource::<Calendar>().ticks_per_hour();
+        world.resource_mut::<SimTick>().0 = day + tph;
+        crate::invitations::step(world);
+        assert!(invited(world), "a flag off the day tick sends envoys");
+        assert!(!influence(world, town).envoy, "and is spent");
+    }
+
+    /// GP-31: the seat is never swayed. The player holds every other town
+    /// within reach of the rival's seat, the seat projects nothing
+    /// (`seat_power` 0) and a town's own independence is slight, so the
+    /// player's pull would sway any other town there: it would warm, a
+    /// rival's town would feel the pull, and a free one liking the player
+    /// would send envoys. Still the seat gets no influence deed and no
+    /// Contest term while the rival holds it, and, gone free by a revolt
+    /// (no rule keeps it from one), no deed and no envoys either.
     #[test]
     fn the_seat_is_never_swayed() {
         let (mut app, _) = run_app(42);
         let world = app.world_mut();
-        world
-            .resource_mut::<Progression>()
-            .data
-            .influence
-            .independence = 0.01;
+        {
+            let mut p = world.resource_mut::<Progression>();
+            p.data.influence.independence = 0.01;
+            p.data.influence.seat_power = 0.0;
+        }
+        let d = world.resource::<Progression>().data.influence;
+        let line = world.resource::<Progression>().data.invitations.goodwill;
         let seat_at = world.resource::<RivalState>().seat_center;
         let seat_id = world.resource::<RunProgress>().rival_seat.expect("a seat");
         let seat = crate::orders::find_settlement(world, seat_id).expect("the seat");
-        for (_, e, _) in nearest_free(world, seat_at).into_iter().take(4) {
+        let mut q = world.query_filtered::<(Entity, &SpawnId, &Settlement), With<Influence>>();
+        let mut around: Vec<(u64, Entity)> = q
+            .iter(world)
+            .filter(|(_, id, st)| {
+                id.0 != seat_id && (st.center - seat_at).as_vec2().length() <= d.reach
+            })
+            .map(|(e, id, _)| (id.0, e))
+            .collect();
+        around.sort_unstable_by_key(|t| t.0);
+        assert!(around.len() >= 3, "{around:?}");
+        for &(_, e) in &around {
             hold(world, e, 1.0);
         }
-        // Even a seat that already likes you a little.
         world
             .get_mut::<Goodwill>(seat)
             .unwrap()
-            .set(FactionId::PLAYER, 0.2);
+            .set(FactionId::PLAYER, line + 0.05);
         step(world);
         let inf = influence(world, seat);
-        println!("the seat: {inf:?}");
-        assert!(inf.player > 0.0, "the player's pull reaches it");
-        assert!(!inf.envoy);
+        println!("the seat, {} towns around it held: {inf:?}", around.len());
+        // Left to the formulas, any other town there would be swayed.
+        assert!(inf.net() >= d.envoy_net, "{inf:?}");
+        assert!(warmth(&d, inf.net(), line + 0.05) > 0.0);
+        assert!(contest_value(&d, FactionId::RIVAL, inf.rival, inf.player) < 0.0);
+        // The rival's seat: no deed, no Contest term.
         assert!(influence_deeds(world).iter().all(|d| d.0 != seat_id));
         assert_eq!(contest_term(world, seat), 0.0);
         crate::tenure::step(world);
         let terms = *world.get::<sim_agents::LoyaltyTerms>(seat).unwrap();
         assert_eq!(terms.get(sim_agents::LoyaltyTerm::Contest), 0.0);
+
+        // Gone free by a revolt, at the next dawn: still no deed and no
+        // envoys, though it likes the player above the invitation line.
+        transfer(world, seat, FactionId::INDEPENDENT, Cause::Revolt).expect("populated");
+        assert!(
+            world.resource::<RunState>().in_run(),
+            "a revolt ends nothing"
+        );
+        world.resource_mut::<GoodwillLedger>().0.clear();
+        let day = world.resource::<Calendar>().ticks_per_day;
+        world.resource_mut::<SimTick>().0 = day;
+        step(world);
+        let inf = influence(world, seat);
+        println!("the seat gone free: {inf:?}");
+        assert!(inf.net() >= d.envoy_net && goodwill(world, seat) >= line);
+        assert!(!inf.envoy, "the seat sends no envoys");
+        assert!(influence_deeds(world).iter().all(|d| d.0 != seat_id));
+        assert_eq!(contest_term(world, seat), 0.0);
     }
 
     /// Design question 16: a realm ranks the champion. Once a day (and only

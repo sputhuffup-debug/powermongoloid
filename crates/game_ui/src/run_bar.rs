@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 
 use bevy::prelude::*;
 use game_render::Overlay;
+use sim_agents::Owner;
 use sim_core::{Calendar, CommandKind, FactionId, NameTable, Offers, RunState, SimTick, SpawnId};
 use sim_military::influence::InfluenceData;
 use sim_military::{Captain, Follower, Influence, Progression, RivalState, RunProgress};
@@ -148,14 +149,19 @@ fn spawn_run_bar(mut commands: Commands) {
 
 /// GP-31, UI-12: how many towns lie inside your sphere (their influence net,
 /// your share less the rival's, is at least `influence.sphere`, the towns
-/// you hold included) and how many more are warming (at least
-/// `influence.warming`, but not inside).
-fn sphere_counts(data: &InfluenceData, nets: impl IntoIterator<Item = f32>) -> (usize, usize) {
+/// you hold included) and how many more are warming to you (at least
+/// `influence.warming`, but not inside, among the towns that can warm: not
+/// yours and not the rival's seat, as the day's `Deed::Influence` goes).
+/// Each town is `(net, can_warm)`.
+fn sphere_counts(
+    data: &InfluenceData,
+    towns: impl IntoIterator<Item = (f32, bool)>,
+) -> (usize, usize) {
     let (mut sphere, mut warming) = (0, 0);
-    for net in nets {
+    for (net, can_warm) in towns {
         if net >= data.sphere {
             sphere += 1;
-        } else if net >= data.warming {
+        } else if can_warm && net >= data.warming {
             warming += 1;
         }
     }
@@ -184,7 +190,7 @@ fn update_run_bar(
     overlay: Res<Overlay>,
     captains: Query<(Entity, &Captain)>,
     followers: Query<&Follower>,
-    influence: Query<&Influence>,
+    influence: Query<(&Influence, &Owner, &SpawnId)>,
     mut bar: Query<&mut Visibility, With<RunBar>>,
     mut text: Query<&mut Text, With<RunText>>,
     mut cooldown: Local<f32>,
@@ -259,7 +265,12 @@ fn update_run_bar(
         .map(|p| &p.data.influence)
         .filter(|d| d.enabled)
     {
-        let (sphere, warming) = sphere_counts(data, influence.iter().map(Influence::net));
+        let seat = progress.rival_seat;
+        let towns = influence.iter().map(|(inf, owner, id)| {
+            let can_warm = owner.faction != FactionId::PLAYER && Some(id.0) != seat;
+            (inf.net(), can_warm)
+        });
+        let (sphere, warming) = sphere_counts(data, towns);
         s += &format!(" | Sphere {sphere}, warming {warming}");
     }
     s += &format!(" | Overlay: {} (O)", overlay.mode.name());
@@ -466,26 +477,35 @@ mod tests {
     use super::*;
 
     /// UI-12: the run bar's sphere counts the towns inside the sphere
-    /// (yours included) and, apart from them, the towns warming.
+    /// (yours included) and, apart from them, the towns warming to you:
+    /// never your own (a fresh, restless holding at a net of 0.3 is yours
+    /// already) nor the rival's seat.
     #[test]
     fn the_sphere_counts_towns_by_net() {
         let d = InfluenceData::default();
         assert_eq!((d.sphere, d.warming), (0.5, 0.2));
         assert_eq!(sphere_counts(&d, []), (0, 0));
+        let free = |nets: &[f32]| nets.iter().map(|&n| (n, true)).collect::<Vec<_>>();
         assert_eq!(
-            sphere_counts(&d, [0.9, 0.5, 0.49, 0.2, 0.19, 0.0, -0.4, -0.9]),
+            sphere_counts(&d, free(&[0.9, 0.5, 0.49, 0.2, 0.19, 0.0, -0.4, -0.9])),
             (2, 2),
             "0.5 is inside, 0.49 only warming, 0.2 warming, 0.19 not"
         );
         // A rival-leaning town is neither.
-        assert_eq!(sphere_counts(&d, [-0.7, -0.5, -0.2]), (0, 0));
+        assert_eq!(sphere_counts(&d, free(&[-0.7, -0.5, -0.2])), (0, 0));
+        // Your own towns (and the seat) count inside the sphere, never as
+        // warming.
+        assert_eq!(
+            sphere_counts(&d, [(0.3, false), (0.6, false), (0.3, true)]),
+            (1, 1)
+        );
         // The lines come from the data, not from here.
         let tight = InfluenceData {
             sphere: 0.8,
             warming: 0.6,
             ..d
         };
-        assert_eq!(sphere_counts(&tight, [0.85, 0.7, 0.5]), (1, 1));
+        assert_eq!(sphere_counts(&tight, free(&[0.85, 0.7, 0.5])), (1, 1));
     }
 
     #[test]

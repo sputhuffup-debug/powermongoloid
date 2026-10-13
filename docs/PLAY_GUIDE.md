@@ -29,11 +29,11 @@ Clicking a card starts the clock at 1x. Pause it at once: if the **II** button o
 ## 3. The screen in one minute
 
 - **Clock (top centre).** Space pauses and plays; keys 1 to 4 set 1x, 2x, 4x and 8x. A game day lasts 4 minutes at 1x, 1 minute at 4x.
-- **Run bar (under the clock).** Your share of each region's people (`R0 12%`), the rival's men, its seat's defence, its next levy and raid, and *Captains besides your champion: used/slots*. Then offer buttons, *>> Next event* (8x until something happens) and *Abandon run*.
+- **Run bar (under the clock).** Your share of each region's people (`R0 12%`), the rival's men, its seat's defence, its next levy and raid, and *Captains besides your champion: used/slots*, then *Sphere N, warming M* (the towns inside your influence, yours included, and how many more are warming to you). Then offer buttons, *>> Next event* (8x until something happens) and *Abandon run*.
 - **Event feed (bottom left).** Only the 8 newest lines. Bright lines are news; click one to fly there. Dim lines are your band's log, including your orders and "order refused (...)" with the reason.
 - **Captain panel (bottom centre),** when your army is selected: **Men**, **Food** (in days), **Orders**, and the posture buttons *Passive*, *Neutral*, *Aggressive* (the current one is lit).
 - **Settlement panel (bottom right):** **Owner**, **Goodwill to you**, **Loyalty** (only if someone holds it), **Asks you:** (only during a request), **Population**, **Food security** and **Storehouse**.
-- **Overlays.** O cycles ownership, goodwill / loyalty, food security, monuments, off. You are blue, the rival purple, free villages pale beige.
+- **Overlays.** O cycles ownership, goodwill / loyalty, food security, monuments, influence, off. You are blue, the rival purple, free villages pale beige. Influence shows both spheres at once: your colour and the rival's fading out from the towns each side holds, an amber front where they meet, dashed edges where a side's lead reaches half, and a ring round each free town you are warming that fills as it comes to like you enough to invite you.
 - **Sim debug** (top left) is a developer box. Ignore it, or collapse it with the arrow on its title.
 
 The game pauses by itself when raiders arrive, the rival raids, your champion falls or an offer is waiting.
