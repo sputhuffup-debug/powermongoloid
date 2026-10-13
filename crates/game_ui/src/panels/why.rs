@@ -3,6 +3,9 @@
 //! loyalty target term by term, the dated deeds behind its goodwill, and its
 //! risk of revolt, in plain words.
 //!
+//! A line on the town's influence (GP-31, M4a step 3) follows the tenure
+//! line: the shares of the pull at the town and what they make of it.
+//!
 //! The words are built from state copied out of the sim into a [`Why`], so
 //! they are tested without a world; the panel only reads. The rules that
 //! decide what is named live in sim_agents (`loyalty_parts`,
@@ -12,6 +15,7 @@ use sim_agents::data::LoyaltyData;
 use sim_agents::loyalty::{Pull, deciding_term, loyalty_parts, loyalty_pulls, loyalty_target};
 use sim_agents::{Deed, DeedLog, Goodwill, LoyaltyTerm, LoyaltyTerms, Owner, SettlementLoyalty};
 use sim_core::FactionId;
+use sim_military::influence::{Influence, InfluenceData};
 use sim_military::{TakenBy, Tenure};
 
 use super::capitalise;
@@ -46,12 +50,26 @@ pub(super) struct Why<'a> {
     pub data: &'a LoyaltyData,
     /// progression.ron `tenure.scar_fade_per_day`.
     pub scar_fade_per_day: f32,
+    /// The town's influence (a run's towns, with influence on).
+    pub influence: Option<InfluenceFacts<'a>>,
     /// The current tick.
     pub tick: u64,
     /// Ticks in a game day.
     pub ticks_per_day: u64,
     /// A faction's display name (army.ron).
     pub name: &'a dyn Fn(FactionId) -> String,
+}
+
+/// What the influence line reads, copied out of the sim.
+pub(super) struct InfluenceFacts<'a> {
+    /// The town's power and shares, as the sim last computed them.
+    pub influence: &'a Influence,
+    /// progression.ron `influence`.
+    pub data: &'a InfluenceData,
+    /// progression.ron `invitations.goodwill`: what an invitation needs.
+    pub invite_goodwill: f32,
+    /// Whether this is the rival's seat.
+    pub seat: bool,
 }
 
 impl Why<'_> {
@@ -69,19 +87,21 @@ impl Why<'_> {
         self.owner.faction != FactionId::INDEPENDENT
     }
 
-    /// A term's name from the owner's side: the Contest term is the other
-    /// side's influence, so at a rival town it is your pull.
-    fn term_name(&self, term: LoyaltyTerm) -> &'static str {
+    /// A term's name from the owner's side, given its value `v`: the
+    /// Contest term is the other side's influence, so at a rival town it is
+    /// your pull; where the owner leads it is a bonus, the heartland.
+    fn term_name(&self, term: LoyaltyTerm, v: f32) -> &'static str {
         match term {
+            LoyaltyTerm::Contest if v > 0.0 => "heartland",
             LoyaltyTerm::Contest if self.owner.faction == FactionId::RIVAL => "your pull",
             _ => term.name(),
         }
     }
 
-    /// A pull's name, its term named from the owner's side.
-    fn pull_name(&self, pull: Pull) -> &'static str {
+    /// A pull's name (of value `v`), its term named from the owner's side.
+    fn pull_name(&self, pull: Pull, v: f32) -> &'static str {
         match pull {
-            Pull::Term(term) => self.term_name(term),
+            Pull::Term(term) => self.term_name(term, v),
             _ => pull.name(),
         }
     }
@@ -103,6 +123,7 @@ pub(super) fn section(w: &Why) -> String {
     if let Some(line) = tenure_line(w) {
         s += &format!("  {line}\n");
     }
+    s += &influence_lines(w);
     let target = match w.food_days {
         Some(food) if w.owned() => {
             let (text, target) = loyalty_block(w, food);
@@ -177,6 +198,80 @@ fn tenure_line(w: &Why) -> Option<String> {
     Some(line)
 }
 
+/// The town's influence (GP-31): the shares of the pull at the town, from
+/// its owner's side, and what they make of it. Nothing outside a run or
+/// with influence off.
+///
+/// ```text
+///   Influence: you 58%, the rival 4%
+///     inside your sphere
+///     likes you +0.21 of +0.50 for envoys
+/// ```
+fn influence_lines(w: &Why) -> String {
+    let Some(f) = &w.influence else {
+        return String::new();
+    };
+    if !f.data.enabled {
+        return String::new();
+    }
+    let (you, them) = (f.influence.player, f.influence.rival);
+    let net = f.influence.net();
+    if f.seat {
+        return "  Influence: the seat is never swayed\n".to_string();
+    }
+    let mut notes: Vec<String> = Vec::new();
+    let head = match w.owner.faction {
+        FactionId::PLAYER => {
+            if net >= f.data.sphere {
+                notes.push("your heartland".to_string());
+            } else if net < 0.0 {
+                notes.push("contested: the rival's pull leads".to_string());
+            }
+            format!("your pull {}, the rival's {}", pct(you), pct(them))
+        }
+        FactionId::RIVAL => {
+            if -net >= f.data.sphere {
+                notes.push("the rival's heartland".to_string());
+            } else if net > 0.0 {
+                notes.push("contested: your pull leads".to_string());
+            }
+            format!("the rival's pull {}, yours {}", pct(them), pct(you))
+        }
+        _ => {
+            if you + them < 0.005 {
+                notes.push("out of reach of both sides".to_string());
+            } else if f.influence.envoy {
+                notes.push("inside your sphere".to_string());
+                notes.push("its envoys set out today".to_string());
+            } else if net >= f.data.sphere {
+                notes.push("inside your sphere".to_string());
+                let likes = w.goodwill_to(FactionId::PLAYER);
+                if likes >= f.invite_goodwill {
+                    notes.push("liking you enough: envoys may come".to_string());
+                } else {
+                    notes.push(format!(
+                        "likes you {} of {} for envoys",
+                        signed(likes),
+                        signed(f.invite_goodwill)
+                    ));
+                }
+            } else if net >= f.data.warming {
+                notes.push("warming to you".to_string());
+            } else if -net >= f.data.sphere {
+                notes.push("inside the rival's sphere".to_string());
+            } else if net.abs() < f.data.front {
+                notes.push("on the front".to_string());
+            }
+            format!("you {}, the rival {}", pct(you), pct(them))
+        }
+    };
+    let mut s = format!("  Influence: {head}\n");
+    for note in notes {
+        s += &format!("    {note}\n");
+    }
+    s
+}
+
 /// The loyalty target, term by term:
 ///
 /// ```text
@@ -222,7 +317,7 @@ fn loyalty_block(w: &Why, food_days: f32) -> (String, Target) {
     ];
     if let Some(terms) = w.terms {
         for (term, v) in terms.nonzero() {
-            let mut item = format!("{} {}", w.term_name(term), signed(v));
+            let mut item = format!("{} {}", w.term_name(term, v), signed(v));
             if term == LoyaltyTerm::Resentment && w.scar_fade_per_day > 0.0 {
                 item += &format!(" (fading {:.2} a day)", w.scar_fade_per_day);
             }
@@ -323,7 +418,7 @@ fn risk_block(w: &Why, food_days: f32, target: &Target) -> String {
         };
         s += &format!(
             "    {} ({}) {verb} the line\n",
-            capitalise(w.term_name(term)),
+            capitalise(w.term_name(term, v)),
             signed(v)
         );
     }
@@ -333,7 +428,7 @@ fn risk_block(w: &Why, food_days: f32, target: &Target) -> String {
         let named: Vec<String> = pulls
             .iter()
             .take(2)
-            .map(|(p, v)| format!("{} {}", w.pull_name(*p), signed(*v)))
+            .map(|(p, v)| format!("{} {}", w.pull_name(*p, *v), signed(*v)))
             .collect();
         if !named.is_empty() {
             s += &format!("    Pulled down by {}\n", named.join(" and "));
@@ -484,6 +579,7 @@ mod tests {
             tenure: None,
             data,
             scar_fade_per_day: 0.02,
+            influence: None,
             tick: day * DAY,
             ticks_per_day: DAY,
             name: &name,
@@ -961,6 +1057,164 @@ mod tests {
         system.initialize(&mut world);
     }
 
+    fn facts<'a>(inf: &'a Influence, data: &'a InfluenceData, seat: bool) -> InfluenceFacts<'a> {
+        InfluenceFacts {
+            influence: inf,
+            data,
+            invite_goodwill: 0.5,
+            seat,
+        }
+    }
+
+    fn shares(player: f32, rival: f32) -> Influence {
+        Influence {
+            power: 0.0,
+            player,
+            rival,
+            envoy: false,
+        }
+    }
+
+    /// The influence line of a town of `owner` that thinks `likes` of you.
+    fn influence_of(owner_faction: FactionId, inf: &Influence, likes: f32, seat: bool) -> String {
+        let (d, idata) = (data(), InfluenceData::default());
+        let g = goodwill(likes, 0.0);
+        let mut w = town(&d, owner(owner_faction, 0), 3, d.food_days, &g);
+        w.influence = Some(facts(inf, &idata, seat));
+        influence_lines(&w)
+    }
+
+    /// GP-31, UI-12: a free town reads its shares and where it stands:
+    /// warming, inside your sphere (and how near its envoys are), on the
+    /// front, in the rival's sphere, or out of reach.
+    #[test]
+    fn a_free_town_reads_its_standing() {
+        let free = FactionId::INDEPENDENT;
+        let lines = |inf: Influence, likes: f32| influence_of(free, &inf, likes, false);
+        assert_eq!(
+            lines(shares(0.4, 0.1), 0.0),
+            "  Influence: you 40%, the rival 10%\n    warming to you\n"
+        );
+        assert_eq!(
+            lines(shares(0.6, 0.05), 0.21),
+            "  Influence: you 60%, the rival 5%\n    inside your sphere\n    \
+             likes you +0.21 of +0.50 for envoys\n"
+        );
+        assert_eq!(
+            lines(shares(0.6, 0.05), 0.55),
+            "  Influence: you 60%, the rival 5%\n    inside your sphere\n    \
+             liking you enough: envoys may come\n"
+        );
+        let mut sending = shares(0.7, 0.0);
+        sending.envoy = true;
+        assert_eq!(
+            lines(sending, 0.5),
+            "  Influence: you 70%, the rival 0%\n    inside your sphere\n    \
+             its envoys set out today\n"
+        );
+        assert_eq!(
+            lines(shares(0.05, 0.6), 0.0),
+            "  Influence: you 5%, the rival 60%\n    inside the rival's sphere\n"
+        );
+        assert_eq!(
+            lines(shares(0.3, 0.25), 0.0),
+            "  Influence: you 30%, the rival 25%\n    on the front\n"
+        );
+        assert_eq!(
+            lines(shares(0.0, 0.0), 0.0),
+            "  Influence: you 0%, the rival 0%\n    out of reach of both sides\n"
+        );
+        // The warming line is inclusive; just under it, only the numbers.
+        assert_eq!(
+            lines(shares(0.2, 0.0), 0.0),
+            "  Influence: you 20%, the rival 0%\n    warming to you\n"
+        );
+        assert_eq!(
+            lines(shares(0.19, 0.0), 0.0),
+            "  Influence: you 19%, the rival 0%\n",
+            "a net of 0.19 is not yet warming"
+        );
+    }
+
+    /// An owned town reads the shares from its owner's side: its heartland
+    /// where the owner leads by the sphere's width, a contest where the
+    /// other side leads or (at the rival's town) you do.
+    #[test]
+    fn an_owned_town_reads_from_its_owners_side() {
+        let (you, them) = (FactionId::PLAYER, FactionId::RIVAL);
+        let mine = |inf: Influence| influence_of(you, &inf, 0.8, false);
+        assert_eq!(
+            mine(shares(0.7, 0.05)),
+            "  Influence: your pull 70%, the rival's 5%\n    your heartland\n"
+        );
+        assert_eq!(
+            mine(shares(0.3, 0.2)),
+            "  Influence: your pull 30%, the rival's 20%\n"
+        );
+        assert_eq!(
+            mine(shares(0.1, 0.4)),
+            "  Influence: your pull 10%, the rival's 40%\n    \
+             contested: the rival's pull leads\n"
+        );
+        let theirs = |inf: Influence| influence_of(them, &inf, -0.2, false);
+        assert_eq!(
+            theirs(shares(0.02, 0.7)),
+            "  Influence: the rival's pull 70%, yours 2%\n    the rival's heartland\n"
+        );
+        assert_eq!(
+            theirs(shares(0.4, 0.3)),
+            "  Influence: the rival's pull 30%, yours 40%\n    contested: your pull leads\n"
+        );
+        // The seat is never swayed, whatever the numbers.
+        assert_eq!(
+            influence_of(them, &shares(0.5, 0.2), 0.0, true),
+            "  Influence: the seat is never swayed\n"
+        );
+        // No line is wider than the panel.
+        for inf in [shares(0.7, 0.05), shares(0.1, 0.4), shares(0.4, 0.3)] {
+            for owner in [you, them, FactionId::INDEPENDENT] {
+                for l in influence_of(owner, &inf, 0.21, false).lines() {
+                    assert!(l.len() <= WIDTH, "{l:?}");
+                }
+            }
+        }
+    }
+
+    /// No line without a run's influence, or with influence switched off.
+    #[test]
+    fn no_influence_line_without_influence() {
+        let (d, idata) = (data(), InfluenceData::default());
+        let g = goodwill(0.0, 0.0);
+        let mut w = town(&d, owner(FactionId::INDEPENDENT, 0), 3, d.food_days, &g);
+        assert_eq!(influence_lines(&w), "");
+        let inf = shares(0.6, 0.0);
+        let off = InfluenceData {
+            enabled: false,
+            ..idata
+        };
+        w.influence = Some(facts(&inf, &off, false));
+        assert_eq!(influence_lines(&w), "");
+    }
+
+    /// The influence line sits right under the tenure line.
+    #[test]
+    fn the_influence_line_follows_the_tenure_line() {
+        let (d, idata) = (data(), InfluenceData::default());
+        let g = goodwill(0.0, 0.0);
+        let t = Tenure::new(TakenBy::Native, FactionId::INDEPENDENT, 0, 0);
+        let inf = shares(0.4, 0.1);
+        let mut w = town(&d, owner(FactionId::INDEPENDENT, 0), 3, d.food_days, &g);
+        w.tenure = Some(&t);
+        w.influence = Some(facts(&inf, &idata, false));
+        let text = section(&w);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "Why they feel this way");
+        assert_eq!(lines[1], "  Free from the start");
+        assert_eq!(lines[2], "  Influence: you 40%, the rival 10%");
+        assert_eq!(lines[3], "    warming to you");
+        assert!(lines[4].starts_with("  Thinks of you"), "{text}");
+    }
+
     /// The Contest term is the other side's pull: the rival's at your
     /// towns, yours at the rival's.
     #[test]
@@ -980,7 +1234,30 @@ mod tests {
         let text = loyalty_block(&w, d.food_days).0;
         assert!(text.contains("your pull -0.06"), "{text}");
         assert!(!text.contains("rival's pull"), "{text}");
-        assert_eq!(w.pull_name(Pull::Term(LoyaltyTerm::Contest)), "your pull");
-        assert_eq!(w.pull_name(Pull::Hunger), "hunger");
+        assert_eq!(
+            w.pull_name(Pull::Term(LoyaltyTerm::Contest), -0.06),
+            "your pull"
+        );
+        assert_eq!(w.pull_name(Pull::Hunger, -0.5), "hunger");
+    }
+
+    /// Where the owner leads the other side by the sphere's width, the
+    /// Contest term is a bonus and reads "heartland", not a pull, at either
+    /// side's towns.
+    #[test]
+    fn a_positive_contest_is_the_heartland() {
+        let d = data();
+        let g = goodwill(0.0, 0.0);
+        let mut terms = LoyaltyTerms::default();
+        terms.set(LoyaltyTerm::Contest, 0.05);
+        for faction in [FactionId::PLAYER, FactionId::RIVAL] {
+            let mut w = town(&d, owner(faction, 0), 4, d.food_days, &g);
+            w.terms = Some(&terms);
+            let text = loyalty_block(&w, d.food_days).0;
+            assert!(text.contains("heartland +0.05"), "{text}");
+            assert!(!text.contains("pull"), "{text}");
+            assert_eq!(w.term_name(LoyaltyTerm::Contest, 0.05), "heartland");
+            assert_eq!(w.term_name(LoyaltyTerm::Awe, 0.05), "awe");
+        }
     }
 }

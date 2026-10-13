@@ -76,6 +76,16 @@ Goodwill (GP-22) changes only through the ledger in `crates/sim_agents/src/stand
 3. **Post it from a serial step** with `orders::goodwill_deed(world, settlement, faction, deed)` (in `crates/sim_military/src/orders.rs`), once per deed, not once per tick of an ongoing one (see `provoke`, which posts only a fresh provocation). Never write `Goodwill` directly.
 4. **Test it** like `deeds_move_goodwill_and_word_spreads`: check the ledger right after the deed, then step a tick and check the settlement and a neighbour within `goodwill.spread_radius`.
 
+## Add a loyalty term
+
+A loyalty term (SIM-60, M4a) is one named, signed share of a settlement's loyalty target, kept apart so the panel can say why. `LoyaltyTerms` holds one value per `LoyaltyTerm`; the sum (the `bias`) is added to the target in `loyalty_target` before it is clamped to 0..1, and a bias of exactly 0.0 changes nothing. Each term is owned by the module of its rule: Resentment and Stirred by `crates/sim_military/src/tenure.rs`, Contest by `crates/sim_military/src/influence.rs` (`contest_term`), Dues, Table and Steward by `crates/sim_military/src/govern.rs`. Example: Contest.
+1. **Name the term:** append a variant to `LoyaltyTerm` in `crates/sim_agents/src/loyalty.rs` (append only: the position is hashed and saved), with `COUNT`, `ALL` and its `name()`, the words the panel prints. The saved array grows with `COUNT`: that is a saved-layout change, so the merge lead decides about `SAVE_FORMAT` (inside M4a the type is amended in place).
+2. **Write the term as a pure read in the module that owns the rule:** `pub fn my_term(world: &World, settlement: Entity) -> f32`, like `influence::contest_term`. It is exactly `0.0` (never `-0.0`: write `0.0 - x`) outside a run, where it doesn't apply, and when its data block's `enabled` is false, so scenario tests can opt out. It reads state only and is called from serial steps.
+3. **Sum it in `tenure::rebuild_terms`:** one `next.set(LoyaltyTerm::X, module::my_term(world, s))`. That function is the only writer of `LoyaltyTerms`. `tenure::step` (progress slot 14) calls it every hour for every town and a taking (`tenure::retake`) calls it at once, so a term that reads another slot's work needs that slot to run first (Contest reads `Influence`, rebuilt in slot 13); if a taking changes what it reads, refresh that in `retake` first (see `influence::refresh_field`).
+4. **Name it in the panel:** `Why::term_name` in `crates/game_ui/src/panels/why.rs` words a term from the owner's side and by its sign (Contest reads "heartland" when positive and "your pull" at the rival's towns); `LoyaltyTerm::name` is the default. The risk line and "Pulled down by" pick a term up by themselves (`deciding_term` and `loyalty_pulls` in `crates/sim_agents/src/loyalty.rs`).
+5. **Data:** its knobs go in `assets/data/progression.ron` with a switch, documented in [DATA.md](DATA.md).
+6. **Test it:** unit tests of the term's function; a scenario that reads `LoyaltyTerms` after a tick and the drift it causes, with a twin run that opts out (`tests/tests/influence.rs`, `the_rival_contests_the_border`; `tests/tests/tenure.rs`, `terms_sum_into_the_target`); and a case in the panel's tests.
+
 ## Add a data field
 
 1. **Add the field** to the data struct (e.g. `ArmyData` in `crates/sim_military/src/data.rs`) and to the RON file, with a comment.

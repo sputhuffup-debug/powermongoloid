@@ -12,8 +12,8 @@ use sim_agents::{
 use sim_core::{Calendar, FactionId, NameTable, SimTick, SpawnId};
 use sim_economy::{Building, Economy, Occupation, SettlementEconomy, Stockpile};
 use sim_military::{
-    Army, Captain, Equipment, Follower, Progression, RequestBoard, RequestKind, Soldier, Tenure,
-    Traits, Veteran,
+    Army, Captain, Equipment, Follower, Influence, Progression, RequestBoard, RequestKind,
+    RunProgress, Soldier, Tenure, Traits, Veteran,
 };
 use sim_world::Settlement;
 
@@ -393,15 +393,17 @@ fn settlement_panel(
         Option<&SettlementLoyalty>,
     )>,
     // UI-11 (M4a): what the "Why they feel this way" section reads.
-    (lordship, villagers_data, progression): (
+    (lordship, villagers_data, progression, run_progress): (
         Query<(
             &Owner,
             Option<&Tenure>,
             Option<&LoyaltyTerms>,
             Option<&DeedLog>,
+            Option<&Influence>,
         )>,
         Option<Res<Villagers>>,
         Option<Res<Progression>>,
+        Option<Res<RunProgress>>,
     ),
     (board, calendar, tick): (
         Option<Res<RequestBoard>>,
@@ -491,12 +493,21 @@ fn settlement_panel(
             }
         }
         // UI-11, SIM-60, SIM-61 (M4a): the town's own account of its mood.
-        if let (Some(vd), Some(cal), Some(tick), Ok((held, tenure, terms, log))) = (
+        if let (Some(vd), Some(cal), Some(tick), Ok((held, tenure, terms, log, town_influence))) = (
             villagers_data.as_ref(),
             calendar.as_ref(),
             tick.as_ref(),
             lordship.get(sel),
         ) {
+            let influence = town_influence.and_then(|i| {
+                let p = progression.as_ref()?;
+                Some(why::InfluenceFacts {
+                    influence: i,
+                    data: &p.data.influence,
+                    invite_goodwill: p.data.invitations.goodwill,
+                    seat: run_progress.as_ref().and_then(|r| r.rival_seat) == Some(id.0),
+                })
+            });
             let name = |f: FactionId| {
                 army.as_ref()
                     .map_or("?".to_string(), |a| a.faction_name(f).to_string())
@@ -513,6 +524,7 @@ fn settlement_panel(
                 scar_fade_per_day: progression
                     .as_ref()
                     .map_or(0.0, |p| p.data.tenure.scar_fade_per_day),
+                influence,
                 tick: tick.0,
                 ticks_per_day: cal.ticks_per_day,
                 name: &name,

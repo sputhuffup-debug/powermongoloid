@@ -24,9 +24,10 @@
 //!      past the cap). Influence deeds never spread (`Deed::spreads`).
 //!   2. **Envoys.** Up to `max_envoys_per_day` independent towns (not the
 //!      seat) whose net is at least `envoy_net` and whose goodwill toward
-//!      the player is at least `invitations.goodwill`, with no invitation
-//!      pending or cooling down, are flagged ([`Influence::envoy`]), the
-//!      highest net first (ties by SpawnId); every other flag is cleared.
+//!      the player, with this dawn's warmth, is at least
+//!      `invitations.goodwill`, with no invitation pending or cooling down,
+//!      are flagged ([`Influence::envoy`]), the highest net first (ties by
+//!      SpawnId); every other flag is cleared.
 //!      `invitations::step` (slot 7) posts a flagged town's invitation in
 //!      the hours that follow with no captain near.
 //!   3. **The realm's rank.** The player's champion gains
@@ -38,7 +39,7 @@
 //!   `invitations::step` (slot 7) and the sphere's ease in `drifters::draw`
 //!   (slot 5, [`in_sphere`]).
 //! - **A taking refreshes the field at once** (`tenure::retake` calls
-//!   [`refresh_field`] before it rebuilds the town's terms), so the
+//!   `refresh_field` before it rebuilds the town's terms), so the
 //!   Contest term follows the new owner in the same tick rather than
 //!   counting the town's own power for its old one for up to an hour.
 //! - **The seat is never swayed:** no influence deed, no envoys and no
@@ -61,7 +62,7 @@ use crate::tenure::Tenure;
 /// A run settlement's influence (GP-31, M4a): `power` it projects (held
 /// towns only) and the shares of the pull at its centre, each in 0..1, and
 /// the day's envoy flag. Written by [`step`] and, at a taking, by
-/// [`refresh_field`] (power and shares only); `invitations::step` spends
+/// `refresh_field` (power and shares only); `invitations::step` spends
 /// the envoy flag when it posts the invitation. Hashed and saved.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
 pub struct Influence {
@@ -494,7 +495,9 @@ fn warm(world: &mut World, data: &InfluenceData, towns: &[Town]) {
 /// The day's envoys: flags up to `max_envoys_per_day` independent towns
 /// (not the seat) at a net of at least `envoy_net`, liking the player
 /// enough to invite and with no invitation pending or cooling down, the
-/// highest net first (ties by SpawnId); clears every other flag.
+/// highest net first (ties by SpawnId); clears every other flag. "Liking
+/// enough" counts this dawn's own warmth, which [`warm`] has just posted
+/// and the ledger applies on the next tick, before slot 7 next looks.
 fn flag_envoys(world: &mut World, data: &InfluenceData, towns: &[Town], tick: u64) {
     let line = world.resource::<Progression>().data.invitations.goodwill;
     let pending: Vec<u64> = world
@@ -513,7 +516,7 @@ fn flag_envoys(world: &mut World, data: &InfluenceData, towns: &[Town], tick: u6
             t.owner == FactionId::INDEPENDENT
                 && !t.seat
                 && t.shares.net() >= data.envoy_net
-                && t.goodwill >= line
+                && t.goodwill + warmth(data, t.shares.net(), t.goodwill) >= line
                 && !pending.contains(&t.id)
                 && tick >= progress.invite_cooldown(t.id)
         })
@@ -954,15 +957,12 @@ mod tests {
         assert_eq!(contest_term(world, a), 0.0);
     }
 
-    /// GP-31: envoys come without a captain, at most one a day. With the
-    /// independence shrunk so every free town near a holding is deep in the
-    /// player's sphere, several free towns far from any captain like the
-    /// player enough; the day tick flags only the highest net, and the
-    /// invitation step posts its invitation alone ("sends envoys"), never a
-    /// second that day. The next dawn flags another (the first is pending);
-    /// two a day when the data says two.
-    #[test]
-    fn envoys_come_without_a_captain() {
+    /// A run of seed 42 with the independence shrunk so every free town
+    /// near a holding lies deep in the player's sphere: the free town
+    /// farthest from the rival's seat is the player's (loyalty 1.0), and
+    /// up to three free towns within 150 tiles of it and out of every
+    /// captain's reach are returned, nearest first.
+    fn sphere_with_candidates() -> (bevy_app::App, Vec<(u64, Entity, IVec2)>) {
         let (mut app, start) = run_app(42);
         let world = app.world_mut();
         world
@@ -973,7 +973,6 @@ mod tests {
         let rules = world.resource::<Progression>().data.invitations;
         let home = world.get::<sim_core::Position>(start.champion).unwrap().0;
         let seat_at = world.resource::<RivalState>().seat_center;
-        // The free town farthest from the rival's seat is ours.
         let (_, h, hc) = settlements(world)
             .into_iter()
             .max_by(|a, b| {
@@ -989,6 +988,33 @@ mod tests {
             .take(3)
             .collect();
         assert!(liked.len() >= 2, "candidates: {liked:?}");
+        (app, liked)
+    }
+
+    /// The SpawnIds of the towns flagged to send envoys.
+    fn flagged(world: &mut World) -> Vec<u64> {
+        let mut q = world.query::<(&SpawnId, &Influence)>();
+        let mut v: Vec<u64> = q
+            .iter(world)
+            .filter(|(_, i)| i.envoy)
+            .map(|(id, _)| id.0)
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// GP-31: envoys come without a captain, at most one a day. Several
+    /// free towns deep in the player's sphere and far from any captain
+    /// like the player enough; the day tick flags only the highest net,
+    /// and the invitation step posts its invitation alone ("sends
+    /// envoys"), spending the flag, never a second that day. The next dawn
+    /// flags another (the first is pending); two a day when the data says
+    /// two.
+    #[test]
+    fn envoys_come_without_a_captain() {
+        let (mut app, liked) = sphere_with_candidates();
+        let world = app.world_mut();
+        let rules = world.resource::<Progression>().data.invitations;
         for t in &liked {
             world
                 .get_mut::<Goodwill>(t.1)
@@ -996,16 +1022,6 @@ mod tests {
                 .set(FactionId::PLAYER, rules.goodwill);
         }
         step(world);
-        let flagged = |world: &mut World| -> Vec<u64> {
-            let mut q = world.query::<(&SpawnId, &Influence)>();
-            let mut v: Vec<u64> = q
-                .iter(world)
-                .filter(|(_, i)| i.envoy)
-                .map(|(id, _)| id.0)
-                .collect();
-            v.sort_unstable();
-            v
-        };
         let nets: Vec<(u64, f32)> = liked
             .iter()
             .map(|t| (t.0, influence(world, t.1).net()))
@@ -1065,6 +1081,36 @@ mod tests {
         step(world);
         assert_eq!(flagged(world).len(), 2.min(liked.len() - 1));
         assert!(!flagged(world).contains(&best), "pending: {best}");
+    }
+
+    /// GP-31: the dawn's own warmth counts toward the invitation line. A
+    /// town just under it (by less than the day's warmth) is flagged that
+    /// dawn, since its warmth is applied before the invitation step next
+    /// looks; one further under than a day's warmth is not.
+    #[test]
+    fn envoys_count_the_dawns_warmth() {
+        let (mut app, liked) = sphere_with_candidates();
+        let world = app.world_mut();
+        let line = world.resource::<Progression>().data.invitations.goodwill;
+        let d = world.resource::<Progression>().data.influence;
+        let (close, far) = (liked[0], liked[1]);
+        let set = |world: &mut World, s: Entity, g: f32| {
+            world
+                .get_mut::<Goodwill>(s)
+                .unwrap()
+                .set(FactionId::PLAYER, g);
+        };
+        // Any net past `envoy_net` warms at least 0.12 x 0.4 = 0.048 a day,
+        // and no net warms more than 0.12 x 0.9 = 0.108.
+        set(world, close.1, line - 0.02);
+        set(world, far.1, line - 0.2);
+        step(world);
+        let net = influence(world, close.1).net();
+        assert!(net >= d.envoy_net, "{net}");
+        let w = warmth(&d, net, line - 0.02);
+        assert!(w > 0.02, "{w}");
+        assert!(influence_deeds(world).contains(&(close.0, w)), "posted");
+        assert_eq!(flagged(world), vec![close.0], "just under, with its warmth");
     }
 
     /// GP-31: the seat is never swayed. Even with the player holding the

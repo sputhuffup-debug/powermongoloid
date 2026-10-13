@@ -1,15 +1,17 @@
-//! The run bar (GP-21, GP-24, GP-25, GP-27, GP-28), under the time bar in a
-//! run: the day, your share of each region's people, the rival's strength
-//! and the next step of its clock, your captain slots and the overlay; then
-//! the offers waiting for you as buttons that open their cards, the
-//! fast-forward button (GP-16) and "Abandon run".
+//! The run bar (GP-21, GP-24, GP-25, GP-27, GP-28, GP-31), under the time bar
+//! in a run: the day, your share of each region's people, the rival's
+//! strength and the next step of its clock, your captain slots, your sphere
+//! ("Sphere 7, warming 3", M4a) and the overlay; then the offers waiting
+//! for you as buttons that open their cards, the fast-forward button
+//! (GP-16) and "Abandon run".
 
 use std::collections::BTreeSet;
 
 use bevy::prelude::*;
 use game_render::Overlay;
 use sim_core::{Calendar, CommandKind, FactionId, NameTable, Offers, RunState, SimTick, SpawnId};
-use sim_military::{Captain, Follower, Progression, RivalState, RunProgress};
+use sim_military::influence::InfluenceData;
+use sim_military::{Captain, Follower, Influence, Progression, RivalState, RunProgress};
 use sim_world::Settlement;
 
 use crate::cards::{SentOffers, offer_title, spawn_cards};
@@ -144,6 +146,22 @@ fn spawn_run_bar(mut commands: Commands) {
         });
 }
 
+/// GP-31, UI-12: how many towns lie inside your sphere (their influence net,
+/// your share less the rival's, is at least `influence.sphere`, the towns
+/// you hold included) and how many more are warming (at least
+/// `influence.warming`, but not inside).
+fn sphere_counts(data: &InfluenceData, nets: impl IntoIterator<Item = f32>) -> (usize, usize) {
+    let (mut sphere, mut warming) = (0, 0);
+    for net in nets {
+        if net >= data.sphere {
+            sphere += 1;
+        } else if net >= data.warming {
+            warming += 1;
+        }
+    }
+    (sphere, warming)
+}
+
 /// "5h" or "2d 3h" from a tick count.
 fn span(ticks: u64, cal: &Calendar) -> String {
     let hours = ticks.div_ceil(cal.ticks_per_hour());
@@ -162,9 +180,11 @@ fn update_run_bar(
     cal: Option<Res<Calendar>>,
     progress: Option<Res<RunProgress>>,
     rival: Option<Res<RivalState>>,
+    progression: Option<Res<Progression>>,
     overlay: Res<Overlay>,
     captains: Query<(Entity, &Captain)>,
     followers: Query<&Follower>,
+    influence: Query<&Influence>,
     mut bar: Query<&mut Visibility, With<RunBar>>,
     mut text: Query<&mut Text, With<RunText>>,
     mut cooldown: Local<f32>,
@@ -229,11 +249,23 @@ fn update_run_bar(
         s += " | Rival: unseated";
     }
     s += &format!(
-        "\nCaptains besides your champion: {}/{} | Overlay: {} (O)",
+        "\nCaptains besides your champion: {}/{}",
         mine.saturating_sub(1),
-        progress.captain_slots,
-        overlay.mode.name()
+        progress.captain_slots
     );
+    // GP-31 (M4a): the sphere, from the towns' own influence.
+    if let Some(data) = progression
+        .as_ref()
+        .map(|p| &p.data.influence)
+        .filter(|d| d.enabled)
+    {
+        let (sphere, warming) = sphere_counts(data, influence.iter().map(Influence::net));
+        s += &format!(" | Sphere {sphere}, warming {warming}");
+    }
+    s += &format!(" | Overlay: {} (O)", overlay.mode.name());
+    if let Some(legend) = overlay.mode.legend() {
+        s += &format!(": {legend}");
+    }
     text.0 = s;
 }
 
@@ -432,6 +464,29 @@ fn draw_card_popup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// UI-12: the run bar's sphere counts the towns inside the sphere
+    /// (yours included) and, apart from them, the towns warming.
+    #[test]
+    fn the_sphere_counts_towns_by_net() {
+        let d = InfluenceData::default();
+        assert_eq!((d.sphere, d.warming), (0.5, 0.2));
+        assert_eq!(sphere_counts(&d, []), (0, 0));
+        assert_eq!(
+            sphere_counts(&d, [0.9, 0.5, 0.49, 0.2, 0.19, 0.0, -0.4, -0.9]),
+            (2, 2),
+            "0.5 is inside, 0.49 only warming, 0.2 warming, 0.19 not"
+        );
+        // A rival-leaning town is neither.
+        assert_eq!(sphere_counts(&d, [-0.7, -0.5, -0.2]), (0, 0));
+        // The lines come from the data, not from here.
+        let tight = InfluenceData {
+            sphere: 0.8,
+            warming: 0.6,
+            ..d
+        };
+        assert_eq!(sphere_counts(&tight, [0.85, 0.7, 0.5]), (1, 1));
+    }
 
     #[test]
     fn spans_read_in_hours_and_days() {
