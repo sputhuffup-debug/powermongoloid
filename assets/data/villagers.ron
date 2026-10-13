@@ -131,4 +131,23 @@
             "Kettle", "Lockett", "Moss", "Nettleton", "Oakes", "Pryor", "Rook", "Sallow", "Tanner", "Woolley",
         ],
     ),
+
+    // SIM-62 (M4a step 9): what a run town's site makes it. At populate, in a
+    // run only, the first matching row wins: at least `min_tiles` reachable
+    // tiles of `site` (economy.ron's site rules) within `radius` (40) of the
+    // centre, counted before anything is built, and at least `road_degree`
+    // roads meeting there. Its `shares` multiply the occupation shares above
+    // before they are apportioned. An empty list turns specialties off.
+    specialties: [
+        (kind: Mining, site: Some(Upland), min_tiles: 150, road_degree: 0, radius: 40,
+            shares: [(Miner, 4.0), (Smith, 2.0)]),
+        (kind: Market, site: None, min_tiles: 0, road_degree: 3, radius: 40,
+            shares: [(Carter, 1.3), (Baker, 1.3)]),
+        (kind: Fishing, site: Some(Coast), min_tiles: 160, road_degree: 0, radius: 40,
+            shares: [(Fisher, 2.5)]),
+        (kind: Timber, site: Some(ForestEdge), min_tiles: 200, road_degree: 0, radius: 40,
+            shares: [(Woodcutter, 3.0)]),
+        (kind: Farming, site: None, min_tiles: 0, road_degree: 0, radius: 40,
+            shares: [(Farmer, 1.1), (Baker, 1.2)]),
+    ],
 )

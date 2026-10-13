@@ -544,7 +544,8 @@ pub fn census(world: &mut World, good: &str) -> GoodCensus {
 
 /// `--workshops` (SIM-64): each smithy's and mine's recipe, stock, workers
 /// and their cycles (work cycles and their own hauls), by settlement, then
-/// the island's weapons and tools by where they are.
+/// the island's weapons and tools by where they are. A run town's
+/// specialty (SIM-62) follows its name, with the site counts populate read.
 pub fn workshops(app: &mut App) -> Vec<String> {
     use sim_economy::{Workplace, WorkplaceKind};
     let world = app.world_mut();
@@ -559,14 +560,41 @@ pub fn workshops(app: &mut App) -> Vec<String> {
     }
     let econ = world.resource::<Economy>().clone();
     let names = world.resource::<NameTable>().clone();
-    let mut q = world.query::<(Entity, &sim_core::SpawnId, &Settlement, &SettlementEconomy)>();
+    let sites = world
+        .resource::<sim_agents::PopulationReport>()
+        .sites
+        .clone();
+    let mut q = world.query::<(
+        Entity,
+        &sim_core::SpawnId,
+        &Settlement,
+        &SettlementEconomy,
+        Option<&sim_agents::Specialty>,
+    )>();
     let mut towns: Vec<_> = q
         .iter(world)
-        .map(|(e, id, s, se)| (*id, e, s.name, se.workplaces.clone(), se.storehouse))
+        .map(|(e, id, s, se, sp)| {
+            let spec = sp.map_or(String::new(), |sp| {
+                let c = sites
+                    .iter()
+                    .find(|(sid, _)| sid == id)
+                    .map(|x| x.1)
+                    .unwrap_or_default();
+                format!(
+                    " ({}: upland {}, coast {}, forest edge {}, roads {})",
+                    sp.name(),
+                    c.upland,
+                    c.coast,
+                    c.forest_edge,
+                    c.roads
+                )
+            });
+            (*id, e, s.name, se.workplaces.clone(), se.storehouse, spec)
+        })
         .collect();
     towns.sort_by_key(|t| t.0);
     let mut out = Vec::new();
-    for (_, _, name, workplaces, store) in towns {
+    for (_, _, name, workplaces, store, spec) in towns {
         let mut lines = Vec::new();
         for wp in workplaces {
             let Some(w) = world.get::<Workplace>(wp) else {
@@ -609,7 +637,7 @@ pub fn workshops(app: &mut App) -> Vec<String> {
             })
             .unwrap_or_default();
         out.push(format!(
-            "  {} | storehouse [{}]",
+            "  {}{spec} | storehouse [{}]",
             names.get(name),
             store.join(", ")
         ));

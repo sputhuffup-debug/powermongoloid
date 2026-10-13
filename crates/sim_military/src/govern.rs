@@ -134,6 +134,91 @@ fn govern(world: &mut World) {
             }
         }
     }
+    market_hire(world, tick);
+}
+
+/// The golden angle, in radians: Market towns camp their bands in
+/// directions spread by SpawnId, with no draw.
+const GOLDEN_ANGLE: f32 = 2.399_963;
+
+/// Men in a Market town's band for hire: one per `market.people_per_man`
+/// people, from `min_men` to `max_men` (SIM-62).
+pub fn market_band(market: &MarketData, people: u32) -> u32 {
+    (people / market.people_per_man.max(1)).clamp(market.min_men, market.max_men)
+}
+
+/// Whether `tick` is a Market hire hour: every `market.hire_days` (rounded
+/// to whole hours) from the run's start, never tick 0 (SIM-62).
+pub fn market_hire_due(cal: &Calendar, market: &MarketData, tick: u64) -> bool {
+    let hour = cal.ticks_per_hour().max(1);
+    let period = (cal.days(market.hire_days) / hour).max(1) * hour;
+    tick > 0 && tick.is_multiple_of(period)
+}
+
+/// SIM-62 (M4a step 9): on a hire hour ([`market_hire_due`]), each Market
+/// town the player owns, in SpawnId order, camps a band of
+/// [`market_band`] men for hire `hire.distance` tiles from its centre (in
+/// a direction spread by its SpawnId, no draw) and posts their `Hire`
+/// offer, priced and answered as the start's sellswords are
+/// (`sellswords::camp`, `sellswords::answer`): your champion within
+/// `hire.radius` pays `hire.price_days` of food a man, and the band moves
+/// on after `hire.expiry_hours`.
+fn market_hire(world: &mut World, tick: u64) {
+    let (market, hire) = {
+        let d = &world.resource::<Progression>().data;
+        (d.market, d.hire)
+    };
+    let cal = world.resource::<Calendar>().clone();
+    if !market_hire_due(&cal, &market, tick) {
+        return;
+    }
+    let mut q = world.query::<(
+        Entity,
+        &SpawnId,
+        &sim_agents::Specialty,
+        &sim_world::Settlement,
+        &SettlementEconomy,
+    )>();
+    let mut towns: Vec<(SpawnId, Entity, bevy_math::IVec2, u32)> = q
+        .iter(world)
+        .filter(|(_, _, sp, ..)| **sp == sim_agents::Specialty::Market)
+        .map(|(e, id, _, st, se)| (*id, e, st.center, se.population))
+        .collect();
+    towns.retain(|t| owner_of(world, t.1) == FactionId::PLAYER);
+    if towns.is_empty() {
+        return;
+    }
+    towns.sort_unstable_by_key(|t| t.0);
+    let (costs, per_day) = {
+        let v = world.resource::<Villagers>();
+        (v.travel_costs.clone(), v.data.needs.hunger_per_day)
+    };
+    let expires = tick + cal.hours(hire.expiry_hours);
+    for (id, s, centre, people) in towns {
+        let n = market_band(&market, people).min(u16::MAX as u32);
+        if n == 0 {
+            continue;
+        }
+        let angle = (id.0 as f32 * GOLDEN_ANGLE).rem_euclid(std::f32::consts::TAU);
+        let (captain, price) =
+            crate::sellswords::camp(world, &hire, &costs, per_day, centre, angle, n);
+        sim_core::post_offer(
+            world,
+            FactionId::PLAYER,
+            sim_core::OfferKind::Hire {
+                captain,
+                men: n as u16,
+                price,
+            },
+            vec![0, 1],
+            Some(expires),
+        );
+        let name = crate::orders::settlement_name(world, s);
+        crate::orders::log(
+            world,
+            format!("{n} sellswords camp at {name}'s market, for hire at {price} food"),
+        );
+    }
 }
 
 /// The Levy's and the ration's marks come off anyone enlisted (by any

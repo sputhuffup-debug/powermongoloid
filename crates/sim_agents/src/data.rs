@@ -3,7 +3,7 @@
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 use sim_core::{Calendar, StateHash, StateHasher};
-use sim_economy::Occupation;
+use sim_economy::{Occupation, SiteRule};
 use sim_world::{Terrain, TravelCosts};
 
 /// `assets/data/villagers.ron`, embedded at compile time.
@@ -304,6 +304,127 @@ pub struct VillagerData {
     pub loyalty: LoyaltyData,
     pub goodwill: GoodwillData,
     pub names: NameData,
+    /// What a run town's site makes it (SIM-62, M4a step 9): the first
+    /// matching row wins at populate, in a run only. Left out of the data's
+    /// RON text (its hash and save) while it holds the shipped rows, so
+    /// adding it changed no developed-world hash; an empty list turns
+    /// specialties off.
+    #[serde(
+        default = "SpecialtyRule::shipped",
+        skip_serializing_if = "SpecialtyRule::is_shipped"
+    )]
+    pub specialties: Vec<SpecialtyRule>,
+}
+
+/// One row of villagers.ron `specialties` (SIM-62, LORDSHIP_DESIGN section
+/// 8.4): a settlement whose site has at least `min_tiles` reachable tiles
+/// of `site` within `radius` of its centre, and at least `road_degree`
+/// roads, is a `kind` town; its occupation shares are scaled by `shares`
+/// before they are apportioned (and so renormalised).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SpecialtyRule {
+    /// The specialty this row gives.
+    pub kind: crate::Specialty,
+    /// The site rule (as economy.ron's workplaces use it) whose tiles are
+    /// counted; `None` counts nothing and needs no tiles.
+    pub site: Option<SiteRule>,
+    /// Reachable tiles of `site` needed.
+    pub min_tiles: u32,
+    /// Roads that must meet at the settlement (worldgen's `RoadNetwork`).
+    pub road_degree: u32,
+    /// Tiles from the centre within which `site` is counted.
+    #[serde(default = "SpecialtyRule::default_radius")]
+    pub radius: i32,
+    /// Multipliers on occupation shares (occupations not named keep 1.0).
+    pub shares: Vec<(Occupation, f32)>,
+}
+
+impl SpecialtyRule {
+    fn default_radius() -> i32 {
+        40
+    }
+
+    /// The shipped rows (villagers.ron's `specialties`, LORDSHIP_DESIGN
+    /// section 10); `villagers_ron_ships_the_default_specialties` keeps the
+    /// two equal.
+    pub fn shipped() -> Vec<SpecialtyRule> {
+        use crate::Specialty::*;
+        use Occupation::*;
+        let row =
+            |kind, site, min_tiles, road_degree, shares: &[(Occupation, f32)]| SpecialtyRule {
+                kind,
+                site,
+                min_tiles,
+                road_degree,
+                radius: 40,
+                shares: shares.to_vec(),
+            };
+        vec![
+            row(
+                Mining,
+                Some(SiteRule::Upland),
+                150,
+                0,
+                &[(Miner, 4.0), (Smith, 2.0)],
+            ),
+            row(Market, None, 0, 3, &[(Carter, 1.3), (Baker, 1.3)]),
+            row(Fishing, Some(SiteRule::Coast), 160, 0, &[(Fisher, 2.5)]),
+            row(
+                Timber,
+                Some(SiteRule::ForestEdge),
+                200,
+                0,
+                &[(Woodcutter, 3.0)],
+            ),
+            row(Farming, None, 0, 0, &[(Farmer, 1.1), (Baker, 1.2)]),
+        ]
+    }
+
+    /// Whether `rows` are exactly the shipped rows (then they are left out
+    /// of the data's RON text).
+    pub fn is_shipped(rows: &Vec<SpecialtyRule>) -> bool {
+        *rows == Self::shipped()
+    }
+
+    /// Whether a site with `tiles` of this row's site and `degree` roads
+    /// matches.
+    pub fn matches(&self, tiles: u32, degree: u32) -> bool {
+        (self.site.is_none() || tiles >= self.min_tiles) && degree >= self.road_degree
+    }
+
+    /// `shares` (one per `Occupation::ALL`) scaled by this row.
+    pub fn scale(&self, shares: &[f32]) -> Vec<f32> {
+        Occupation::ALL
+            .iter()
+            .zip(shares)
+            .map(|(o, s)| {
+                self.shares
+                    .iter()
+                    .filter(|(occ, _)| occ == o)
+                    .fold(*s, |s, (_, m)| s * m)
+            })
+            .collect()
+    }
+
+    fn validate(rows: &[SpecialtyRule]) -> Result<(), String> {
+        for r in rows {
+            if r.radius <= 0 || r.radius > 64 {
+                return Err(format!(
+                    "villagers: specialties {} radius must be in 1..=64",
+                    r.kind.name()
+                ));
+            }
+            // Above 0, so scaled shares never sum to 0: the job list (and
+            // its shuffle's draws) is always as long as the workers.
+            if r.shares.iter().any(|(_, m)| !(m.is_finite() && *m > 0.0)) {
+                return Err(format!(
+                    "villagers: specialties {} share multipliers must be > 0",
+                    r.kind.name()
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Villager data plus values derived from it and the calendar.
@@ -360,6 +481,7 @@ impl Villagers {
         }
         data.loyalty.validate()?;
         data.goodwill.validate()?;
+        SpecialtyRule::validate(&data.specialties)?;
         let day = calendar.ticks_per_day as f32;
         let mut per_terrain = [None; 8];
         for t in Terrain::ALL {
@@ -541,5 +663,71 @@ mod tests {
         assert!((c.eval(0.5) - 0.5).abs() < 1e-6);
         assert!(c.eval(0.9) > 0.95 && c.eval(0.1) < 0.05);
         assert_eq!(Curve::Linear.eval(2.0), 1.0);
+    }
+
+    /// SIM-62: villagers.ron ships exactly `SpecialtyRule::shipped()`, so
+    /// the block is left out of the data's RON text (the developed world's
+    /// hash and saves did not move); a changed or empty list is written and
+    /// read back.
+    #[test]
+    fn villagers_ron_ships_the_default_specialties() {
+        let v = Villagers::default_data(&Calendar::default_data());
+        assert_eq!(v.data.specialties, SpecialtyRule::shipped());
+        let text = ron::to_string(&v.data).unwrap();
+        assert!(!text.contains("specialties"), "left out while shipped");
+        let mut off = v.data.clone();
+        off.specialties.clear();
+        let text = ron::to_string(&off).unwrap();
+        assert!(text.contains("specialties:[]"), "{text}");
+        let back: VillagerData = ron::from_str(&text).unwrap();
+        assert!(back.specialties.is_empty(), "an empty list stays empty");
+    }
+
+    /// SIM-62: a row matches on its tiles (when it names a site) and its
+    /// road degree; its shares scale only the occupations it names.
+    #[test]
+    fn specialty_rows_match_and_scale() {
+        let rows = SpecialtyRule::shipped();
+        let first = |tiles: [u32; 3], roads: u32| {
+            rows.iter()
+                .find(|r| {
+                    let t = match r.site {
+                        Some(SiteRule::Upland) => tiles[0],
+                        Some(SiteRule::Coast) => tiles[1],
+                        Some(SiteRule::ForestEdge) => tiles[2],
+                        _ => 0,
+                    };
+                    r.matches(t, roads)
+                })
+                .map(|r| r.kind)
+        };
+        use crate::Specialty::*;
+        assert_eq!(first([150, 0, 0], 4), Some(Mining), "mining before market");
+        assert_eq!(first([149, 900, 900], 3), Some(Market));
+        assert_eq!(first([0, 160, 900], 2), Some(Fishing));
+        assert_eq!(first([0, 159, 200], 0), Some(Timber));
+        assert_eq!(
+            first([0, 0, 0], 0),
+            Some(Farming),
+            "the last row always matches"
+        );
+        let shares = vec![1.0; Occupation::ALL.len()];
+        let mining = rows[0].scale(&shares);
+        assert_eq!(mining[Occupation::Miner as usize], 4.0);
+        assert_eq!(mining[Occupation::Smith as usize], 2.0);
+        assert_eq!(mining[Occupation::Farmer as usize], 1.0);
+        let bad = SpecialtyRule {
+            radius: 0,
+            ..rows[0].clone()
+        };
+        assert!(SpecialtyRule::validate(&[bad]).is_err());
+        let zero = SpecialtyRule {
+            shares: vec![(Occupation::Farmer, 0.0)],
+            ..rows[0].clone()
+        };
+        assert!(
+            SpecialtyRule::validate(&[zero]).is_err(),
+            "a zero multiplier"
+        );
     }
 }

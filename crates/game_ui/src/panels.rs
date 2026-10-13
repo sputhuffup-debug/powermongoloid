@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use bevy::prelude::*;
 use sim_agents::{
     ActionKind, Activity, CombatStats, DecisionTrace, DeedLog, Employment, Enlisted, FoodSecurity,
-    Goodwill, LoyaltyTerms, Needs, Owner, SettlementLoyalty, Stage, Stance, Threat, Villager,
-    Villagers,
+    Goodwill, LoyaltyTerms, Needs, Owner, SettlementLoyalty, Specialty, Stage, Stance, Threat,
+    Villager, Villagers,
 };
 use sim_core::{Calendar, FactionId, NameTable, SimTick, SpawnId};
 use sim_economy::{
@@ -433,6 +433,8 @@ fn settlement_panel(
     ),
     // M4a step 5: the ways to take it, a submitted town's watch, a bond.
     take: Res<take::TakeView>,
+    // SIM-62 (M4a step 9): a run town's specialty; absent outside a run.
+    specialties: Query<&Specialty>,
     stocks: Query<&Stockpile>,
     workplaces: Query<&Workplace>,
     villagers: Query<(&Villager, &Occupation, &CombatStats, &Activity), Without<Enlisted>>,
@@ -605,6 +607,11 @@ fn settlement_panel(
         s += "
 ";
     }
+    if let Some(sp) = selection.settlement.and_then(|e| specialties.get(e).ok()) {
+        let hire_days = progression.as_ref().map(|p| p.data.market.hire_days);
+        s += &specialty_line(*sp, hire_days);
+        s += "\n";
+    }
     s += &format!("Population {}\n", se.population);
     for (occ, n) in &by_occ {
         s += &format!("  {:<11} {n}\n", occ.name());
@@ -637,6 +644,25 @@ fn settlement_panel(
         }
     }
     text.0 = s;
+}
+
+/// A run town's specialty line on the settlement panel (SIM-62, M4a step
+/// 9): its name and what it means for you. `hire_days` is the Market's
+/// hiring period from progression.ron, when known.
+fn specialty_line(sp: Specialty, hire_days: Option<f32>) -> String {
+    let meaning = match sp {
+        Specialty::Mining => "ore and smiths: a Forge here arms your men".to_string(),
+        Specialty::Market => match hire_days {
+            Some(d) => {
+                format!("a crossroads: every {d:.0} days hired men camp here while you hold it")
+            }
+            None => "a crossroads: hired men camp here while you hold it".to_string(),
+        },
+        Specialty::Timber => "woodcutters: cheap works".to_string(),
+        Specialty::Fishing => "fishers: a larder".to_string(),
+        Specialty::Farming => "farmers and bakers: a larder".to_string(),
+    };
+    format!("Specialty: {} \u{2014} {meaning}", sp.name())
 }
 
 /// One workshop's line on the settlement panel (SIM-64): its kind, what it
@@ -704,5 +730,26 @@ mod tests {
             workshop_line(&econ, &wp, &stock),
             "Smithy (weapons): ore 12, weapons 2"
         );
+    }
+
+    /// SIM-62: each specialty names itself and what it means; the Market
+    /// states its hiring period when known.
+    #[test]
+    fn specialty_lines_name_the_meaning() {
+        assert_eq!(
+            specialty_line(Specialty::Mining, None),
+            "Specialty: Mining \u{2014} ore and smiths: a Forge here arms your men"
+        );
+        assert_eq!(
+            specialty_line(Specialty::Market, Some(5.0)),
+            "Specialty: Market \u{2014} a crossroads: every 5 days hired men camp here while you hold it"
+        );
+        assert_eq!(
+            specialty_line(Specialty::Market, None),
+            "Specialty: Market \u{2014} a crossroads: hired men camp here while you hold it"
+        );
+        assert!(specialty_line(Specialty::Timber, None).ends_with("woodcutters: cheap works"));
+        assert!(specialty_line(Specialty::Fishing, None).ends_with("fishers: a larder"));
+        assert!(specialty_line(Specialty::Farming, None).ends_with("farmers and bakers: a larder"));
     }
 }

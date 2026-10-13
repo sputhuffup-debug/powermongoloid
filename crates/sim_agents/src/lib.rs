@@ -52,12 +52,12 @@ pub use components::{
     ActionKind, Activity, CombatStats, DecisionTrace, Employment, Enlisted, Factors, Needs,
     NextDecision, ScoredOption, Stage, Stance, Strike, Threat, Travel, TravelState, Villager,
 };
-pub use data::Villagers;
+pub use data::{SpecialtyRule, Villagers};
 pub use edicts::{Assignment, DialState, Edicts, Mustered, Rationed};
 pub use food::FoodSecurity;
 pub use loyalty::{Loyalty, LoyaltyTerm, LoyaltyTerms, SettlementLoyalty};
 pub use population::civilian_stats;
-pub use population::{PopulationReport, Specialty};
+pub use population::{PopulationReport, SiteCounts, Specialty};
 pub use standing::{
     Agent, Deed, DeedEntry, DeedLog, Goodwill, GoodwillChange, GoodwillLedger, Owner, OwnerChange,
     set_owner,

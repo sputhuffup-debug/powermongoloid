@@ -263,6 +263,17 @@ impl HeadlessConfig {
 
 /// Builds a windowless simulation app, ready to [`SimStepper::step`].
 pub fn headless_app(config: HeadlessConfig) -> App {
+    headless_app_with(config, |_| {})
+}
+
+/// [`headless_app`], with `edit` applied to the world after the plugins
+/// are built and before the world is generated and populated: tests change
+/// data that populate reads there (e.g. villagers.ron `specialties`, M4a
+/// step 9). The edited data is the app's data: hashed and saved as usual.
+pub fn headless_app_with(
+    config: HeadlessConfig,
+    edit: impl FnOnce(&mut bevy_ecs::world::World),
+) -> App {
     let mut app = App::new();
     let run = config.scenario.run_config();
     app.add_plugins(TaskPoolPlugin::default())
@@ -279,6 +290,7 @@ pub fn headless_app(config: HeadlessConfig) -> App {
             s.set_executor(SingleThreadedExecutor::new());
         });
     }
+    edit(app.world_mut());
     app.prepare_sim();
     set_up_scenario(app.world_mut(), config.scenario);
     app

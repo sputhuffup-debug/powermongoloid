@@ -32,7 +32,7 @@ use sim_core::{
     RunConfig, SimEventKind, SimStepper, SimTick, SpawnId,
 };
 use sim_economy::{SettlementEconomy, Stockpile};
-use sim_headless::{HeadlessConfig, Threading, headless_app};
+use sim_headless::{HeadlessConfig, Threading, headless_app_with};
 use sim_military::progression::Effect;
 use sim_military::{
     Army, ArmySpec, ArmyStats, Captain, Progression, RunProgress, TakenBy, Tenure, spawn_army,
@@ -175,12 +175,22 @@ fn conquered(seed: u64) -> (App, Entity) {
     (app, hamlet)
 }
 
-/// [`conquered`], on the executor `threading` picks.
+/// [`conquered`], on the executor `threading` picks. The island is laid
+/// out without specialties (M4a step 9, SIM-62): these scenarios guard
+/// loyalty drift, and their hamlet's food moved only with the layout.
 fn conquered_with(seed: u64, threading: Threading) -> (App, Entity) {
-    let mut app = headless_app(HeadlessConfig {
-        threading,
-        ..HeadlessConfig::run(seed, RunConfig::default())
-    });
+    let mut app = headless_app_with(
+        HeadlessConfig {
+            threading,
+            ..HeadlessConfig::run(seed, RunConfig::default())
+        },
+        |w| {
+            w.resource_mut::<sim_agents::Villagers>()
+                .data
+                .specialties
+                .clear()
+        },
+    );
     // The loyalty branches meet no director's raiders (GP-16).
     quiet_director(&mut app);
     let champion = champion(&mut app);
