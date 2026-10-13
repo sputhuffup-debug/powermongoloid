@@ -13,6 +13,13 @@ changed" at the end); the only file added is this page.
 14 and a median limit of 14.4 to 22.4. The cost check passes on the total (one single-window caveat, see
 section 5), the stage check passes by a wide margin, and the smoke playtest checklist is in section 9.
 
+**After the gate (merge lead, 2026-10-13): the floor is handed to step 6**, as ADR 0020's MP2 section
+planned. No demand data was changed: a fixer began on `demand.*` and was stopped once lane A's step 6 showed
+that the seat calibration alone holds the floor (`docs/m4a/STEP6.md` on `claude/m4a-take`: 5 of 5 won, days
+22.6, 33.2, 21.7, 19.5, 20.5, median 21.7, on this layout). Stiffening Demand as well would push the median
+past 22.4. MP3 re-gates the floor on the combined tree (step 6 with step 9's specialties, which reshape the
+islands).
+
 ## Summary
 
 | # | Check | Result |
@@ -272,7 +279,7 @@ No code, no data, no test, no doc other than this page. Three temporary things e
 before the end: `tests/tests/mp2_probe.rs` (the per-seed counts; deleted, `git status` was clean after),
 the stage probe's seven edits in `crates/` (restored with `git checkout -- crates`, `git status` clean), and
 the instrumented `target/release/sim_headless` (rebuilt clean; its sha256 equals the gated binary's). The
-page is not committed.
+merge lead committed this page afterwards (`d1f04a7`).
 
 ## 9. Smoke playtest for the user (about 15 minutes): the go or hold for part 2
 
