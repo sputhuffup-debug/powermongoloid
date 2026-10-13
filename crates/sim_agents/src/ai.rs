@@ -62,11 +62,14 @@ pub struct RunFixes {
 impl RunFixes {
     /// Whether someone other than `me` is already on this delivery.
     fn taken(&self, workplace: Entity, good: GoodId, me: &Me) -> bool {
-        me.hauling != Some((workplace, good))
-            && self
-                .claims
-                .get(&(workplace, good))
-                .is_some_and(|id| *id != me.id)
+        me.hauling != Some((workplace, good)) && self.claimed_by_other(workplace, good, me.id)
+    }
+
+    /// Whether the claim on this delivery is someone else's than `id`.
+    fn claimed_by_other(&self, workplace: Entity, good: GoodId, id: SpawnId) -> bool {
+        self.claims
+            .get(&(workplace, good))
+            .is_some_and(|c| *c != id)
     }
 }
 
@@ -888,7 +891,7 @@ pub(crate) fn decide(
             let mut kept: Vec<(Entity, GoodId)> = Vec::new();
             let mut losers: Vec<SpawnId> = Vec::new();
             for (id, dropoff, good) in fresh {
-                if fixes.taken(dropoff, good, id) || kept.contains(&(dropoff, good)) {
+                if fixes.claimed_by_other(dropoff, good, id) || kept.contains(&(dropoff, good)) {
                     losers.push(id);
                 } else {
                     kept.push((dropoff, good));
