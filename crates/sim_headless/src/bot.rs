@@ -925,8 +925,6 @@ impl Bot {
         Task::Forage
     }
 
-    /// The nearest settlement the army can take (not the seat, not one
-    /// the player owns).
     /// A settlement not the rival's within [`ARMS_STOP`] tiles whose
     /// storehouse holds at least [`ARMS_MIN`] weapons, nearest first, when
     /// at least five of `cap`'s men are unarmed and it is fed for the walk.
@@ -952,6 +950,8 @@ impl Bot {
             .map(|s| s.id)
     }
 
+    /// The nearest settlement the army can take (not the seat, not one
+    /// the player owns).
     fn conquest_target(&self, v: &View, cap: &Cap) -> Option<u64> {
         if cap.days < 1.5 || cap.people < 20 {
             return None;

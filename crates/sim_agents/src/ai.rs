@@ -744,7 +744,6 @@ pub(crate) fn decide(
     world: AiWorld,
     mut agents: Query<
         (
-            Entity,
             &SpawnId,
             &Villager,
             &Occupation,
@@ -769,36 +768,24 @@ pub(crate) fn decide(
     let working = world.villagers.data.households.working_age;
     // SIM-64: in a run with the fixes, the input deliveries haulers are on
     // as the tick starts (read before anyone decides, so the order agents
-    // decide in changes nothing). Found in parallel; each delivery keeps
-    // its lowest SpawnId, so the order they are found in changes nothing.
+    // decide in changes nothing).
     let fixes = run_fixes_on(world.run.as_deref(), &world.econ).then(|| {
-        let found = std::sync::Mutex::new(Vec::new());
-        agents.par_iter().for_each(|(_, id, .., activity, _, _, _)| {
+        let mut f = RunFixes::default();
+        for (id, _, _, _, _, _, _, _, activity, ..) in agents.iter() {
             if activity.kind == ActionKind::Haul
                 && activity.stage != Stage::Done
                 && let (Some(dropoff), Some(good)) = (activity.dropoff, activity.good)
             {
-                found
-                    .lock()
-                    .expect("claims")
-                    .push(((dropoff, good), *id));
+                f.claims
+                    .entry((dropoff, good))
+                    .and_modify(|c| *c = (*c).min(*id))
+                    .or_insert(*id);
             }
-        });
-        let mut f = RunFixes::default();
-        for (delivery, id) in found.into_inner().expect("claims") {
-            f.claims
-                .entry(delivery)
-                .and_modify(|c| *c = (*c).min(id))
-                .or_insert(id);
         }
         f
     });
-    // SIM-64: carters who chose a free input delivery this tick, noted as
-    // they choose (sorted after).
-    let fresh = std::sync::Mutex::new(Vec::new());
     agents.par_iter_mut().for_each(
         |(
-            entity,
             id,
             villager,
             occupation,
@@ -879,36 +866,43 @@ pub(crate) fn decide(
                 Some(goal) if goal != pos.0 => travel.go_to(goal),
                 _ => travel.state = TravelState::Arrived,
             }
-            if fixes.is_some()
-                && *occupation == Occupation::Carter
-                && c.option.kind == ActionKind::Haul
-                && let (Some(dropoff), Some(good)) = (c.dropoff, c.good)
-                && world.is_delivery(dropoff, good)
-            {
-                fresh
-                    .lock()
-                    .expect("fresh deliveries")
-                    .push((*id, entity, dropoff, good));
-            }
         },
     );
     // SIM-64: two carters who chose the same free input delivery in the
     // same tick: the lowest SpawnId keeps it, the others decide again next
     // tick (when its claim shows).
     if let Some(fixes) = &fixes {
-        let mut fresh: Vec<(SpawnId, Entity, Entity, GoodId)> =
-            fresh.into_inner().expect("fresh deliveries");
+        let mut fresh: Vec<(SpawnId, Entity, GoodId)> = agents
+            .iter()
+            .filter_map(|(id, _, occupation, .., activity, _, _, _)| {
+                let (Some(dropoff), Some(good)) = (activity.dropoff, activity.good) else {
+                    return None;
+                };
+                (*occupation == Occupation::Carter
+                    && activity.kind == ActionKind::Haul
+                    && activity.started_tick == tick
+                    && activity.stage == Stage::Travel
+                    && world.is_delivery(dropoff, good))
+                .then_some((*id, dropoff, good))
+            })
+            .collect();
         if fresh.len() > 1 {
             fresh.sort_unstable();
             let mut kept: Vec<(Entity, GoodId)> = Vec::new();
-            for (id, carter, dropoff, good) in fresh {
+            let mut losers: Vec<SpawnId> = Vec::new();
+            for (id, dropoff, good) in fresh {
                 if fixes.claimed_by_other(dropoff, good, id) || kept.contains(&(dropoff, good)) {
-                    if let Ok((.., mut activity, mut travel, _, _)) = agents.get_mut(carter) {
+                    losers.push(id);
+                } else {
+                    kept.push((dropoff, good));
+                }
+            }
+            if !losers.is_empty() {
+                for (id, .., mut activity, mut travel, _, _) in agents.iter_mut() {
+                    if losers.binary_search(id).is_ok() {
                         activity.stage = Stage::Done;
                         travel.state = TravelState::Idle;
                     }
-                } else {
-                    kept.push((dropoff, good));
                 }
             }
         }
