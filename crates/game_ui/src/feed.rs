@@ -162,6 +162,25 @@ fn log_line_shown(text: &str, player: &str) -> bool {
     }
 }
 
+/// GP-34 (M4a): the day's tribute from your lands as one Dawn line, not a
+/// line a captain: `(food, arms, men)` per receiving band.
+fn dawn_line(day: u64, bands: &[(u64, u64, i32)]) -> Option<String> {
+    if bands.is_empty() {
+        return None;
+    }
+    let (food, arms, men) = bands.iter().fold((0, 0, 0), |a, b| {
+        (a.0 + b.0, a.1 + b.1, a.2 + i64::from(b.2))
+    });
+    let to = if bands.len() == 1 {
+        "1 band".to_string()
+    } else {
+        format!("{} bands", bands.len())
+    };
+    Some(format!(
+        "Day {day}, dawn: your lands sent {food} food, {arms} arms and {men} men to {to}."
+    ))
+}
+
 fn upper_first(s: &str) -> String {
     let mut c = s.chars();
     c.next()
@@ -236,6 +255,8 @@ fn read_feed(world: &mut World, mut cur: Local<Cursors>) {
     let ff = world.resource::<FastForward>().0;
     let mut pause = false;
     let mut told: Vec<ChronicleEntry> = Vec::new();
+    // Tribute events, grouped into one Dawn line per day below.
+    let mut tributes: Vec<FeedEntry> = Vec::new();
     {
         let sent = world.resource::<SentOffers>();
         let tick = world.get_resource::<SimTick>().map_or(0, |t| t.0);
@@ -255,7 +276,9 @@ fn read_feed(world: &mut World, mut cur: Local<Cursors>) {
             if !quiet && ff && e.kind.notable() {
                 pause = true;
             }
-            if worth_a_line(e, waiting) {
+            if e.kind == SimEventKind::Tribute && e.faction == FactionId::PLAYER {
+                tributes.push(*entry);
+            } else if worth_a_line(e, waiting) {
                 told.push(ChronicleEntry {
                     tick: entry.tick,
                     event: *e,
@@ -282,6 +305,32 @@ fn read_feed(world: &mut World, mut cur: Local<Cursors>) {
         })
         .collect();
     let cal = world.resource::<Calendar>();
+    let mut days: Vec<(u64, u64, Vec<(u64, u64, i32)>, IVec2)> = Vec::new();
+    for t in &tributes {
+        let day = cal.at(t.tick).day + 1;
+        let band = (
+            t.event.other & 0xffff_ffff,
+            t.event.other >> 32,
+            t.event.amount,
+        );
+        match days.last_mut() {
+            Some(d) if d.0 == day => d.2.push(band),
+            _ => days.push((day, t.tick, vec![band], t.event.at)),
+        }
+    }
+    for (day, tick, bands, at) in days {
+        if let Some(text) = dawn_line(day, &bands) {
+            new.push((
+                tick,
+                0,
+                Line {
+                    text,
+                    at: (at != IVec2::ZERO).then_some(at),
+                    log: false,
+                },
+            ));
+        }
+    }
     new.extend(logged.into_iter().map(|(tick, text)| {
         let day = cal.at(tick).day + 1;
         let text = format!("Day {day}: {}.", upper_first(&text));
@@ -366,6 +415,17 @@ fn click_feed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// GP-34: a day's tribute is one Dawn line.
+    #[test]
+    fn a_days_tribute_is_one_dawn_line() {
+        assert_eq!(dawn_line(7, &[]), None);
+        assert_eq!(
+            dawn_line(7, &[(24, 6, 3), (10, 0, 2)]).unwrap(),
+            "Day 7, dawn: your lands sent 34 food, 6 arms and 5 men to 2 bands."
+        );
+        assert!(dawn_line(7, &[(1, 0, 0)]).unwrap().ends_with("to 1 band."));
+    }
 
     const ME: &str = "Your warband";
 

@@ -430,17 +430,17 @@ M4a "Lordship" ([LORDSHIP_DESIGN.md](../LORDSHIP_DESIGN.md) section 10, [ADR 002
 | `fallout.shadow` | Taking a town where the rival's share is at least this brings a vow (0..1) |
 | `fallout.vow_delay_hours` | A vow comes due this many game hours after it is made |
 | `fallout.vow_cooldown_days` | No new vow within this many days of the last (`RivalState.last_reprisal`) |
-| `edicts` | GP-34 (step 4): the three dials of `sim_agents::Edicts` (Work, Dues, Table), set with `CommandKind::Govern` (refused "not yet" until step 4) or a steward's habit; every default is an exact no-op |
+| `edicts` | GP-34 (step 4): the three dials of `sim_agents::Edicts` (Work, Dues, Table), set with `CommandKind::Govern` or, from step 9, a steward's habit; every default is an exact no-op |
 | `edicts.lock_days` | A dial locks for this many days from the hour it starts |
 | `edicts.reach` | Tithes and levies go to owner captains within this many tiles |
-| `edicts.moves_share`, `edicts.min_moves` | A wave moves this share of the workers, at least `min_moves` |
+| `edicts.moves_share`, `edicts.min_moves` | A wave moves this share of the workers (rounded up), at least `min_moves` |
 | `edicts.carter_floor` | Fields keeps carters above this share of the workers |
 | `edicts.fields_cap`, `edicts.forge_cap` | Fields moves workers to food up to this share; Forge to the forge up to this share |
 | `edicts.walls_carters` | Walls adds up to this many carters |
 | `edicts.walls_build`, `edicts.walls_defence`, `edicts.walls_threat` | Walls: sites build this many times as fast, the militia's defence gains this, the threat radius is multiplied by this |
-| `edicts.tithe` (`keep_days`, `term`) | Tithe: the town keeps `keep_days` of its need; its Dues term |
-| `edicts.levy` (`per_day`, `cap`, `term`, `harsh_term`) | Levy: musters `per_day` of the people a wave, up to `cap`; its Dues term (`harsh_term` at a conquered or sacked town) |
-| `edicts.ration` (`hunger`, `work`, `term`) | Ration: hunger and the daily need times `hunger`, work cycles times `work`; its Table term |
+| `edicts.tithe` (`keep_days`, `term`) | Tithe: the town keeps `keep_days` of its need, the rest of its food and all the storehouse's weapons and tools go to the collector (as far as its baggage has room); its Dues term (none at a submitted town) |
+| `edicts.levy` (`per_day`, `cap`, `term`, `harsh_term`) | Levy: musters `per_day` of the people a wave, with at most `cap` waiting on the green (both shares rounded, at least one); its Dues term (`harsh_term` at a conquered or sacked town, none at an invited one) |
+| `edicts.ration` (`hunger`, `work`, `term`) | Ration: hunger and the daily need times `hunger`, work cycles times `work` (both copied into the `Rationed` component when it starts); its Table term |
 | `edicts.feast` (`min_food_days`, `food_days`, `gather_hours`, `work`, `term`, `term_days`, `cooldown_days`) | Feast: needs `min_food_days` of food, eats `food_days` of the town's need, gathers on the green for `gather_hours` (work scores times `work`); then, if fed, a `Deed::Festival` (`goodwill_deeds.festival`), a Table term of `term` for `term_days`, and `cooldown_days` before the next |
 | `stewards` | GP-34 (step 9): every owned town's steward (`sim_military::Steward`), a person with habits |
 | `stewards.habits` | `false`: stewards set no dial (scenario tests opt out) |

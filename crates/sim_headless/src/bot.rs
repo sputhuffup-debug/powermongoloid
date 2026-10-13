@@ -31,6 +31,12 @@
 //!    from day 16, 0.75 from day 24, any army from day 32): first to a
 //!    staging point, then an `Attack` on the seat together.
 //!
+//! 7. governs once a game day ([`Bot::govern`], LORDSHIP_DESIGN section
+//!    12): Forge at the best smithy town while it has two days of food,
+//!    Tithe at fed, loyal towns within [`GOVERN_RANGE`] of a captain, a
+//!    Levy at one big loyal town at a time, never Ration or Feast. Only
+//!    commands the sim would accept are sent.
+//!
 //! Tie-breaks draw from stream `sim_headless::bot` at the tick. Nothing in
 //! the bot depends on wall time or hash order, so a recorded bot run
 //! replays.
@@ -40,14 +46,17 @@ use std::collections::BTreeMap;
 use bevy_ecs::prelude::*;
 use bevy_math::{IVec2, Vec2};
 use rand::RngExt;
-use sim_agents::{CombatStats, Owner, Stance, Villager, Villagers};
+use sim_agents::{
+    CombatStats, Edicts, FoodSecurity, Owner, SettlementLoyalty, Stance, Villager, Villagers,
+};
 use sim_core::rng::rng_key;
 use sim_core::{
-    Calendar, Cause, Checkpoint, Chronicle, ChronicleEntry, CommandKind, CommandLog, FactionId,
-    LoggedCommand, OfferKind, Offers, OrderSpec, Position, RunOutcome, RunState, SimCommand,
-    SimSeed, SimStepper, SimTick, SpawnId, Stat, compute_state_hash,
+    Calendar, Cause, Checkpoint, Chronicle, ChronicleEntry, CommandKind, CommandLog, Dues,
+    FactionId, GovernAct, LoggedCommand, OfferKind, Offers, OrderSpec, Position, RunOutcome,
+    RunState, SimCommand, SimSeed, SimStepper, SimTick, SpawnId, Stat, WorkFocus,
+    compute_state_hash,
 };
-use sim_economy::{Economy, GoodId, SettlementEconomy, Stockpile};
+use sim_economy::{Economy, GoodId, SettlementEconomy, Stockpile, Workplace, WorkplaceKind};
 use sim_military::progression::Effect;
 use sim_military::{
     Army, ArmyIndex, Captain, Equipment, Follower, Guard, Holder, Progression, RequestBoard,
@@ -87,6 +96,113 @@ const MIN_ARMY: u32 = 40;
 /// GP-27: hire a band only if, after paying, the baggage still holds this
 /// many days of food for the main army and the newcomers.
 pub const HIRE_RESERVE_DAYS: f32 = 0.5;
+
+/// Tithes and levies reach captains within this many tiles (`orders::lands`);
+/// the bot only sets them for towns inside it.
+const GOVERN_RANGE: f32 = 60.0;
+
+/// Forge needs this many days of food in the town, and is set back to
+/// Balanced under [`FORGE_OFF_DAYS`].
+const FORGE_DAYS: f32 = 2.0;
+const FORGE_OFF_DAYS: f32 = 1.0;
+
+/// Tithe needs more than this many days of food and this loyalty; it is
+/// kept (hysteresis) down to [`TITHE_KEEP_DAYS`] and [`TITHE_KEEP_LOYALTY`].
+const TITHE_DAYS: f32 = 1.5;
+const TITHE_LOYALTY: f32 = 0.45;
+const TITHE_KEEP_DAYS: f32 = 1.0;
+const TITHE_KEEP_LOYALTY: f32 = 0.40;
+
+/// A Levy needs a town of this many people and this loyalty (kept down to
+/// [`LEVY_KEEP_LOYALTY`]).
+const LEVY_POP: u32 = 100;
+const LEVY_LOYALTY: f32 = 0.6;
+const LEVY_KEEP_LOYALTY: f32 = 0.5;
+
+/// Most Govern commands in one day.
+const GOVERN_PER_DAY: usize = 4;
+
+/// An owned town as `govern` sees it.
+#[derive(Debug, Clone)]
+struct Town {
+    id: u64,
+    entity: Entity,
+    pop: u32,
+    smithies: u32,
+    days: f32,
+    loyalty: f32,
+    work: WorkFocus,
+    dues: Dues,
+    /// Whether a captain of the bot stands within [`GOVERN_RANGE`].
+    near: bool,
+}
+
+/// The dial settings the bot wants, as (town, act), in SpawnId order. Pure:
+/// the caller drops what the sim would refuse.
+fn plan_govern(towns: &[Town]) -> Vec<(u64, GovernAct)> {
+    let mut out = Vec::new();
+    // The forge town: most smithies, then most people, then lowest id.
+    let forge = towns
+        .iter()
+        .filter(|t| t.smithies > 0)
+        .max_by_key(|t| (t.smithies, t.pop, std::cmp::Reverse(t.id)))
+        .map(|t| t.id);
+    // One levying town at a time: the sitting one while it holds, else the
+    // biggest eligible.
+    let sitting = towns.iter().find(|t| {
+        t.dues == Dues::Levy
+            && t.near
+            && t.pop >= LEVY_POP
+            && t.loyalty >= LEVY_KEEP_LOYALTY
+            && t.days > TITHE_KEEP_DAYS
+    });
+    let levy = sitting.map(|t| t.id).or_else(|| {
+        if towns.iter().any(|t| t.dues == Dues::Levy) {
+            return None;
+        }
+        towns
+            .iter()
+            .filter(|t| {
+                t.near && t.pop >= LEVY_POP && t.loyalty >= LEVY_LOYALTY && t.days > TITHE_DAYS
+            })
+            .max_by_key(|t| (t.pop, std::cmp::Reverse(t.id)))
+            .map(|t| t.id)
+    });
+    for t in towns {
+        let work = if Some(t.id) == forge {
+            if t.days >= FORGE_DAYS {
+                WorkFocus::Forge
+            } else if t.work == WorkFocus::Forge && t.days < FORGE_OFF_DAYS {
+                WorkFocus::Balanced
+            } else {
+                t.work
+            }
+        } else if t.work == WorkFocus::Forge {
+            WorkFocus::Balanced
+        } else {
+            t.work
+        };
+        if work != t.work {
+            out.push((t.id, GovernAct::Work(work)));
+        }
+        let tithe = if t.dues == Dues::Tithe {
+            t.days > TITHE_KEEP_DAYS && t.loyalty >= TITHE_KEEP_LOYALTY
+        } else {
+            t.days > TITHE_DAYS && t.loyalty >= TITHE_LOYALTY
+        };
+        let dues = if Some(t.id) == levy {
+            Dues::Levy
+        } else if t.near && tithe {
+            Dues::Tithe
+        } else {
+            Dues::Light
+        };
+        if dues != t.dues {
+            out.push((t.id, GovernAct::Dues(dues)));
+        }
+    }
+    out
+}
 
 /// The bot's own record of what each of its captains is doing.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -143,6 +259,8 @@ pub struct Bot {
     /// The most militia seen standing at each settlement.
     seen: BTreeMap<u64, u32>,
     plan: Plan,
+    /// The game day `govern` last ran.
+    governed: Option<u64>,
     /// Captains (SpawnIds) the bot leaves to someone else.
     ignored: Vec<u64>,
     /// What the bot decided, with the tick, for reports.
@@ -423,6 +541,7 @@ impl Bot {
             seen: BTreeMap::new(),
             shunned: BTreeMap::new(),
             plan: Plan::Grow,
+            governed: None,
             ignored: Vec::new(),
             notes: Vec::new(),
         }
@@ -478,6 +597,7 @@ impl Bot {
                 self.note(tick, format!("captain {}: gave up on {task:?}", cap.id));
             }
         }
+        out.extend(self.govern(world, &view));
         self.update_plan(&view);
         if let Some(cmd) = self.appoint(&view) {
             out.push(cmd);
@@ -489,6 +609,72 @@ impl Bot {
                 self.holder_task(&view, cap)
             };
             out.extend(self.issue(world, &view, cap, task));
+        }
+        out
+    }
+
+    /// Once a game day (the first think after each dawn): sets the dials of
+    /// the towns the player owns by [`plan_govern`], skipping anything the
+    /// sim would refuse (a locked dial, no change).
+    fn govern(&mut self, world: &mut World, v: &View) -> Vec<SimCommand> {
+        let tpd = world.resource::<Calendar>().ticks_per_day;
+        let day = v.tick / tpd;
+        if self.governed == Some(day) {
+            return Vec::new();
+        }
+        self.governed = Some(day);
+        let mut q = world.query::<(
+            Entity,
+            &SpawnId,
+            &Settlement,
+            &SettlementEconomy,
+            &Owner,
+            &Edicts,
+            &FoodSecurity,
+            &SettlementLoyalty,
+        )>();
+        let mut towns: Vec<Town> = q
+            .iter(world)
+            .filter(|(.., o, _, _, _)| o.faction == FactionId::PLAYER)
+            .map(|(e, id, s, se, _, ed, fs, sl)| Town {
+                id: id.0,
+                entity: e,
+                pop: se.population,
+                smithies: se
+                    .workplaces
+                    .iter()
+                    .filter(|w| {
+                        world
+                            .get::<Workplace>(**w)
+                            .is_some_and(|w| w.kind == WorkplaceKind::Smithy)
+                    })
+                    .count() as u32,
+                days: fs.days,
+                loyalty: sl.mean,
+                work: ed.pending_work.unwrap_or(ed.work),
+                dues: ed.pending_dues.unwrap_or(ed.dues),
+                near: v.caps.iter().any(|c| dist(c.at, s.center) <= GOVERN_RANGE),
+            })
+            .collect();
+        towns.sort_unstable_by_key(|t| t.id);
+        let mut out = Vec::new();
+        for (id, act) in plan_govern(&towns) {
+            let Some(t) = towns.iter().find(|t| t.id == id) else {
+                continue;
+            };
+            if out.len() >= GOVERN_PER_DAY
+                || sim_military::govern::refusal(world, FactionId::PLAYER, t.entity, act).is_some()
+            {
+                continue;
+            }
+            self.note(v.tick, format!("govern {id}: {act:?}"));
+            out.push(SimCommand::player(
+                FactionId::PLAYER,
+                CommandKind::Govern {
+                    settlement: id,
+                    act,
+                },
+            ));
         }
         out
     }
@@ -1272,6 +1458,66 @@ pub fn play_bot_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn town(id: u64) -> Town {
+        Town {
+            id,
+            entity: Entity::PLACEHOLDER,
+            pop: 60,
+            smithies: 0,
+            days: 3.0,
+            loyalty: 0.7,
+            work: WorkFocus::Balanced,
+            dues: Dues::Light,
+            near: true,
+        }
+    }
+
+    /// `govern` forges at the town with the most smithies, tithes the fed
+    /// loyal ones near a captain, and levies at only one big town.
+    #[test]
+    fn govern_picks_the_smithy_town_and_one_levy() {
+        let mut a = town(1);
+        a.smithies = 1;
+        let mut b = town(2);
+        b.smithies = 2;
+        b.pop = 120;
+        let mut c = town(3);
+        c.pop = 150;
+        c.near = false;
+        let mut d = town(4);
+        d.pop = 140;
+        d.days = 1.0;
+        let plan = plan_govern(&[a, b, c, d]);
+        assert!(plan.contains(&(2, GovernAct::Work(WorkFocus::Forge))));
+        assert!(
+            !plan
+                .iter()
+                .any(|(id, a)| *id == 1 && matches!(a, GovernAct::Work(_)))
+        );
+        // b is the biggest eligible levy town; a tithes; c is out of reach;
+        // d is hungry.
+        assert!(plan.contains(&(2, GovernAct::Dues(Dues::Levy))));
+        assert!(plan.contains(&(1, GovernAct::Dues(Dues::Tithe))));
+        assert!(!plan.iter().any(|(id, _)| *id == 3 || *id == 4));
+    }
+
+    /// A forge town under a day of food goes back to Balanced; between one
+    /// and two days it is left as it is.
+    #[test]
+    fn govern_unforges_a_starving_town() {
+        let mut t = town(1);
+        t.smithies = 1;
+        t.work = WorkFocus::Forge;
+        t.days = 0.8;
+        assert!(plan_govern(&[t.clone()]).contains(&(1, GovernAct::Work(WorkFocus::Balanced))));
+        t.days = 1.5;
+        assert!(
+            !plan_govern(&[t])
+                .iter()
+                .any(|(_, a)| matches!(a, GovernAct::Work(_)))
+        );
+    }
 
     /// The seat counts against an attack whose straight march passes near
     /// it, not only one whose target is near it (`conquest_target`,

@@ -22,6 +22,8 @@ use sim_world::Settlement;
 use crate::selection::Selection;
 use crate::style;
 
+mod govern;
+pub(crate) use govern::GovernView;
 mod why;
 
 pub struct PanelsPlugin;
@@ -32,6 +34,7 @@ impl Plugin for PanelsPlugin {
             Update,
             (villager_panel, settlement_panel).in_set(crate::UiSet::Hud),
         );
+        govern::build(app);
     }
 }
 
@@ -88,6 +91,7 @@ fn spawn_panels(mut commands: Commands) {
                 style::font(13.0),
                 TextColor(style::TEXT),
             ));
+            govern::spawn(p);
         });
 }
 
@@ -139,6 +143,11 @@ fn villager_panel(
         Option<Res<Progression>>,
         Query<(Option<&Veteran>, Option<&Traits>)>,
     ),
+    marks: Query<(
+        Option<&sim_agents::Assignment>,
+        Option<&sim_agents::Mustered>,
+        Has<sim_agents::Rationed>,
+    )>,
     mut panel: Query<&mut Visibility, With<VillagerPanel>>,
     mut text: Query<&mut Text, With<VillagerText>>,
 ) {
@@ -218,6 +227,13 @@ fn villager_panel(
         "{} | {years} years | lives in {home}\n",
         capitalise(occ.name())
     );
+    // GP-34 (M4a): an edict moved, mustered or rationed him.
+    if let Some(Ok((a, m, r))) = selection.villager.map(|e| marks.get(e))
+        && let Some(line) = govern::mark_words(*occ, a, m, r, calendar.ticks_per_day)
+    {
+        s += &line;
+        s += "\n";
+    }
     s += &format!("Works at: {workplace} | {} jobs done\n\n", job.cycles);
     s += &format!(
         "Hunger {} {:.0}%{hunger_note}\n",
