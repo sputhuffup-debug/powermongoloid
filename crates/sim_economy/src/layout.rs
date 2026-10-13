@@ -165,6 +165,39 @@ impl StateHash for SettlementEconomy {
     }
 }
 
+/// The layout's recipe for the `i`-th workplace of a kind whose recipes
+/// are `recipes` (`Economy::recipes_for`): workplaces with several recipes
+/// (the smithy) alternate between them in file order. A recipe flipped with
+/// [`set_recipe`] goes back to this one when its edict ends (step 4).
+pub fn layout_recipe(recipes: &[RecipeId], i: usize) -> Option<RecipeId> {
+    (!recipes.is_empty()).then(|| recipes[i % recipes.len()])
+}
+
+/// Sets a workplace's recipe (SIM-64; the Forge edict and ordered smithies
+/// call it). Refused, changing nothing, if the recipe is made at another
+/// kind of workplace. Any cycle under way finishes with the old recipe's
+/// outputs; a worker's next cycle takes the new one's inputs.
+pub fn set_recipe(
+    econ: &Economy,
+    workplace: &mut Workplace,
+    recipe: RecipeId,
+) -> Result<(), String> {
+    let r = econ
+        .recipes
+        .get(recipe.0 as usize)
+        .ok_or_else(|| format!("no recipe #{}", recipe.0))?;
+    if r.workplace != workplace.kind {
+        return Err(format!(
+            "{} is made at a {}, not a {}",
+            r.name,
+            r.workplace.name(),
+            workplace.kind.name()
+        ));
+    }
+    workplace.recipe = Some(recipe);
+    Ok(())
+}
+
 /// What to build for one settlement.
 #[derive(Debug, Clone, Default)]
 pub struct LayoutRequest {
@@ -359,7 +392,7 @@ pub fn build_settlement(
             .map(|(i, tile)| {
                 occupied.insert(tile);
                 // Workplaces with several recipes (the smithy) alternate.
-                let recipe = (!recipes.is_empty()).then(|| recipes[i % recipes.len()]);
+                let recipe = layout_recipe(&recipes, i);
                 spawn_building(
                     world,
                     (
@@ -472,6 +505,29 @@ pub fn build_settlement(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SIM-64: a smithy's recipe can be flipped to either smithing recipe,
+    /// never to one made elsewhere; the layout alternates in file order.
+    #[test]
+    fn set_recipe_checks_the_workplace() {
+        let econ = Economy::default_data();
+        let smithing = econ.recipes_for(WorkplaceKind::Smithy);
+        assert_eq!(layout_recipe(&smithing, 0), Some(smithing[0]));
+        assert_eq!(layout_recipe(&smithing, 1), Some(smithing[1]));
+        assert_eq!(layout_recipe(&smithing, 2), Some(smithing[0]));
+        assert_eq!(layout_recipe(&[], 3), None);
+        let mut wp = Workplace {
+            kind: WorkplaceKind::Smithy,
+            recipe: Some(smithing[0]),
+            workers: Vec::new(),
+        };
+        set_recipe(&econ, &mut wp, smithing[1]).unwrap();
+        assert_eq!(wp.recipe, Some(smithing[1]));
+        let baking = econ.recipes_for(WorkplaceKind::Bakery)[0];
+        assert!(set_recipe(&econ, &mut wp, baking).is_err());
+        assert!(set_recipe(&econ, &mut wp, RecipeId(999)).is_err());
+        assert_eq!(wp.recipe, Some(smithing[1]), "a refusal changes nothing");
+    }
 
     #[test]
     fn ring_is_sorted_nearest_first() {

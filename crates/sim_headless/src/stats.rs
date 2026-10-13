@@ -494,3 +494,138 @@ pub fn chronicle(app: &App) -> Vec<String> {
     let entries = world.resource::<sim_core::Chronicle>().entries();
     sim_military::describe_entries(world, entries)
 }
+
+/// Where every unit of one good is (SIM-64's weapons census): storehouses,
+/// workplaces (waiting to be hauled), homes, people's hands and armies'
+/// baggage (`baggage`: every stockpile that isn't a building's, which today
+/// means captains'). Equipped weapons are no longer goods and aren't
+/// counted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GoodCensus {
+    pub storehouses: u32,
+    pub workplaces: u32,
+    pub homes: u32,
+    pub hands: u32,
+    pub baggage: u32,
+}
+
+impl GoodCensus {
+    /// Every unit counted.
+    pub fn total(&self) -> u32 {
+        self.storehouses + self.workplaces + self.homes + self.hands + self.baggage
+    }
+}
+
+/// Counts the good named `good` wherever it is (see [`GoodCensus`]).
+pub fn census(world: &mut World, good: &str) -> GoodCensus {
+    use sim_economy::{BuildingKind, Inventory, WorkplaceKind};
+    let econ = world.resource::<Economy>();
+    let Some(g) = (0..econ.good_count() as u8)
+        .map(sim_economy::GoodId)
+        .find(|g| econ.good_name(*g) == good)
+    else {
+        return GoodCensus::default();
+    };
+    let mut c = GoodCensus::default();
+    let mut q = world.query::<(&Stockpile, Option<&Building>)>();
+    for (st, b) in q.iter(world) {
+        let n = st.get(g);
+        match b.map(|b| b.kind) {
+            Some(BuildingKind::Workplace(WorkplaceKind::Storehouse)) => c.storehouses += n,
+            Some(BuildingKind::Workplace(_)) => c.workplaces += n,
+            Some(BuildingKind::House) => c.homes += n,
+            None => c.baggage += n,
+        }
+    }
+    let mut q = world.query::<&Inventory>();
+    c.hands = q.iter(world).map(|i| i.get(g) as u32).sum();
+    c
+}
+
+/// `--workshops` (SIM-64): each smithy's and mine's recipe, stock, workers
+/// and their cycles (work cycles and their own hauls), by settlement, then
+/// the island's weapons and tools by where they are.
+pub fn workshops(app: &mut App) -> Vec<String> {
+    use sim_economy::{Workplace, WorkplaceKind};
+    let world = app.world_mut();
+    let mut cycles: BTreeMap<Entity, (u32, u32)> = BTreeMap::new();
+    let mut q = world.query::<&sim_agents::Employment>();
+    for e in q.iter(world) {
+        if let Some(wp) = e.workplace {
+            let c = cycles.entry(wp).or_default();
+            c.0 += 1;
+            c.1 += e.cycles;
+        }
+    }
+    let econ = world.resource::<Economy>().clone();
+    let names = world.resource::<NameTable>().clone();
+    let mut q = world.query::<(Entity, &sim_core::SpawnId, &Settlement, &SettlementEconomy)>();
+    let mut towns: Vec<_> = q
+        .iter(world)
+        .map(|(e, id, s, se)| (*id, e, s.name, se.workplaces.clone(), se.storehouse))
+        .collect();
+    towns.sort_by_key(|t| t.0);
+    let mut out = Vec::new();
+    for (_, _, name, workplaces, store) in towns {
+        let mut lines = Vec::new();
+        for wp in workplaces {
+            let Some(w) = world.get::<Workplace>(wp) else {
+                continue;
+            };
+            if !matches!(w.kind, WorkplaceKind::Smithy | WorkplaceKind::Mine) {
+                continue;
+            }
+            let recipe = w.recipe.map_or("-", |r| econ.recipe(r).name.as_str());
+            let stock: Vec<String> = world
+                .get::<Stockpile>(wp)
+                .map(|s| {
+                    s.goods
+                        .iter()
+                        .map(|(g, q)| format!("{} {q}", econ.good_name(*g)))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let (workers, n) = cycles.get(&wp).copied().unwrap_or_default();
+            lines.push(format!(
+                "    {:<6} {:<15} workers {:>2} cycles {:>4} | stock [{}]",
+                w.kind.name(),
+                recipe,
+                workers,
+                n,
+                stock.join(", ")
+            ));
+        }
+        if lines.is_empty() {
+            continue;
+        }
+        let store: Vec<String> = world
+            .get::<Stockpile>(store)
+            .map(|s| {
+                s.goods
+                    .iter()
+                    .filter(|(g, _)| !econ.is_food(**g))
+                    .map(|(g, q)| format!("{} {q}", econ.good_name(*g)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.push(format!(
+            "  {} | storehouse [{}]",
+            names.get(name),
+            store.join(", ")
+        ));
+        out.extend(lines);
+    }
+    for good in ["weapons", "tools"] {
+        let c = census(world, good);
+        out.push(format!(
+            "{good}: {} (storehouses {}, workplaces {}, homes {}, hands {}, baggage {})",
+            c.total(),
+            c.storehouses,
+            c.workplaces,
+            c.homes,
+            c.hands,
+            c.baggage
+        ));
+    }
+    out
+}

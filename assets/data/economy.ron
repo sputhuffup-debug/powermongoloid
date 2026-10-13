@@ -55,4 +55,19 @@
     // collapse in production (M2 famine criterion).
     initial_stock_per_villager: [("grain", 4), ("bread", 1), ("wood", 1), ("ore", 1)],
     initial_home_food_per_resident: 2,
+
+    // The smithy chain (SIM-64, ADR 0020), in a run only; the developed
+    // world keeps the M2 rules. `run_fixes`: workshops count only their
+    // outputs as fullness, input deliveries bring at most `input_target`
+    // cycles' worth minus the stock (one carter per delivery), and a worker
+    // drops goods that aren't inputs before a cycle. `min_load`: carters
+    // collect piles of these goods from this size (others from 8).
+    // `cycle_hold`: a cycle that has used its inputs scores this many times
+    // as high until it ends, so a meal waits for it.
+    haul: (
+        run_fixes: true,
+        input_target: 10,
+        min_load: [("weapons", 1), ("tools", 2)],
+        cycle_hold: 2.0,
+    ),
 )
