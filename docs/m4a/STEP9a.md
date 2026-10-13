@@ -51,7 +51,8 @@ On Forge they make 8 to 39 weapons a day on their own ore and keep going, where 
 4. **Market hire hours run from tick 0, not from the taking.** On every `hire_days` (5 days, rounded to whole hours), each Market town the player owns then posts. This needs no new state (no "last posted" field, nothing to save). A town taken on day 4 posts on day 5. The interval holds, and the first offer comes between 0 and 5 days after the taking.
 5. **The hire band's direction comes from the golden angle times the SpawnId, not a draw.** The design asks for "deterministic"; this needs no stream key, and towns' bands don't all camp on the same side.
 6. **Timber's half price is not built.** It belongs to step 8 (`construction` reads `Specialty::Timber` and halves the wood). It is recorded here and in ADR 0020 for step 8.
-7. **The mining test allows a hamlet to keep its one smith.** A town of 43 rounds to one smith either way. The test asserts more miners per town, no fewer smiths, smithies or mines, and more smiths across the Mining towns (20 to 34).
+7. **Two run-preset scenarios opt out** (the plan: "an empty `specialties` list where only the path moved"). They were the only ones of the integration suite to move. `conquest` (`conquered_with`, through `headless_app_with`): its hamlet (#21 on seed 42) had 0.17 days of food on day 3 on the new layout and failed `a_fed_village_under_a_passive_garrison_grows_loyal`'s "a fed village". `edicts` (`fresh`, through `run_app_without_specialties`): `pick` found no free town with two smithies on seed 42's new layout. Both guard something else (loyalty drift, the edicts) and pass unchanged on the MP2 layout.
+8. **The mining test allows a hamlet to keep its one smith.** A town of 43 rounds to one smith either way. The test asserts more miners per town, no fewer smiths, smithies or mines, and more smiths across the Mining towns (20 to 34).
 
 ## Names later steps use
 
@@ -73,8 +74,10 @@ All commands used `-j 2` and `CARGO_INCREMENTAL=0`, and tests ran with `--test-t
 | --- | --- |
 | Guarded stdout (release: developed, skirmish, battle) against `docs/m4a/baseline/*.out` | byte-identical, all three |
 | `specialty` (4 tests) | pass |
-| Unit tests of the touched crates (sim_agents, sim_economy, sim_military, sim_headless, game_ui) | see the gate below |
-| Run-preset tests, determinism, docs, `village_day`, `famine` | see the gate below |
+| `cargo fmt --all --check`; `cargo clippy -j 2 --workspace --all-targets -- -D warnings`; `RUSTDOCFLAGS="-D warnings" cargo doc -j 2 --workspace --no-deps` | clean |
+| Unit tests: game_ui 60, sim_agents 32, sim_economy 13, sim_headless 8, sim_military 97 (+1 ignored) | all pass |
+| The whole integration suite (`-p integration_tests --no-fail-fast`, every run-preset test, `determinism`, `docs`, `village_day`, `famine`, `save_load`, `take_modes`, `smithy_chain`, ...) | all pass, after `conquest` and `edicts` opted out (deviation 7) |
+| Run replay: `--run --seed 42 --ticks 3000 --commands 50 --record`, then `--replay` and `--replay --single-threaded` | 51 commands; the same hash `0x75f31a853372a4bf` all three |
 
 ## Open issues
 
