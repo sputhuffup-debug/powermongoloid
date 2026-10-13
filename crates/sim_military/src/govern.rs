@@ -742,7 +742,7 @@ fn destination(world: &World, s: Entity, h: &Hand, focus: WorkFocus) -> Option<E
 /// `sim_agents::jobs::reassign_to` (empty-handed, not mid-cycle). A moved
 /// villager carries an [`Assignment`] (his first trade kept in `from`);
 /// one moved back to that trade loses it. Balanced moves the assigned
-/// back. Returns how many moved.
+/// back (one who was idle goes back to idleness). Returns how many moved.
 fn work_wave(world: &mut World, s: Entity, focus: WorkFocus, data: &EdictsData, tick: u64) -> u32 {
     let plan = plan(world, s, focus, data);
     let by_steward = !world
@@ -753,10 +753,18 @@ fn work_wave(world: &mut World, s: Entity, focus: WorkFocus, data: &EdictsData, 
         if moved >= plan.moves {
             break;
         }
-        let Some(to) = destination(world, s, &h, focus) else {
-            continue;
+        // Balanced sends a worker who came from idleness back to it.
+        let back_to_idle = focus == WorkFocus::Balanced
+            && h.assigned.is_some_and(|a| a.from == Occupation::Idle);
+        let ok = if back_to_idle {
+            sim_agents::jobs::reassign(world, h.e, Occupation::Idle)
+        } else {
+            match destination(world, s, &h, focus) {
+                Some(to) => sim_agents::jobs::reassign_to(world, h.e, to),
+                None => false,
+            }
         };
-        if !sim_agents::jobs::reassign_to(world, h.e, to) {
+        if !ok {
             continue;
         }
         moved += 1;

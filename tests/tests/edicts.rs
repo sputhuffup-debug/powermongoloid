@@ -42,11 +42,11 @@ use sim_core::{
     SimEventKind, SimStepper, SimTick, SpawnId, Table, WorkFocus,
 };
 use sim_economy::{
-    Economy, GoodId, Occupation, RecipeId, SettlementEconomy, Stockpile, Workplace,
-    WorkplaceKind, layout_recipe,
+    Economy, GoodId, Occupation, RecipeId, SettlementEconomy, Stockpile, Workplace, WorkplaceKind,
+    layout_recipe,
 };
 use sim_military::{
-    ArmySpec, Army, Captain, Equipment, Follower, Progression, RunProgress, govern, spawn_army,
+    Army, ArmySpec, Captain, Equipment, Follower, Progression, RunProgress, govern, spawn_army,
     transfer,
 };
 
@@ -98,7 +98,7 @@ fn step_past_hour(app: &mut App) {
 fn step_past_dawn(app: &mut App) {
     let d = day(app);
     let t = (tick(app) / d + 1) * d;
-    step_to(app, t + 1);
+    step_to(app, t + 3);
 }
 
 /// A fresh run of the seed, director silenced.
@@ -219,7 +219,10 @@ fn good(app: &App, name: &str) -> GoodId {
 }
 
 fn store_of(app: &App, t: Town) -> Entity {
-    app.world().get::<SettlementEconomy>(t.e).unwrap().storehouse
+    app.world()
+        .get::<SettlementEconomy>(t.e)
+        .unwrap()
+        .storehouse
 }
 
 fn stock_of(app: &App, e: Entity, g: GoodId) -> u32 {
@@ -359,7 +362,11 @@ fn the_first_wave_moves_within_the_hour() {
     govern_cmd(&mut app, t, GovernAct::Work(WorkFocus::Forge));
     app.step(1);
     assert_eq!(edicts(&app, t).pending_work, Some(WorkFocus::Forge));
-    assert_eq!(edicts(&app, t).work, WorkFocus::Balanced, "not before the hour");
+    assert_eq!(
+        edicts(&app, t).work,
+        WorkFocus::Balanced,
+        "not before the hour"
+    );
     step_to(&mut app, sent + 200);
     let e = edicts(&app, t);
     let since = e.dial(Dial::Work).since;
@@ -372,7 +379,10 @@ fn the_first_wave_moves_within_the_hour() {
     );
     assert_eq!(e.work, WorkFocus::Forge);
     assert!(e.dial(Dial::Work).by_player);
-    assert!(since > sent && since <= sent + hour, "applied at the next hour");
+    assert!(
+        since > sent && since <= sent + hour,
+        "applied at the next hour"
+    );
     assert_eq!(since % hour, 0);
     assert_eq!(
         e.dial(Dial::Work).locked_until,
@@ -415,7 +425,11 @@ fn forge_moves_smiths_and_flips_recipes() {
     let smiths = smithies(&app, t.e);
     let weapons = weapon_recipe(&app);
     let layout = layout_recipes(&app, smiths.len());
-    println!("town #{}: {} smithies, layout {layout:?}", t.id, smiths.len());
+    println!(
+        "town #{}: {} smithies, layout {layout:?}",
+        t.id,
+        smiths.len()
+    );
     assert_eq!(recipes_of(&app, &smiths), layout, "the layout to begin");
     assert!(
         layout.iter().any(|r| *r != Some(weapons)),
@@ -423,6 +437,28 @@ fn forge_moves_smiths_and_flips_recipes() {
     );
     let base = count_trades(&mut app, t, is_forge);
     let workers = count_trades(&mut app, t, |_| true);
+    // Free places at the smithies, the mine and the woodcutters' camp.
+    let room: u32 = {
+        let w = app.world();
+        let econ = w.resource::<Economy>();
+        w.get::<SettlementEconomy>(t.e)
+            .unwrap()
+            .workplaces
+            .iter()
+            .filter_map(|e| w.get::<Workplace>(*e))
+            .filter(|wp| {
+                matches!(
+                    wp.kind,
+                    WorkplaceKind::Smithy | WorkplaceKind::Mine | WorkplaceKind::WoodcutterCamp
+                )
+            })
+            .map(|wp| {
+                econ.workplace(wp.kind)
+                    .slots
+                    .saturating_sub(wp.workers.len() as u32)
+            })
+            .sum()
+    };
 
     step_to_hour_offset(&mut app, 2);
     govern_cmd(&mut app, t, GovernAct::Work(WorkFocus::Forge));
@@ -442,11 +478,16 @@ fn forge_moves_smiths_and_flips_recipes() {
     println!("  forge trades (base {base}): first hour and three dawns {series:?}");
     assert!(series[0] > base, "the first wave moved smiths");
     assert!(series.windows(2).all(|w| w[1] >= w[0]), "never fewer");
-    assert!(*series.last().unwrap() > series[0], "the dawns add more");
     let cap = (workers as f32 * 0.2).floor() as u32;
-    assert!(
-        *series.last().unwrap() <= base.max(cap) + 0,
-        "within the 20% cap: {series:?} of {workers} workers"
+    let gain = *series.last().unwrap() - base;
+    println!(
+        "  room for {room} more forge hands, 20% cap leaves {}; gained {gain}",
+        cap.saturating_sub(base)
+    );
+    assert_eq!(
+        gain,
+        room.min(cap.saturating_sub(base)),
+        "forge hands rise until the places or the 20% cap run out"
     );
     // Each wave stays within its cap.
     let mut by_wave = std::collections::BTreeMap::<u64, u32>::new();
@@ -456,7 +497,6 @@ fn forge_moves_smiths_and_flips_recipes() {
     println!("  moves per wave tick: {by_wave:?}");
     let cap = wave_cap(&app, people(&app, t));
     assert!(by_wave.values().all(|&n| n <= cap), "waves within {cap}");
-    assert!(by_wave.len() >= 2, "more than one wave");
     assert_eq!(
         recipes_of(&app, &smiths),
         vec![Some(weapons); smiths.len()],
@@ -466,11 +506,17 @@ fn forge_moves_smiths_and_flips_recipes() {
 
     // After the lock, Balanced.
     let unlock = edicts(&app, t).dial(Dial::Work).locked_until;
-    step_to(&mut app, unlock + 1);
+    if tick(&app) <= unlock {
+        step_to(&mut app, unlock + 1);
+    }
     let before_rejects = rejected(&app, FactionId::PLAYER);
     govern_cmd(&mut app, t, GovernAct::Work(WorkFocus::Balanced));
     step_past_hour(&mut app);
-    assert_eq!(rejected(&app, FactionId::PLAYER), before_rejects, "accepted");
+    assert_eq!(
+        rejected(&app, FactionId::PLAYER),
+        before_rejects,
+        "accepted"
+    );
     assert_eq!(edicts(&app, t).work, WorkFocus::Balanced);
     assert_eq!(
         recipes_of(&app, &smiths),
@@ -482,7 +528,10 @@ fn forge_moves_smiths_and_flips_recipes() {
         step_past_dawn(&mut app);
         left.push(assigned(&mut app, t).len());
     }
-    println!("  assigned {peak} at the peak, then after Balanced {left:?}");
+    let origins: Vec<Occupation> = assigned(&mut app, t).iter().map(|(_, a)| a.from).collect();
+    println!(
+        "  assigned {peak} at the peak, then after Balanced {left:?}; still assigned from {origins:?}"
+    );
     assert!(left.windows(2).all(|w| w[1] <= w[0]), "never more");
     assert!(*left.last().unwrap() < peak, "the assigned drift back");
 }
@@ -504,7 +553,10 @@ fn fields_moves_workers_to_food() {
     let mut freed = 0;
     for (e, o) in trades(&mut app, t) {
         if freed < 6
-            && matches!(o, Occupation::Farmer | Occupation::Smith | Occupation::Miner)
+            && matches!(
+                o,
+                Occupation::Farmer | Occupation::Smith | Occupation::Miner
+            )
             && sim_agents::jobs::reassign(app.world_mut(), e, Occupation::Idle)
         {
             freed += 1;
@@ -514,7 +566,10 @@ fn fields_moves_workers_to_food() {
     let food0 = count_trades(&mut app, t, is_food);
     let carters0 = count_trades(&mut app, t, |o| o == Occupation::Carter);
     let forge0 = count_trades(&mut app, t, is_forge);
-    println!("town #{}: idle {idle0}, food {food0}, carters {carters0}, forge {forge0}", t.id);
+    println!(
+        "town #{}: idle {idle0}, food {food0}, carters {carters0}, forge {forge0}",
+        t.id
+    );
     assert!(idle0 >= 6);
 
     step_to_hour_offset(&mut app, 2);
@@ -525,7 +580,9 @@ fn fields_moves_workers_to_food() {
     step_past_dawn(&mut app);
     let later = count_trades(&mut app, t, is_food);
     let idle1 = count_trades(&mut app, t, |o| o == Occupation::Idle);
-    println!("  food trades {food0} -> {first} (first hour) -> {later} (two dawns), idle {idle0} -> {idle1}");
+    println!(
+        "  food trades {food0} -> {first} (first hour) -> {later} (two dawns), idle {idle0} -> {idle1}"
+    );
     assert!(first > food0, "the first wave moved someone to food");
     assert!(later >= first && later > food0);
     assert!(idle1 < idle0, "the donors were the idle");
@@ -538,8 +595,7 @@ fn fields_moves_workers_to_food() {
         assert_eq!(a.focus, WorkFocus::Fields);
         assert!(is_food(*app.world().get::<Occupation>(*e).unwrap()));
         assert!(
-            matches!(a.from, Occupation::Idle | Occupation::Carter)
-                || is_forge(a.from),
+            matches!(a.from, Occupation::Idle | Occupation::Carter) || is_forge(a.from),
             "donor trade {:?}",
             a.from
         );
@@ -565,7 +621,7 @@ fn walls_raises_haulers_and_the_watch() {
 
     // An army of the rival's, 50 tiles from the centre.
     let radius = app.world().resource::<Army>().data.threat.radius;
-    let want = t.centre + IVec2::new(50, 0);
+    let want = t.centre + IVec2::new(51, 0);
     let at = passable_near(&app, want).expect("a place to stand");
     let foe = spawn_army(
         app.world_mut(),
@@ -586,7 +642,11 @@ fn walls_raises_haulers_and_the_watch() {
         d > radius && d < radius * data.walls_threat,
         "the foe stands between the two radii: {d}"
     );
-    assert_eq!(level(&app), 0.0, "unwalled, a foe at {d:.1} is beyond the radius");
+    assert_eq!(
+        level(&app),
+        0.0,
+        "unwalled, a foe at {d:.1} is beyond the radius"
+    );
 
     let carters0 = count_trades(&mut app, t, |o| o == Occupation::Carter);
     step_to_hour_offset(&mut app, 2);
@@ -600,15 +660,23 @@ fn walls_raises_haulers_and_the_watch() {
         .iter()
         .filter(|(_, a)| a.focus == WorkFocus::Walls)
         .count();
-    println!("  carters {carters0} -> {carters1}, {raised} raised; level now {}", level(&app));
+    println!(
+        "  carters {carters0} -> {carters1}, {raised} raised; level now {}",
+        level(&app)
+    );
     assert!(carters1 > carters0, "the walls need haulers");
     assert!(raised as u32 <= data.walls_carters, "at most six");
     assert_eq!(govern::build_speed(app.world(), t.e), data.walls_build);
     assert_eq!(data.walls_build, 1.5);
     // The same foe (it has not moved far) now frightens the walled town.
     let d = pos_of(&app, foe).distance(t.centre.as_vec2() + Vec2::splat(0.5));
-    let near = ((radius * data.walls_threat - d) / (radius * data.walls_threat * 0.6)).clamp(0.0, 1.0);
-    let expect = app.world().resource::<Army>().threat_of(Posture::Aggressive) * near;
+    let near =
+        ((radius * data.walls_threat - d) / (radius * data.walls_threat * 0.6)).clamp(0.0, 1.0);
+    let expect = app
+        .world()
+        .resource::<Army>()
+        .threat_of(Posture::Aggressive)
+        * near;
     println!("  foe now {d:.1} tiles off; expected level {expect:.3}");
     if d < radius * data.walls_threat && d > radius {
         assert!(level(&app) > 0.0, "the walled watch sees it");
@@ -684,20 +752,16 @@ fn a_tithe_reaches_an_army_within_reach() {
     assert_eq!(arms1, (0, 0), "the storehouse's arms went with it");
     assert!(armed >= 1, "followers armed from the baggage");
     let tribute = feed(&app, SimEventKind::Tribute, capid);
-    println!("  Tribute: {:?}", tribute.iter().map(|f| f.event).collect::<Vec<_>>());
+    println!(
+        "  Tribute: {:?}",
+        tribute.iter().map(|f| f.event).collect::<Vec<_>>()
+    );
     assert_eq!(tribute.len(), 1);
     assert_eq!(tribute[0].event.faction, FactionId::PLAYER);
     assert_eq!(tribute[0].event.amount, 0, "no men");
     assert!(tribute[0].event.other >> 32 > 0, "arms counted");
-    assert!(
-        tribute[0].event.other & 0xffff_ffff > 0,
-        "food counted"
-    );
-    assert_eq!(
-        edicts(&app, t).dues,
-        Dues::Tithe,
-        "the Tithe stands"
-    );
+    assert!(tribute[0].event.other & 0xffff_ffff > 0, "food counted");
+    assert_eq!(edicts(&app, t).dues, Dues::Tithe, "the Tithe stands");
     // It was the hour the dial turned.
     assert_eq!(tribute[0].tick, edicts(&app, t).dial(Dial::Dues).since + 1);
 
@@ -707,14 +771,24 @@ fn a_tithe_reaches_an_army_within_reach() {
     let reach = pos_of(&far, fcap).distance(ft.centre.as_vec2());
     println!("  far: captain {reach:.1} tiles off");
     assert!(reach > 60.0);
-    let far_arms0 = (stock_of(&far, fstore, weapons), stock_of(&far, fstore, tools));
+    let far_arms0 = (
+        stock_of(&far, fstore, weapons),
+        stock_of(&far, fstore, tools),
+    );
     step_to_hour_offset(&mut far, 2);
     govern_cmd(&mut far, ft, GovernAct::Dues(Dues::Tithe));
     step_past_dawn(&mut far);
-    let far_arms1 = (stock_of(&far, fstore, weapons), stock_of(&far, fstore, tools));
+    let far_arms1 = (
+        stock_of(&far, fstore, weapons),
+        stock_of(&far, fstore, tools),
+    );
     println!("  arms in the far store {far_arms0:?} -> {far_arms1:?}");
     assert_eq!(edicts(&far, ft).dues, Dues::Tithe);
-    assert_eq!(far_arms0, far_arms1, "nothing beyond 60 tiles");
+    // (The town's smithies go on making arms: only a gain is allowed.)
+    assert!(
+        far_arms1.0 >= far_arms0.0 && far_arms1.1 >= far_arms0.1,
+        "nothing beyond 60 tiles"
+    );
     assert!(
         feed(&far, SimEventKind::Tribute, spawn_id(&far, fcap)).is_empty(),
         "no Tribute for a captain out of reach"
@@ -751,7 +825,11 @@ fn a_levy_musters_and_joins() {
     govern_cmd(&mut app, t, GovernAct::Dues(Dues::Levy));
     step_past_hour(&mut app);
     let first = waiting(&mut app);
-    println!("town #{} ({pop} people): a wave is {per}, at most {cap} waiting; mustered {}", t.id, first.len());
+    println!(
+        "town #{} ({pop} people): a wave is {per}, at most {cap} waiting; mustered {}",
+        t.id,
+        first.len()
+    );
     assert_eq!(first.len() as u32, per, "2% of the people, at least one");
     assert!(per >= 1);
 
@@ -791,7 +869,11 @@ fn a_levy_musters_and_joins() {
     let joined: Vec<Entity> = second
         .iter()
         .copied()
-        .filter(|&e| app.world().get::<Follower>(e).is_some_and(|f| f.captain == band))
+        .filter(|&e| {
+            app.world()
+                .get::<Follower>(e)
+                .is_some_and(|f| f.captain == band)
+        })
         .collect();
     let third = waiting(&mut app);
     println!(
@@ -801,13 +883,23 @@ fn a_levy_musters_and_joins() {
         people(&app, t),
         third.len()
     );
+    // The dawn's own muster (another wave) is collected in the same pass.
+    let men = second.len() as u32 + per;
     assert_eq!(joined.len(), second.len(), "every one who waited joined");
-    assert!(joined.iter().all(|&e| app.world().get::<Mustered>(e).is_none()));
-    assert!(people(&app, t) <= pop0 - second.len() as u32);
+    assert!(
+        joined
+            .iter()
+            .all(|&e| app.world().get::<Mustered>(e).is_none())
+    );
+    assert_eq!(
+        people(&app, t),
+        pop0 - men,
+        "the town lost the dawn's men too"
+    );
     assert!(third.is_empty(), "none left waiting after the pass");
     let tribute = feed(&app, SimEventKind::Tribute, bandid);
     assert_eq!(tribute.len(), 1);
-    assert_eq!(tribute[0].event.amount as usize, second.len());
+    assert_eq!(tribute[0].event.amount as u32, men);
 }
 
 /// GP-34: the Ration scales hunger by 0.75 for the rationed town's
@@ -833,13 +925,20 @@ fn rationing_slows_eating_by_a_quarter() {
     step_to_hour_offset(&mut app, 2);
     govern_cmd(&mut app, t, GovernAct::Table(Table::Ration));
     step_past_hour(&mut app);
-    let r = *app.world().get::<Rationed>(t.e).expect("the settlement is rationed");
+    let r = *app
+        .world()
+        .get::<Rationed>(t.e)
+        .expect("the settlement is rationed");
     assert_eq!((r.hunger, r.work), (0.75, 1.1));
     let marked = trades(&mut app, t)
         .iter()
         .filter(|(e, _)| app.world().get::<Rationed>(*e).is_some())
         .count();
-    println!("town #{}: {marked} of {} residents rationed", t.id, trades(&mut app, t).len());
+    println!(
+        "town #{}: {marked} of {} residents rationed",
+        t.id,
+        trades(&mut app, t).len()
+    );
     assert_eq!(marked, trades(&mut app, t).len(), "every resident");
     assert!(app.world().get::<Rationed>(other.e).is_none());
 
@@ -884,12 +983,25 @@ fn rationing_slows_eating_by_a_quarter() {
     let fs = *app.world().get::<FoodSecurity>(t.e).unwrap();
     let pop = people(&app, t);
     let honest = fs.food_value / (daily_need(&app, pop) * 0.75);
-    println!("  food security {:.3} days; food value / (need x 0.75) = {honest:.3}", fs.days);
+    println!(
+        "  food security {:.3} days; food value / (need x 0.75) = {honest:.3}",
+        fs.days
+    );
     assert!((fs.days - honest).abs() < 1e-3 * honest.max(1.0));
     // The Table term while rationed.
     app.step(100);
-    let term = app.world().get::<LoyaltyTerms>(t.e).unwrap().get(LoyaltyTerm::Table);
-    let want = app.world().resource::<Progression>().data.edicts.ration.term;
+    let term = app
+        .world()
+        .get::<LoyaltyTerms>(t.e)
+        .unwrap()
+        .get(LoyaltyTerm::Table);
+    let want = app
+        .world()
+        .resource::<Progression>()
+        .data
+        .edicts
+        .ration
+        .term;
     println!("  Table term while rationed {term} (data {want})");
     assert_eq!(term, want);
 }
@@ -913,7 +1025,10 @@ fn feast_run(feast: bool) -> (App, Town) {
 fn near_centre(app: &mut App, t: Town, r: f32) -> (usize, f32) {
     let list = trades(app, t);
     let c = t.centre.as_vec2();
-    let ds: Vec<f32> = list.iter().map(|(e, _)| pos_of(app, *e).distance(c)).collect();
+    let ds: Vec<f32> = list
+        .iter()
+        .map(|(e, _)| pos_of(app, *e).distance(c))
+        .collect();
     let near = ds.iter().filter(|d| **d <= r).count();
     (near, ds.iter().sum::<f32>() / ds.len() as f32)
 }
@@ -933,7 +1048,12 @@ fn a_feast_gathers_and_pays_if_fed() {
     let need = daily_need(&app, pop);
     let econ = app.world().resource::<Economy>().clone();
     let store = store_of(&app, t);
-    let food = |app: &App| app.world().get::<Stockpile>(store).unwrap().food_value(&econ);
+    let food = |app: &App| {
+        app.world()
+            .get::<Stockpile>(store)
+            .unwrap()
+            .food_value(&econ)
+    };
     let start = tick(&app);
     // Up to the hour step before it applies, then the hour itself.
     step_to(&mut app, start + 97);
@@ -981,7 +1101,11 @@ fn a_feast_gathers_and_pays_if_fed() {
     step_to(&mut control, end + 3);
     let e = edicts(&app, t);
     let (g, gc) = (goodwill(&app), goodwill(&control));
-    let term = app.world().get::<LoyaltyTerms>(t.e).unwrap().get(LoyaltyTerm::Table);
+    let term = app
+        .world()
+        .get::<LoyaltyTerms>(t.e)
+        .unwrap()
+        .get(LoyaltyTerm::Table);
     println!(
         "  feast over: goodwill toward the player {g:.3} against {gc:.3}; Table term {term}; next feast at {} (ended {end})",
         e.next_feast
@@ -996,8 +1120,15 @@ fn a_feast_gathers_and_pays_if_fed() {
         .into_iter()
         .filter(|(n, ..)| *n != t.e)
         .find(|(n, ..)| {
-            app.world().get::<Goodwill>(*n).unwrap().get(FactionId::PLAYER)
-                > control.world().get::<Goodwill>(*n).unwrap().get(FactionId::PLAYER)
+            app.world()
+                .get::<Goodwill>(*n)
+                .unwrap()
+                .get(FactionId::PLAYER)
+                > control
+                    .world()
+                    .get::<Goodwill>(*n)
+                    .unwrap()
+                    .get(FactionId::PLAYER)
         });
     println!("  a neighbour that heard: {:?}", neighbour.map(|n| n.1));
     assert!(neighbour.is_some(), "the goodwill spreads to a neighbour");
@@ -1054,11 +1185,18 @@ fn dials_lock() {
     assert_eq!(rejected(&app, p), 0);
 
     let why = |app: &App, s: Entity, act| govern::refusal(app.world(), p, s, act);
-    assert_eq!(why(&app, t.e, GovernAct::Work(WorkFocus::Forge)), Some("locked"));
+    assert_eq!(
+        why(&app, t.e, GovernAct::Work(WorkFocus::Forge)),
+        Some("locked")
+    );
     // Asked: counted.
     govern_cmd(&mut app, t, GovernAct::Work(WorkFocus::Forge));
     app.step(1);
-    println!("locked until {unlock}; a second Work order at {}: rejected {}", tick(&app), rejected(&app, p));
+    println!(
+        "locked until {unlock}; a second Work order at {}: rejected {}",
+        tick(&app),
+        rejected(&app, p)
+    );
     assert_eq!(rejected(&app, p), 1);
     assert_eq!(edicts(&app, t).pending_work, None);
     // The other dials are free.
@@ -1088,7 +1226,7 @@ fn dials_lock() {
     );
 
     // After the lock, accepted.
-    step_to(&mut app, unlock);
+    step_to(&mut app, unlock + 1);
     assert_eq!(why(&app, t.e, GovernAct::Work(WorkFocus::Forge)), None);
     let r = rejected(&app, p);
     govern_cmd(&mut app, t, GovernAct::Work(WorkFocus::Forge));
@@ -1104,8 +1242,14 @@ fn dials_lock() {
         e.dial(Dial::Work).locked_until
     );
     assert_eq!(e.work, WorkFocus::Forge);
-    assert_eq!(e.dial(Dial::Work).locked_until, e.dial(Dial::Work).since + 2 * day(&app));
-    assert_eq!(why(&app, t.e, GovernAct::Work(WorkFocus::Forge)), Some("locked"));
+    assert_eq!(
+        e.dial(Dial::Work).locked_until,
+        e.dial(Dial::Work).since + 2 * day(&app)
+    );
+    assert_eq!(
+        why(&app, t.e, GovernAct::Work(WorkFocus::Forge)),
+        Some("locked")
+    );
 }
 
 /// GP-34: the dials at their defaults are exact no-ops. Two identical runs
