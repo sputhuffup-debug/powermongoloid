@@ -1,6 +1,6 @@
 # M4 Plan: Rise
 
-Status: **built 2026-10-09**, awaiting the playtest (`docs/M4_PLAYTEST.md`). Decisions as built: ADRs 0013-0017; step notes: `docs/m4/`.
+Status: **built 2026-10-09**, in its playtest (`docs/M4_PLAYTEST.md`); the first verdict (2026-10-13) led to M4a "Lordship" (`docs/LORDSHIP_DESIGN.md`, `docs/M4A_PLAN.md`). Decisions as built: ADRs 0013-0017; step notes: `docs/m4/`.
 Design: `docs/PROGRESSION_DESIGN.md` (approved 2026-10-07 with its defaults). Spec: `docs/SEED.md` § "M4: Rise".
 
 M4 delivers **one complete, playable hour**: a run from a wandering band of ten to taking the rival warlord's seat, on a fresh seed each time. The earlier "Conquest and faith" plan was put on hold by the M3 playtest. Its conquest, loyalty, save, chronicle, traits and pacing sections are kept here; faith moves to M4b.

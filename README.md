@@ -2,7 +2,7 @@
 
 An indirect-control medieval conquest simulation in Rust + Bevy. You command captains, not soldiers, on a living island where every villager is simulated: a name, a home, a job, needs and reasons. Armies march as crowds, live off the land and scare or provoke the villages they pass.
 
-**Status:** M4 "Rise" (roguelite runs: a landless band against a rival warlord's seat, on a fresh island each time) is built and awaiting its playtest ([checklist](docs/M4_PLAYTEST.md)). Next comes M4c "Saga" (kill lines, quirks, mishaps, epithets, legends, named weapons and kin, told deadpan, with blood and bodies on the field, maimed survivors and a kill cam; [plan](docs/M4C_PLAN.md)), then M4b (living towns).
+**Status:** M4 "Rise" (roguelite runs: a landless band against a rival warlord's seat, on a fresh island each time) is built and in its playtest ([checklist](docs/M4_PLAYTEST.md)). Its first verdict, that taking towns felt like taking points, leads to M4a "Lordship" next (four ways to take a town, each leaving its mark; influence that spreads from the towns you hold; bandits and reprisals as the price of conquest; edicts, stewards and building orders that change what villagers do; [design](docs/LORDSHIP_DESIGN.md), [plan](docs/M4A_PLAN.md)). Then M4c "Saga" (kill lines, quirks, mishaps, epithets, legends, named weapons and kin, told deadpan, with blood and bodies on the field, maimed survivors and a kill cam; [plan](docs/M4C_PLAN.md)), then M4b (living towns).
 
 ## Playing
 
@@ -55,8 +55,8 @@ New to the game? [How to win your first run](docs/PLAY_GUIDE.md) is a beginner's
 
 **Design:**
 - Spec: [docs/SEED.md](docs/SEED.md)
-- Milestone plans: [M0](docs/M0_PLAN.md), [M1](docs/M1_PLAN.md), [M2](docs/M2_PLAN.md), [M3](docs/M3_PLAN.md), [M3b](docs/M3B_PLAN.md), [M4](docs/M4_PLAN.md), [M4c](docs/M4C_PLAN.md)
-- Design notes: [towns](docs/TOWNS_DESIGN.md), [fun](docs/FUN_DESIGN.md), [saga](docs/SAGA_DESIGN.md)
+- Milestone plans: [M0](docs/M0_PLAN.md), [M1](docs/M1_PLAN.md), [M2](docs/M2_PLAN.md), [M3](docs/M3_PLAN.md), [M3b](docs/M3B_PLAN.md), [M4](docs/M4_PLAN.md), [M4a](docs/M4A_PLAN.md), [M4c](docs/M4C_PLAN.md)
+- Design notes: [progression](docs/PROGRESSION_DESIGN.md), [lordship](docs/LORDSHIP_DESIGN.md), [saga](docs/SAGA_DESIGN.md), [towns](docs/TOWNS_DESIGN.md), [fun](docs/FUN_DESIGN.md)
 - Decisions: [docs/adr](docs/adr)
 - Agent guide: [CLAUDE.md](CLAUDE.md)
 

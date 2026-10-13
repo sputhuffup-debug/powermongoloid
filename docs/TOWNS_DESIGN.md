@@ -1,6 +1,6 @@
 # Design: growing towns and town styles
 
-Status: **decisions made 2026-10-06; built in milestone M4b, after M4 and M4c**. Hero memorials (section 5) were added 2026-10-12. Requested: settlements start small and grow into towns and cities over time, and each settlement gets an urban design style drawn from the world's major building traditions, chosen per seed. Buildings keep their purposes, so only their placement and appearance vary.
+Status: **decisions made 2026-10-06; built in milestone M4b, after M4, M4a and M4c**. Hero memorials (section 5) were added 2026-10-12, and section 6 (what M4a "Lordship" builds first, and how M4b grows it) on 2026-10-13. Requested: settlements start small and grow into towns and cities over time, and each settlement gets an urban design style drawn from the world's major building traditions, chosen per seed. Buildings keep their purposes, so only their placement and appearance vary.
 
 ## 1. Growth: hamlet to city
 
@@ -18,8 +18,8 @@ Each tier adds more of the **same building kinds** and better-looking versions o
 
 ### How a settlement grows
 1. **More people.** Births and families moving in from hungry neighbours (SIM-15) fill the houses.
-2. **Planning to build.** When the houses are about 90% full, food security is above a threshold and the storehouse holds enough wood, the settlement opens a **construction site** on the next plot of its master plan (below).
-3. **Building.** Builders (idle adults, and carters when free) carry materials from the storehouse and work the site. When it's done, the building appears and the settlement's workers are reassigned to the new workplaces, using the occupation shares from `villagers.ron`.
+2. **Planning to build.** When the houses are about 90% full, food security is above a threshold and the storehouse holds enough wood, the settlement opens a **construction site** on the next plot of its master plan (below). M4a's building orders open the first construction sites, by the owner's order, through the same entry point (`choose_site`; section 6); M4b adds sites opened by growth and moves both onto master-plan plots.
+3. **Building.** Builders (idle adults, and carters when free) carry materials from the storehouse and work the site. When it's done, the building appears and the settlement's workers are reassigned to the new workplaces, using the occupation shares from `villagers.ron`. In M4a carters supply an ordered site and a timer finishes it; M4b replaces the timer with builders' labour, and reuses M4a's reassignment (`jobs::reassign`).
 4. **Promotion.** A settlement crossing a tier threshold is promoted, the event feed reports it ("Oakworth is now a town"), and higher-tier plots open up.
 5. **Decline.** When a settlement loses people (famine, war, migration), empty houses decay into ruins that can be rebuilt later. A sacked city visibly shrinks.
 
@@ -76,6 +76,7 @@ The request was random per settlement. Options are in decision 1. All options us
 
 - **Economy:** construction needs wood (and stone at town and city tier, decision 3), which gives woodcutters, carters and trade a purpose beyond food.
 - **Conquest:** owning a growing town matters more than owning a hamlet. Sacking reverses growth, and walls appear at city tier, ready for sieges later.
+- **Lordship (M4a):** towns already differ before they grow: a specialty from their site, a tenure from how they were taken, edicts, a steward and up to two ordered buildings (section 6). Growth builds on that: a mining town grows its mines and smithies, and a town's palisade is the Town tier's palisade.
 - **Simulation LOD (M5):** dormant regions keep each settlement's tier and its place in the master plan, and grow by rate, so a region away from the camera still develops.
 - **Performance:** a city of 1,000+ people is more agents in one spot. The 20,000-agent budget (NFR-03) is unchanged, but the island's population curve has to stay inside the M5 LOD budget.
 - **Saves:** the plans aren't saved. They are regenerated from the seed and the site, and saves record only how far each plan has progressed and which plots are ruined.
@@ -100,6 +101,23 @@ Decided with the saga design (`docs/SAGA_DESIGN.md`, section 14 and decision 14)
 - **Across runs.** Only in M6's legends book, as history: the run record gains `memorials` in M4b. Nothing carries into a later run.
 - **Tests.** `tests/memorials.rs`: a saved village raises its memorial on its reserved plot once it can build one, each effect applies exactly, it becomes a grave when the hero dies (keeping all but the army effect), a village without a rescue leaves the plot empty and is otherwise unchanged, and a seed's plans are identical with and without rescues.
 
+## 6. What M4a builds first, and how M4b grows it (added 2026-10-13)
+
+M4a "Lordship" (`docs/LORDSHIP_DESIGN.md`) answers the M4 playtest by making towns governable before they grow. It pulls forward only what it needs from this design, in a form M4b grows from, so nothing is built twice:
+
+| Area | M4a builds | M4b grows it into |
+| --- | --- | --- |
+| Town policies (GP-17) | per-town edicts: a work focus (fields, forge, walls), dues (a tithe, as a levy in kind, or a levy, as a conscription quota) and the table (rationing, a feast); a steward's habits (visible, sometimes against the player's interest) set the dials the player leaves alone; a change starts within the game hour | standing orders for captains; policies set for a whole region; more edicts |
+| Construction (SIM-17) | a building order: `sim_economy::choose_site` picks a site by today's site rules, `start_building` spawns a real site with `Construction`, carters supply it, a timer finishes it; two per town per run | `choose_site` returns the town's next open master-plan plot of the kind; builders' labour replaces the timer; stone and the quarry; growth opens sites through the same entry point |
+| Equipment (SIM-37) | a working smithy chain and a forge focus that turns a town's smithies to weapons (run only) | `weapons` splits into tiers; the forge makes the best tier the town can; the fixes hold in every preset, with the M2 tests re-baselined |
+| Walls (GP-15) | a palisade, one centre structure with a defence effect | the Town tier's palisade is the same building kind; city walls are tiles on the plan; M5's sieges read them |
+| Specialised towns | a specialty from the site (mining, market, fishing, timber, farming) that scales the occupation shares at populate, in a run, with one visible flow where it has one: arms (mining), hired men (market), half-price works (timber) | growth adds workplaces of the specialty's trades first; town styles can draw on it |
+| Carters between towns (SIM-23) | none: armies within reach collect tithes and levies | carters may carry tithes to the seat or an army |
+
+**Plots for ordered buildings.** A master plan must stay a pure function of the seed, the site and the style (section 2), so it can't depend on what a player ordered. As with the memorial plot (section 5), every plan reserves seeded plots per building kind (a smithy, a granary, a palisade ring, a watchtower) that open from the tier the kind needs. An ordered building takes the next open plot of its kind; a building M4a placed by site rules before M4b keeps its tile, and its plot is marked built.
+
+**Buildings M4a adds.** `Granary`, `Palisade` and `Watchtower` join `WorkplaceKind` (append only) with no workers. Section 1's tier table gains them: the granary and watchtower from village tier, the palisade from town tier (or ordered earlier).
+
 ## Decisions (answered 2026-10-06)
 1. **Styles are random per settlement, among styles that suit its site.** Stilts go by water, terraces on hills, courtyards in dry land, and the draw is seeded.
 2. **Every settlement starts as a hamlet.** *Amended 2026-10-07 for roguelite runs (`docs/PROGRESSION_DESIGN.md`): a run's island starts with a seeded mix of hamlets, villages and a few towns, so there are people to recruit by the final act, and growth is tuned to a 30-day run.* Consequences of the original decision:
@@ -110,3 +128,4 @@ Decided with the saga design (`docs/SAGA_DESIGN.md`, section 14 and decision 14)
 4. **Per-style names:** not answered, so the recommended default applies: settlement and villager names come from per-style lists of original names. Easy to drop.
 5. **Scheduling:** a new milestone, **M4b "Living towns"**, after M4. Growth, town styles, population (SIM-15), trade (SIM-23), seasons and decay (SIM-05, SIM-22), and the seasonal palette (RND-05) move there.
 6. **Hero memorials (2026-10-12):** a village saved from raiders by a named hero raises a memorial to them in its town style, with small local effects, and tends it as a grave when the hero dies (section 5, SIM-58). M4c, which now comes before M4b, records the rescues.
+7. **Lordship first (2026-10-13):** M4a "Lordship" comes before M4c and M4b, and pulls forward town edicts, a minimal building order and the smithy chain (section 6). M4b grows them.

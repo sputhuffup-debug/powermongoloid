@@ -48,7 +48,8 @@ Every villager is simulated: a name, a home, a job, needs and reasons. The games
 | Micromanagement fatigue at scale | Standing orders, town policies, notifications instead of babysitting |
 | Dead time (long marches, waiting for growth) | Pacing director, fast-forward to the next event, early audio and spectacle |
 | Unreadable outcomes ("why did my army rout?") | Inspector traces (we have them), chronicle entries that state causes, end-of-battle reports |
-| Snowballing (late game becomes a formality) | Overextension: loyalty and revolts, rival coalitions against the leader, harder sieges, succession crises |
+| Snowballing (late game becomes a formality) | Overextension: loyalty and revolts, rival coalitions against the leader, harder sieges, succession crises; from M4a, influence that falls off and is contested, bandits from violent takes and reprisals at the newest holding |
+| Towns as flags (holding a place changes nothing you can see; the M4 playtest's verdict) | M4a "Lordship": ways to take a town that leave a lasting state, edicts that move villagers, a steward, building orders, influence that acts on neighbours, and a panel that says why (`docs/LORDSHIP_DESIGN.md`) |
 | Slow start (every settlement starts as a hamlet) | A strong opening ambition, an early raider beat from the director, quick first growth |
 
 ## Adopted (2026-10-06)
@@ -58,7 +59,7 @@ Every villager is simulated: a name, a home, a job, needs and reasons. The games
 | Chronicle and legends, end-of-battle reports | UI-09 | M4 |
 | Traits and veterans | SIM-34 | M4 |
 | Pacing director, auto-pause, fast-forward to the next event | GP-16 | M4 |
-| Standing orders and town policies | GP-17 | M4b |
+| Standing orders and town policies | GP-17 | M4a (town edicts, moved up 2026-10-13 after the M4 playtest), M4b (standing orders; policies grow) |
 | Fire and ruins; weather (SIM-06, moved up from "Later") | SIM-07, SIM-06 | M4b |
 | Follow-cam, time-lapse, photo mode | RND-08 | M4b |
 | Sieges and walls | GP-15 | M5 |

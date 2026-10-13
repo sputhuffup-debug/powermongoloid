@@ -6,6 +6,8 @@ M4 "Rise" turns the sandbox into roguelite runs (docs/PROGRESSION_DESIGN.md, doc
 
 Budget about an hour: two short looks at different seeds (10 minutes each), then one run played properly (about 40 minutes at 4x-8x with fast-forward).
 
+**First verdict, 2026-10-13:** "game is mildly interesting in concept; i need something more than moving an army around we need to be able to influence the cities or something, the game feels like we are running around taking points like king of the hill but my actions feel unweighted." The design continues in [LORDSHIP_DESIGN.md](LORDSHIP_DESIGN.md) (milestone M4a, before M4c). The rest of this checklist (a run's length, how two seeds differ) still stands.
+
 ## Before you start
 
 ```
