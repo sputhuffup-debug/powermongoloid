@@ -20,6 +20,7 @@ impl Plugin for SettlementLabelsPlugin {
             (
                 clear_labels.run_if(game_render::epoch_changed),
                 spawn_labels,
+                badge_labels,
                 place_labels,
                 click_labels,
             )
@@ -33,6 +34,8 @@ impl Plugin for SettlementLabelsPlugin {
 struct SettlementLabel {
     settlement: Entity,
     anchor: Vec3,
+    /// The settlement's name; the badge lines go under it.
+    name: String,
 }
 
 /// Settlements that already have a label. Kept on the UI side: the UI never
@@ -70,6 +73,7 @@ fn spawn_labels(
             SettlementLabel {
                 settlement: entity,
                 anchor: surface_point(&map, settlement.center) + Vec3::Y * LABEL_LIFT,
+                name: names.get(settlement.name).to_string(),
             },
             Text::new(names.get(settlement.name)),
             // Clicking a label selects the settlement (UI-02).
@@ -128,6 +132,27 @@ fn place_labels(
                 *visibility = Visibility::Visible;
             }
             _ => *visibility = Visibility::Hidden,
+        }
+    }
+}
+
+/// GP-34 (M4a): under the name, a line for each edict dial off its default,
+/// with a countdown while the first wave runs. Read from the panel's view,
+/// which refreshes twice a second.
+fn badge_labels(
+    view: Res<crate::panels::GovernView>,
+    mut labels: Query<(&SettlementLabel, &mut Text)>,
+) {
+    for (label, mut text) in &mut labels {
+        let mut s = label.name.clone();
+        if let Some(lines) = view.badges.get(&label.settlement) {
+            for l in lines {
+                s += "\n";
+                s += l;
+            }
+        }
+        if text.0 != s {
+            text.0 = s;
         }
     }
 }

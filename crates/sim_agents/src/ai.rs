@@ -5,6 +5,13 @@
 //! In a run, economy.ron `haul.run_fixes` turns on the smithy-chain fixes
 //! (SIM-64, ADR 0020): [`RunFixes`]. Outside a run the M2 rules apply
 //! unchanged.
+//!
+//! Edicts (GP-34, M4a step 4), run only, read at the point of use: a
+//! villager the Levy mustered (`Mustered`) never works and idles on the
+//! green (near the settlement's centre) until a captain collects him;
+//! during a feast (`Edicts::feast_until`) work scores are multiplied by
+//! `Edicts::feast_work` and idlers gather on the green. Without either,
+//! nothing changes.
 
 use std::collections::BTreeMap;
 
@@ -104,6 +111,10 @@ pub struct AiWorld<'w, 's> {
     pub mods: Res<'w, sim_core::FactionModifiers>,
     /// Whether this is a run (SIM-64's fixes apply only in one).
     pub run: Option<Res<'w, sim_core::RunState>>,
+    /// Each run settlement's edicts (GP-34): the feast.
+    pub edicts: Query<'w, 's, &'static crate::edicts::Edicts>,
+    /// Settlement centres, for the green (GP-34).
+    pub places: Query<'w, 's, &'static sim_world::Settlement>,
 }
 
 /// Whether a worker can produce right now.
@@ -159,6 +170,8 @@ pub struct Me<'a> {
     /// The (drop-off, good) of the haul under way, if any: a hauler keeps
     /// its own delivery even if someone else has since claimed it.
     pub hauling: Option<(Entity, GoodId)>,
+    /// Mustered by the Levy (GP-34): waits on the green, never works.
+    pub mustered: bool,
 }
 
 impl AiWorld<'_, '_> {
@@ -281,13 +294,17 @@ impl AiWorld<'_, '_> {
             if phase == Phase::Night {
                 tired = tired.max(ai.sleep.night_drive);
             }
-            let time = phase_factor(
+            let mut time = phase_factor(
                 phase,
                 ai.sleep.day,
                 ai.sleep.day,
                 ai.sleep.evening,
                 ai.sleep.night,
             );
+            // Run fixes: the exhausted nap by day as if it were evening.
+            if me.fixes.is_some() && me.needs.rest <= 0.1 {
+                time = time.max(ai.sleep.evening);
+            }
             let dist = self.distance_factor(me.tile, home_tile);
             out.push(Candidate {
                 option: ScoredOption {
@@ -314,6 +331,28 @@ impl AiWorld<'_, '_> {
         let fit = (1.0 - 0.6 * appetite)
             * (if fed { 1.0 } else { 0.2 })
             * (if rested { 1.0 } else { 0.2 });
+        // GP-34: the green. A mustered man never works; a feast keeps the
+        // town from its work (1.0, no factor, otherwise).
+        let tick = self.tick.0;
+        let feast = self
+            .edicts
+            .get(me.villager.settlement)
+            .ok()
+            .filter(|e| e.feasting(tick));
+        let edict = if me.mustered {
+            Some(("mustered", 0.0))
+        } else {
+            feast.map(|e| ("feast", e.feast_work))
+        };
+        let green = (me.mustered || feast.is_some())
+            .then(|| self.places.get(me.villager.settlement).ok())
+            .flatten()
+            .map(|p| p.center);
+        // Run fixes: an exhausted worker (rest at or below `perform`'s
+        // line) can't start a cycle, so by day he naps instead of scoring
+        // Work he can't do (the M2 rules loop Work, Done all day). Hauls
+        // need no rest and stay.
+        let exhausted = me.fixes.is_some() && me.needs.rest <= 0.1;
         if me.occupation == Occupation::Carter {
             if let (Some(settlement), Some(store), Some(store_tile)) =
                 (settlement, store, store_tile)
@@ -322,14 +361,18 @@ impl AiWorld<'_, '_> {
                 let has_job = if job.is_some() { 1.0 } else { 0.0 };
                 let goal = job.as_ref().and_then(|j| self.tile_of(j.0));
                 let dist = self.distance_factor(me.tile, goal);
+                let (score, waiting) = match edict {
+                    Some((_, f)) => (w.weight * time * fit * has_job * f * dist, edict),
+                    None => (w.weight * time * fit * has_job * dist, None),
+                };
                 out.push(Candidate {
                     option: ScoredOption {
                         kind: ActionKind::Haul,
-                        score: w.weight * time * fit * has_job * dist,
+                        score,
                         factors: Factors::new(&[
                             ("time of day", time),
                             ("fit to work", fit),
-                            ("goods waiting", has_job.min(value)),
+                            waiting.unwrap_or(("goods waiting", has_job.min(value))),
                             ("distance", dist),
                         ]),
                     },
@@ -378,10 +421,25 @@ impl AiWorld<'_, '_> {
             } else {
                 ("work possible", possible)
             };
+            // GP-34: the green's factor, or the exhausted nap (run fixes:
+            // a cycle under way still finishes).
+            let (score, possible_factor) = match edict {
+                Some((name, f)) => (
+                    w.weight * time * fit * possible * hold * f * dist,
+                    (name, f),
+                ),
+                None if exhausted && kind == ActionKind::Work && !me.mid_cycle => {
+                    (0.0, ("too tired", 0.0))
+                }
+                None => (
+                    w.weight * time * fit * possible * hold * dist,
+                    possible_factor,
+                ),
+            };
             out.push(Candidate {
                 option: ScoredOption {
                     kind,
-                    score: w.weight * time * fit * possible * hold * dist,
+                    score,
                     factors: Factors::new(&[
                         ("time of day", time),
                         ("fit to work", fit),
@@ -491,7 +549,7 @@ impl AiWorld<'_, '_> {
             target: None,
             dropoff: None,
             good: None,
-            goal: Some(self.idle_spot(me, home_tile.unwrap_or(me.tile))),
+            goal: Some(self.idle_spot(me, green.or(home_tile).unwrap_or(me.tile))),
         });
         out
     }
@@ -756,6 +814,7 @@ pub(crate) fn decide(
             &mut Travel,
             &mut NextDecision,
             &mut DecisionTrace,
+            Has<crate::edicts::Mustered>,
         ),
         Without<crate::components::Enlisted>,
     >,
@@ -798,6 +857,7 @@ pub(crate) fn decide(
             mut travel,
             mut next,
             mut trace,
+            mustered,
         )| {
             let done = activity.stage == Stage::Done;
             if tick < next.0 && !done {
@@ -832,6 +892,7 @@ pub(crate) fn decide(
                     }
                     _ => None,
                 },
+                mustered,
             };
             let candidates = world.candidates(&me);
             let current = (!done).then_some(activity.kind);
@@ -874,7 +935,7 @@ pub(crate) fn decide(
     if let Some(fixes) = &fixes {
         let mut fresh: Vec<(SpawnId, Entity, GoodId)> = agents
             .iter()
-            .filter_map(|(id, _, occupation, .., activity, _, _, _)| {
+            .filter_map(|(id, _, occupation, .., activity, _, _, _, _)| {
                 let (Some(dropoff), Some(good)) = (activity.dropoff, activity.good) else {
                     return None;
                 };
@@ -898,7 +959,7 @@ pub(crate) fn decide(
                 }
             }
             if !losers.is_empty() {
-                for (id, .., mut activity, mut travel, _, _) in agents.iter_mut() {
+                for (id, .., mut activity, mut travel, _, _, _) in agents.iter_mut() {
                     if losers.binary_search(id).is_ok() {
                         activity.stage = Stage::Done;
                         travel.state = TravelState::Idle;

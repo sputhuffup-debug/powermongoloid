@@ -120,6 +120,19 @@ A run scenario plays an M4 rule on the run island with a real band, from one see
 5. **Keep it short and cheap:** under about a minute at the test profile. Tests in one file run in parallel threads with a full world each, so loop seeds inside one `#[test]`, and play a shared prefix once (a `OnceLock` plus `sim_headless::save_app` and `load_app`, as `conquest.rs` does) when several branches need it.
 6. **Cover the state it adds:** extend `run_state_hash_covers_every_sim_component` in `tests/tests/determinism.rs`, add the test's row to [TESTING.md](TESTING.md), and say which requirement ID it guards in its doc comment.
 
+## Add an edict
+
+An edict (GP-34, M4a step 4) is one setting of a town's Work, Dues or Table dial, set with `CommandKind::Govern` and applied by the next hourly `govern::step`. Run only, and an exact no-op at the default. Example: the Ration setting of Table.
+1. **Name the setting:** append a variant to `WorkFocus`, `Dues` or `Table` in `crates/sim_core/src/command.rs` with its `tag` and `name` (append only: tags are hashed, saved and recorded in replays). Add it to the `GovernAct` handling in `refusal` and `command` if it needs more than the dial's value.
+2. **State, if it needs any:** a field of `Edicts` or a component in `crates/sim_agents/src/edicts.rs` (as `Rationed` is), added to its `hash_state` and its `save_fields!`, and registered with `register_hashed` and `register_saved` if it is a new type. Extend the `save_load` round trip in `tests/tests/save_load.rs` with a town in that setting, pending and locked.
+3. **Its effect, at the point of use** (never in `FactionModifiers`, ADR 0015): read the setting where the rule runs (`update_needs`, `perform`, `ai::decide`, `resolve_strikes`, `update_threats`, `orders::lands`), run only, and exactly the old behaviour at the default (`x * 1.0`, `+ 0.0`). A rule in sim_agents cannot read sim_military's data, so copy the numbers into the component when the setting starts, as `Rationed` does.
+4. **Apply it in `crates/sim_military/src/govern.rs`:** `apply_pending` turns the dial and starts its lock; a Work setting's wave goes in `work_wave` (its donors and targets in `plan`, moves through `sim_agents::jobs::reassign`); a Table setting's start and end go in `set_table` (and `end_feast`/`lift_ration` for what must be undone); a Dues setting's dawn work goes in `step`'s dawn pass and, for goods that move to a captain, `orders::lands`. `reset` must undo it when the town is lost, and `sweep_soldiers` must clear any per-villager mark from the enlisted.
+5. **Its loyalty term** in `dues_term` or `table_term` (summed by `tenure::step`; see "Add a loyalty term"), 0.0 outside a run.
+6. **Its forecast** in `work_forecast`, `dues_forecast` or `table_forecast` (read-only; the panel prints it before the player commits) and its words in `crates/game_ui/src/panels/govern.rs`.
+7. **Its validation** in `govern::refusal` (a reason string for the panel, e.g. "locked" or "already set"); `refusal` is the one place a command is refused and the panel greyed.
+8. **Data:** its knobs go in the `edicts` block of `assets/data/progression.ron` (`EdictsData` in `crates/sim_military/src/govern.rs`), documented row by row in [DATA.md](DATA.md).
+9. **Test it** in `tests/tests/edicts.rs`: the setting does what it says, the lock holds, a lost town resets, and a run with no dial set is byte-identical (`defaults_are_no_ops`). Re-run `village_day` and `famine`, which must not change.
+
 ## Add a run-only rule
 
 Runs (GP-21, M4) add rules that the developed world, the benchmarks and the M2/M3 tests must never feel ([ADR 0013](../adr/0013-runs-presets-and-run-config.md)). Example: the start boon, applied in `crates/sim_military/src/progression/offers.rs`.

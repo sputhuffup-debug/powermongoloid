@@ -8,7 +8,7 @@
 //! [`crate::rival::RivalState::seat_defence`]).
 
 use bevy_ecs::prelude::*;
-use bevy_math::Vec2;
+use bevy_math::{IVec2, Vec2};
 use rand::RngExt;
 use sim_agents::{CombatStats, Deed, Employment, Enlisted, Stance, Strike, Villager};
 use sim_core::rng::rng_key;
@@ -75,11 +75,46 @@ pub(crate) fn find_fallen(
     casualties.pending.extend(dead.into_iter().map(|(_, e)| e));
 }
 
+/// The Walls edict's reads for `resolve_strikes` (GP-34).
+#[derive(bevy_ecs::system::SystemParam)]
+pub(crate) struct WallsParam<'w, 's> {
+    towns: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static sim_world::Settlement,
+            &'static sim_agents::Edicts,
+            &'static sim_agents::Owner,
+        ),
+    >,
+    villagers: Query<'w, 's, &'static sim_agents::Villager>,
+    progression: Res<'w, crate::progression::Progression>,
+}
+
+impl WallsParam<'_, '_> {
+    /// The player's towns under Walls: (town, centre, radius squared,
+    /// defence bonus). Empty outside a run (no edicts).
+    fn towns(&self, army: &Army) -> Vec<(Entity, IVec2, f32, f32)> {
+        let r = army.data.garrison.radius;
+        let bonus = self.progression.data.edicts.walls_defence;
+        self.towns
+            .iter()
+            .filter(|(_, _, e, o)| {
+                o.faction == FactionId::PLAYER && e.work == sim_core::WorkFocus::Walls
+            })
+            .map(|(t, s, ..)| (t, s.center, r * r, bonus))
+            .collect()
+    }
+}
+
 /// Act: blows land, in the strikers' SpawnId order. Damage is `(attack +
 /// weapon + rank gain) x leadership x roll x Attack - (defense + tools +
 /// rank gain)`, at least 1, divided by the victim's `Defence` (GP-23,
 /// SIM-36), plus the rival seat's defence bonus for the rival's people
-/// near it (GP-28). A blow on a living victim marks both sides as having
+/// near it (GP-28) and, in a run, `edicts.walls_defence` for the militia
+/// of a player's town under the Walls edict within `garrison.radius` of
+/// its centre (GP-34). A blow on a living victim marks both sides as having
 /// [`Veteran::fought`] and keeps both armies in battle (`Captain::
 /// battle_since`, `last_engaged`); whoever it kills is listed in
 /// [`Casualties::slain_by`].
@@ -105,8 +140,12 @@ pub(crate) fn resolve_strikes(
     followers: Query<&Follower>,
     rival: Res<RivalState>,
     positions: Query<&Position>,
+    wall_reads: WallsParam,
 ) {
     let _span = tracing::info_span!("sim_military::resolve_strikes").entered();
+    // GP-34: the player's towns under the Walls edict (run only): their
+    // militia get `edicts.walls_defence` within `garrison.radius`.
+    let walled = wall_reads.towns(&army);
     // GP-28: the rival's seat stands in for walls: blows on the rival's
     // people near it are divided by `Defence + bonus` (no bonus outside a
     // run).
@@ -170,6 +209,15 @@ pub(crate) fn resolve_strikes(
         let mut guard = mods.mult(victim_side.0, Stat::Defence);
         if walls && let Ok(p) = positions.get(target) {
             guard += rival.seat_defence(victim_side.0, p.0);
+        }
+        if !walled.is_empty()
+            && matches!(victim.stance, Stance::Militia { .. })
+            && let Ok(v) = wall_reads.villagers.get(target)
+            && let Some(&(_, at, r2, bonus)) = walled.iter().find(|w| w.0 == v.settlement)
+            && let Ok(p) = positions.get(target)
+            && (p.0 - at).length_squared() as f32 <= r2
+        {
+            guard += bonus;
         }
         let damage =
             (attack * bonus * roll * mods.mult(faction, Stat::Attack) - defense).max(1.0) / guard;

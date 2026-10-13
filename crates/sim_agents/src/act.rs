@@ -51,6 +51,16 @@ pub fn smith_ticks(duration: u32, mult: f32) -> u64 {
     (duration as f32 / mult).round().max(1.0) as u64
 }
 
+/// GP-34: a work cycle of `ticks` under the Ration edict's `work`
+/// multiplier: `ticks x work`, rounded, at least 1; a non-positive or
+/// non-finite multiplier changes nothing.
+pub fn rationed_ticks(ticks: u64, work: f32) -> u64 {
+    if work <= 0.0 || !work.is_finite() {
+        return ticks;
+    }
+    (ticks as f32 * work).round().max(1.0) as u64
+}
+
 /// Puts `out` units of a recipe output into the worker's hands, of which
 /// the recipe's own `base` go in as always (up to the carry limit), and any
 /// bonus beyond `base` over the limit, so a yield bonus isn't lost to a
@@ -156,6 +166,7 @@ pub(crate) fn perform(
             &mut Inventory,
             &mut Transfers,
             &mut Employment,
+            Option<&crate::edicts::Rationed>,
         ),
         Without<crate::components::Enlisted>,
     >,
@@ -186,6 +197,7 @@ pub(crate) fn perform(
             mut inv,
             mut transfers,
             mut job,
+            rationed,
         )| {
             // Only a villager who is fighting is militia (SIM-13).
             let fighting = act.kind == ActionKind::Fight && act.stage != Stage::Done;
@@ -375,6 +387,11 @@ pub(crate) fn perform(
                                         }
                                         _ => recipe.duration as u64,
                                     };
+                                    // GP-34: rationed hands work slower.
+                                    let ticks = match rationed {
+                                        Some(r) => rationed_ticks(ticks, r.work),
+                                        None => ticks,
+                                    };
                                     act.until_tick = tick + ticks;
                                     act.step = 2;
                                 } else if act.step == 0 {
@@ -483,31 +500,46 @@ pub(crate) fn perform(
     );
 }
 
-/// Needs change over time (SIM-10): hunger rises; rest falls while awake
+/// Needs change over time (SIM-10): hunger rises (more slowly for a
+/// villager under the Ration edict, GP-34); rest falls while awake
 /// and recovers while asleep; safety follows the settlement's threat level
 /// (SIM-13): it drops at once and recovers slowly.
 pub(crate) fn update_needs(
     villagers: Res<Villagers>,
     threats: Query<&Threat>,
-    mut q: Query<(&Villager, &Activity, &mut Needs), Without<crate::components::Enlisted>>,
+    mut q: Query<
+        (
+            &Villager,
+            &Activity,
+            &mut Needs,
+            Option<&crate::edicts::Rationed>,
+        ),
+        Without<crate::components::Enlisted>,
+    >,
 ) {
     let _span = tracing::info_span!("sim_agents::update_needs").entered();
     let v = &*villagers;
-    q.par_iter_mut().for_each(|(villager, act, mut needs)| {
-        needs.hunger = (needs.hunger + v.hunger_per_tick).min(1.0);
-        let asleep = act.kind == ActionKind::Sleep && act.stage == Stage::Perform;
-        needs.rest = if asleep {
-            (needs.rest + v.rest_gain_per_tick).min(1.0)
-        } else {
-            (needs.rest - v.rest_loss_per_tick).max(0.0)
-        };
-        let safe = 1.0 - threats.get(villager.settlement).map_or(0.0, |t| t.level);
-        needs.safety = if safe < needs.safety {
-            (needs.safety - 0.05).max(safe)
-        } else {
-            (needs.safety + 0.001).min(safe)
-        };
-    });
+    q.par_iter_mut()
+        .for_each(|(villager, act, mut needs, rationed)| {
+            // GP-34: the Ration edict slows hunger (no change without it).
+            let gain = match rationed {
+                Some(r) => v.hunger_per_tick * r.hunger,
+                None => v.hunger_per_tick,
+            };
+            needs.hunger = (needs.hunger + gain).min(1.0);
+            let asleep = act.kind == ActionKind::Sleep && act.stage == Stage::Perform;
+            needs.rest = if asleep {
+                (needs.rest + v.rest_gain_per_tick).min(1.0)
+            } else {
+                (needs.rest - v.rest_loss_per_tick).max(0.0)
+            };
+            let safe = 1.0 - threats.get(villager.settlement).map_or(0.0, |t| t.level);
+            needs.safety = if safe < needs.safety {
+                (needs.safety - 0.05).max(safe)
+            } else {
+                (needs.safety + 0.001).min(safe)
+            };
+        });
 }
 
 #[cfg(test)]
@@ -539,6 +571,10 @@ mod tests {
         assert_eq!(smith_ticks(400, 1.1), 364);
         assert_eq!(smith_ticks(1, 4.0), 1, "at least a tick");
         assert_eq!(smith_ticks(400, 0.0), 400);
+        // GP-34: rationing lengthens a cycle by its multiplier.
+        assert_eq!(rationed_ticks(450, 1.1), 495);
+        assert_eq!(rationed_ticks(450, 1.0), 450);
+        assert_eq!(rationed_ticks(450, 0.0), 450);
 
         // A bonus unit goes over the carry limit; the base respects it.
         let mut inv = Inventory::with_capacity(8);

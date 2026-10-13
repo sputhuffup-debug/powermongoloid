@@ -2,8 +2,10 @@
 //! read their settlement's `Threat` through the safety need. A settlement's
 //! own owner's armies don't frighten it (GP-05), unless it has risen
 //! against them (GP-06). The radius is army.ron `threat.radius` plus the
-//! owner's `ThreatRadius` modifier (watchtowers, GP-23). An independent
-//! army (a band for hire, GP-27) frightens nobody.
+//! owner's `ThreatRadius` modifier (watchtowers, GP-23), times
+//! progression.ron `edicts.walls_threat` at a town of the player's under
+//! the Walls edict (GP-34, run only). An independent army (a band for
+//! hire, GP-27) frightens nobody.
 
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
@@ -13,20 +15,34 @@ use sim_world::Settlement;
 
 use crate::data::Army;
 use crate::index::ArmyIndex;
+use crate::progression::Progression;
 
 pub(crate) fn update_threats(
     tick: Res<SimTick>,
     army: Res<Army>,
     index: Res<ArmyIndex>,
     mods: Res<FactionModifiers>,
-    mut q: Query<(&Settlement, Option<&Owner>, &mut Threat)>,
+    progression: Res<Progression>,
+    mut q: Query<(
+        &Settlement,
+        Option<&Owner>,
+        &mut Threat,
+        Option<&sim_agents::Edicts>,
+    )>,
 ) {
     let _span = tracing::info_span!("sim_military::update_threats").entered();
-    for (s, owner, mut threat) in &mut q {
+    for (s, owner, mut threat, edicts) in &mut q {
         // GP-23: watchtowers widen the warning radius of their holder's
         // settlements (flat tiles; nothing without modifiers).
         let owner_faction = owner.map_or(FactionId::INDEPENDENT, |o| o.faction);
-        let radius = army.data.threat.radius + mods.value(owner_faction, Stat::ThreatRadius);
+        let mut radius = army.data.threat.radius + mods.value(owner_faction, Stat::ThreatRadius);
+        // GP-34: the Walls edict keeps a sharper watch (edicts exist only
+        // in a run, and act only at the player's towns).
+        if owner_faction == FactionId::PLAYER
+            && edicts.is_some_and(|e| e.work == sim_core::WorkFocus::Walls)
+        {
+            radius *= progression.data.edicts.walls_threat;
+        }
         let mut t = *threat;
         if t.provoked_by.is_some() && tick.0 > t.provoked_until {
             t.provoked_by = None;

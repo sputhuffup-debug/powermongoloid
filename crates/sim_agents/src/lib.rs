@@ -36,6 +36,7 @@ pub mod components;
 pub mod data;
 pub mod edicts;
 pub mod food;
+pub mod jobs;
 pub mod loyalty;
 pub mod movement;
 pub mod population;

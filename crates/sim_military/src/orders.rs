@@ -10,6 +10,11 @@
 //! then the best-stocked homes (`food_sources`, ADR 0018). Every food
 //! dealing the player ordered ends with a line in the military log: what
 //! moved, in days of the army's food, or why nothing did.
+//!
+//! In a run, the lands' dues end the step (`lands`, GP-34): a town of the
+//! player's on Tithe or Levy hands food, arms and mustered men to the
+//! nearest player captain within reach, in the hour its dial turned and
+//! then daily.
 
 use bevy_ecs::prelude::*;
 use bevy_math::IVec2;
@@ -216,9 +221,12 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<(), &'static str> {
         }
         // GP-21: the player gives up the run.
         CommandKind::AbandonRun => crate::progression::abandon(world, cmd.issuer),
-        // GP-34 (M4a): dials land in step 4, building orders in step 8 and
-        // stewards in step 9 (lane B writes this arm).
-        CommandKind::Govern { .. } => Err("not yet"),
+        // GP-34 (M4a step 4): the dials, applied by the next hourly
+        // `govern::step`; building orders (step 8) and stewards (step 9)
+        // are still refused "not yet" (lane B writes this arm).
+        CommandKind::Govern { settlement, act } => {
+            crate::govern::command(world, cmd.issuer, settlement, act)
+        }
     }
 }
 
@@ -1195,6 +1203,166 @@ pub(crate) fn run_orders(world: &mut World) {
         forage(world, e, tick);
         ensure_field(world, e);
         ensure_rally(world, e, tick);
+    }
+    lands(world, tick);
+}
+
+/// The weapons and tools in settlement `s`'s storehouse (GP-34).
+pub(crate) fn store_arms(world: &World, s: Entity) -> u32 {
+    let econ = world.resource::<Economy>();
+    let Some(st) = storehouse(world, s).and_then(|e| world.get::<Stockpile>(e)) else {
+        return 0;
+    };
+    ["weapons", "tools"]
+        .into_iter()
+        .filter_map(|g| good_named(econ, g))
+        .map(|g| st.get(g))
+        .sum()
+}
+
+/// The nearest captain of `faction` within `reach` tiles of settlement
+/// `s`'s centre (GP-34), by distance, then SpawnId; with `room`, only one
+/// whose baggage has room. Tithes and levies go to it.
+pub(crate) fn collector(
+    world: &mut World,
+    s: Entity,
+    faction: FactionId,
+    reach: f32,
+    room: bool,
+) -> Option<Entity> {
+    let at = center(world, s)?;
+    let mut q = world.query::<(Entity, &SpawnId, &Captain, &Position, Option<&Stockpile>)>();
+    q.iter(world)
+        .filter(|(_, _, c, _, bag)| {
+            c.faction == faction && (!room || bag.is_some_and(|b| b.room() > 0))
+        })
+        .map(|(e, id, _, p, _)| ((p.0 - at).as_vec2().length(), *id, e))
+        .filter(|(d, ..)| *d <= reach)
+        .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
+        .map(|(.., e)| e)
+}
+
+/// GP-34 (M4a step 4): the lands' dues, a pass of the logistics step
+/// (`run_orders`), run only, on the tick after each hourly
+/// `govern::step`. Each settlement the player owns with Dues at Tithe or
+/// Levy, in SpawnId order, delivers when its dial turned in that hourly
+/// step or it was the day tick (so in the hour you set it, then once a
+/// day):
+///
+/// - **Tithe:** the nearest owner captain within `edicts.reach` with room
+///   gets the food beyond `edicts.tithe.keep_days` (the pantry, storehouse
+///   first, as `supply` reads it; at most its baggage room) and the
+///   storehouse's weapons and tools, then arms its followers.
+/// - **Levy:** every mustered resident (SpawnId order) is enlisted
+///   (`enlist_into`) into the nearest owner captain within reach, a
+///   garrison standing at the town included, and walks to it.
+///
+/// No collector within reach moves nothing that day. One `Tribute` event
+/// (feed only) and log line per receiving captain.
+pub(crate) fn lands(world: &mut World, tick: u64) {
+    let _span = tracing::info_span!("sim_military::orders::lands").entered();
+    let cal = world.resource::<Calendar>().clone();
+    if tick == 0 || !cal.on_hour(tick - 1) || !in_run(world) {
+        return;
+    }
+    let hour = tick - 1;
+    let daily = cal.on_day(hour);
+    let data = world.resource::<Progression>().data.edicts;
+    let mut q = world.query::<(Entity, &SpawnId, &sim_agents::Edicts)>();
+    let mut towns: Vec<(SpawnId, Entity)> = q
+        .iter(world)
+        .filter(|(_, _, e)| {
+            e.dues != sim_core::Dues::Light && (daily || e.dial(sim_core::Dial::Dues).since == hour)
+        })
+        .map(|(e, id, _)| (*id, e))
+        .collect();
+    if towns.is_empty() {
+        return;
+    }
+    towns.sort_unstable();
+    let owner = FactionId::PLAYER;
+    // Per receiving captain: (food value, arms, men, towns).
+    let mut sent: Vec<(SpawnId, Entity, f32, u32, u32, Vec<String>)> = Vec::new();
+    for (_, s) in towns {
+        if owner_of(world, s) != owner {
+            continue;
+        }
+        let dues = world.get::<sim_agents::Edicts>(s).expect("edicts").dues;
+        let (mut food, mut arms, mut men) = (0.0, 0u32, 0u32);
+        let to = match dues {
+            sim_core::Dues::Tithe => {
+                let Some(c) = collector(world, s, owner, data.reach, true) else {
+                    continue;
+                };
+                let spare = spare_food(world, s, data.tithe.keep_days, true);
+                let room = baggage_room(world, c);
+                food = take_food(world, &food_sources(world, s, true), c, spare.min(room));
+                let econ = world.resource::<Economy>().clone();
+                if let Some(store) = storehouse(world, s) {
+                    for g in ["weapons", "tools"]
+                        .into_iter()
+                        .filter_map(|g| good_named(&econ, g))
+                    {
+                        let have = world.get::<Stockpile>(store).map_or(0, |st| st.get(g));
+                        arms += move_good(world, store, c, g, have);
+                    }
+                }
+                arm_followers(world, c);
+                c
+            }
+            sim_core::Dues::Levy => {
+                let Some(c) = collector(world, s, owner, data.reach, false) else {
+                    continue;
+                };
+                for v in crate::govern::mustered(world, s) {
+                    world
+                        .entity_mut(v)
+                        .remove::<(sim_agents::Mustered, sim_agents::Rationed)>();
+                    if enlist_into(world, v, c) {
+                        men += 1;
+                    }
+                }
+                c
+            }
+            sim_core::Dues::Light => continue,
+        };
+        if food <= 0.0 && arms == 0 && men == 0 {
+            continue;
+        }
+        let name = settlement_name(world, s);
+        let id = *world.get::<SpawnId>(to).expect("captain id");
+        match sent.iter_mut().find(|r| r.1 == to) {
+            Some(r) => {
+                r.2 += food;
+                r.3 += arms;
+                r.4 += men;
+                r.5.push(name);
+            }
+            None => sent.push((id, to, food, arms, men, vec![name])),
+        }
+    }
+    sent.sort_unstable_by_key(|r| r.0);
+    for (id, c, food, arms, men, names) in sent {
+        let at = world.get::<Position>(c).map_or(IVec2::ZERO, |p| p.0);
+        world.write_message(
+            sim_core::SimEvent::new(sim_core::SimEventKind::Tribute, owner)
+                .subject(id.0)
+                .other(((arms as u64) << 32) | food.floor().max(0.0) as u64)
+                .at(at)
+                .amount(men as i32)
+                .cause(Cause::Edict),
+        );
+        let days = days_of(world, c, food);
+        let who = faction_name(world, owner);
+        log(
+            world,
+            format!(
+                "{who}'s lands sent captain {} {} days of food, {arms} arms and {men} men ({})",
+                id.0,
+                days_text(days),
+                names.join(", ")
+            ),
+        );
     }
 }
 

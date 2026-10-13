@@ -8,11 +8,16 @@
 //!   steward's habit, and applied by sim_military's hourly `govern::step`.
 //!   Every default is an exact no-op.
 //! - [`Rationed`], [`Mustered`], [`Assignment`]: on villagers moved,
-//!   mustered or rationed by an edict.
+//!   mustered or rationed by an edict (and [`Rationed`] on a rationed
+//!   settlement). Moves go through [`crate::jobs`].
 //!
-//! M4a step 1 lands the types (hashed and saved) and nothing writes them
-//! yet: step 4 brings the dials to life. Per-town effects live here, read
-//! at the point of use, never in `FactionModifiers` (ADR 0015).
+//! The write API: [`Edicts::order_work`], [`Edicts::order_dues`] and
+//! [`Edicts::order_table`] ask for a setting; the next hourly
+//! `govern::step` applies it (the dial turns, its lock starts, the first
+//! wave goes). The player's `Govern` command, step 5's tribute (Dues held
+//! at Tithe on a submitted town) and step 9's stewards all write through
+//! them. Per-town effects live here, read at the point of use, never in
+//! `FactionModifiers` (ADR 0015).
 
 use bevy_ecs::prelude::*;
 use sim_core::{BuildKind, Dial, Dues, StateHash, StateHasher, Table, WorkFocus};
@@ -59,12 +64,62 @@ pub struct Edicts {
     pub next_feast: u64,
     /// Buildings ordered this run, in order (at most two; SIM-63).
     pub builds: Vec<BuildKind>,
+    /// While a feast runs, work scores are multiplied by this (progression.ron
+    /// `edicts.feast.work`, copied when the feast starts; read by the
+    /// villager AI, which can't see sim_military's data).
+    pub feast_work: f32,
 }
 
 impl Edicts {
     /// The state of `dial`.
     pub fn dial(&self, dial: Dial) -> &DialState {
         &self.dials[dial as usize]
+    }
+
+    /// Whether every dial is at its default with nothing pending, locked or
+    /// running: the edicts are an exact no-op.
+    pub fn is_default(&self) -> bool {
+        self.work == WorkFocus::Balanced
+            && self.dues == Dues::Light
+            && self.table == Table::Normal
+            && self.pending_work.is_none()
+            && self.pending_dues.is_none()
+            && self.pending_table.is_none()
+            && self.feast_until == 0
+    }
+
+    /// Whether `dial` is locked at `tick`.
+    pub fn locked(&self, dial: Dial, tick: u64) -> bool {
+        tick < self.dial(dial).locked_until
+    }
+
+    /// Whether a feast is running at `tick`.
+    pub fn feasting(&self, tick: u64) -> bool {
+        tick < self.feast_until
+    }
+
+    /// Asks for Work `focus` at the next hourly `govern::step` (GP-34).
+    /// `by_player`: the player chose it (a steward's habit then leaves the
+    /// dial alone). Replaces a setting still pending; the lock is the
+    /// caller's to check (`orders::apply` refuses a locked dial).
+    pub fn order_work(&mut self, focus: WorkFocus, by_player: bool) {
+        self.pending_work = Some(focus);
+        self.dials[Dial::Work as usize].by_player = by_player;
+    }
+
+    /// Asks for Dues `dues` at the next hourly `govern::step`; see
+    /// [`Edicts::order_work`]. Step 5's tribute holds a submitted town at
+    /// Tithe with `order_dues(Dues::Tithe, false)`.
+    pub fn order_dues(&mut self, dues: Dues, by_player: bool) {
+        self.pending_dues = Some(dues);
+        self.dials[Dial::Dues as usize].by_player = by_player;
+    }
+
+    /// Asks for Table `table` at the next hourly `govern::step`; see
+    /// [`Edicts::order_work`].
+    pub fn order_table(&mut self, table: Table, by_player: bool) {
+        self.pending_table = Some(table);
+        self.dials[Dial::Table as usize].by_player = by_player;
     }
 }
 
@@ -88,16 +143,30 @@ impl StateHash for Edicts {
         for b in &self.builds {
             h.u8(b.tag());
         }
+        h.f32(self.feast_work);
     }
 }
 
-/// A villager living under the Ration edict (GP-34, M4a): hunger and the
-/// work cycle slowed (progression.ron `edicts.ration`). Hashed and saved.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Rationed;
+/// The Ration edict (GP-34, M4a), on a rationed settlement and each of its
+/// residents, with progression.ron `edicts.ration`'s numbers copied when it
+/// starts (sim_agents can't read sim_military's data). On a villager:
+/// hunger rises `hunger` times as fast (`update_needs`) and work cycles
+/// take `work` times as long (`perform`). On the settlement: its
+/// `FoodSecurity` counts a day's need times `hunger`, so its days stay
+/// honest. Absent, nothing changes. Hashed and saved.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct Rationed {
+    /// Hunger multiplier.
+    pub hunger: f32,
+    /// Work cycle multiplier.
+    pub work: f32,
+}
 
 impl StateHash for Rationed {
-    fn hash_state(&self, _h: &mut StateHasher) {}
+    fn hash_state(&self, h: &mut StateHasher) {
+        h.f32(self.hunger);
+        h.f32(self.work);
+    }
 }
 
 /// A villager mustered by the Levy edict, waiting on the green for a
@@ -154,9 +223,10 @@ sim_core::save_fields!(Edicts {
     feast_until,
     feast_term_until,
     next_feast,
-    builds
+    builds,
+    feast_work
 });
-sim_core::save_unit!(Rationed);
+sim_core::save_fields!(Rationed { hunger, work });
 sim_core::save_fields!(Mustered { since });
 sim_core::save_fields!(Assignment {
     from,
