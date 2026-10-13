@@ -86,6 +86,14 @@ fn step_to_hour_offset(app: &mut App, offset: u64) {
     step_to(app, t);
 }
 
+/// Steps past the next hour tick (the hourly step has run, and so has the
+/// lands pass of the tick after it).
+fn step_past_hour(app: &mut App) {
+    let hour = app.world().resource::<Calendar>().ticks_per_hour();
+    let t = (tick(app) / hour + 1) * hour;
+    step_to(app, t + 3);
+}
+
 /// Steps to the next day tick (a dawn), then one tick on.
 fn step_past_dawn(app: &mut App) {
     let d = day(app);
@@ -418,7 +426,7 @@ fn forge_moves_smiths_and_flips_recipes() {
 
     step_to_hour_offset(&mut app, 2);
     govern_cmd(&mut app, t, GovernAct::Work(WorkFocus::Forge));
-    step_to_hour_offset(&mut app, 3);
+    step_past_hour(&mut app);
     let applied = edicts(&app, t).dial(Dial::Work).since;
     assert!(applied > 0);
     assert_eq!(
@@ -461,7 +469,7 @@ fn forge_moves_smiths_and_flips_recipes() {
     step_to(&mut app, unlock + 1);
     let before_rejects = rejected(&app, FactionId::PLAYER);
     govern_cmd(&mut app, t, GovernAct::Work(WorkFocus::Balanced));
-    step_to_hour_offset(&mut app, 3);
+    step_past_hour(&mut app);
     assert_eq!(rejected(&app, FactionId::PLAYER), before_rejects, "accepted");
     assert_eq!(edicts(&app, t).work, WorkFocus::Balanced);
     assert_eq!(
@@ -511,7 +519,7 @@ fn fields_moves_workers_to_food() {
 
     step_to_hour_offset(&mut app, 2);
     govern_cmd(&mut app, t, GovernAct::Work(WorkFocus::Fields));
-    step_to_hour_offset(&mut app, 3);
+    step_past_hour(&mut app);
     let first = count_trades(&mut app, t, is_food);
     step_past_dawn(&mut app);
     step_past_dawn(&mut app);
@@ -583,7 +591,7 @@ fn walls_raises_haulers_and_the_watch() {
     let carters0 = count_trades(&mut app, t, |o| o == Occupation::Carter);
     step_to_hour_offset(&mut app, 2);
     govern_cmd(&mut app, t, GovernAct::Work(WorkFocus::Walls));
-    step_to_hour_offset(&mut app, 3);
+    step_past_hour(&mut app);
     for _ in 0..4 {
         step_past_dawn(&mut app);
     }
@@ -657,7 +665,7 @@ fn a_tithe_reaches_an_army_within_reach() {
     let store0 = food_of(&app, store);
     step_to_hour_offset(&mut app, 2);
     govern_cmd(&mut app, t, GovernAct::Dues(Dues::Tithe));
-    step_to_hour_offset(&mut app, 3);
+    step_past_hour(&mut app);
     let bag1 = food_of(&app, cap);
     let arms1 = (stock_of(&app, store, weapons), stock_of(&app, store, tools));
     let armed = {
@@ -741,7 +749,7 @@ fn a_levy_musters_and_joins() {
     };
     step_to_hour_offset(&mut app, 2);
     govern_cmd(&mut app, t, GovernAct::Dues(Dues::Levy));
-    step_to_hour_offset(&mut app, 3);
+    step_past_hour(&mut app);
     let first = waiting(&mut app);
     println!("town #{} ({pop} people): a wave is {per}, at most {cap} waiting; mustered {}", t.id, first.len());
     assert_eq!(first.len() as u32, per, "2% of the people, at least one");
@@ -824,7 +832,7 @@ fn rationing_slows_eating_by_a_quarter() {
     };
     step_to_hour_offset(&mut app, 2);
     govern_cmd(&mut app, t, GovernAct::Table(Table::Ration));
-    step_to_hour_offset(&mut app, 3);
+    step_past_hour(&mut app);
     let r = *app.world().get::<Rationed>(t.e).expect("the settlement is rationed");
     assert_eq!((r.hunger, r.work), (0.75, 1.1));
     let marked = trades(&mut app, t)
@@ -1039,7 +1047,7 @@ fn dials_lock() {
     let p = FactionId::PLAYER;
     step_to_hour_offset(&mut app, 2);
     govern_cmd(&mut app, t, GovernAct::Work(WorkFocus::Fields));
-    step_to_hour_offset(&mut app, 3);
+    step_past_hour(&mut app);
     let e = edicts(&app, t);
     let unlock = e.dial(Dial::Work).locked_until;
     assert_eq!(e.work, WorkFocus::Fields);
@@ -1087,7 +1095,7 @@ fn dials_lock() {
     app.step(2);
     assert_eq!(rejected(&app, p), r, "accepted");
     assert_eq!(edicts(&app, t).pending_work, Some(WorkFocus::Forge));
-    step_to_hour_offset(&mut app, 3);
+    step_past_hour(&mut app);
     let e = edicts(&app, t);
     println!(
         "  after the lock: Work {:?}, since {}, locked until {}",
