@@ -386,14 +386,15 @@ pub fn resolve_transfers(
     mut stores: Query<&mut Stockpile>,
 ) {
     let _span = tracing::info_span!("sim_economy::resolve_transfers").entered();
-    let mut pending: Vec<(u64, u64, Entity)> = agents
-        .iter()
-        .filter_map(|(e, id, _, t)| {
-            let order = t.order.as_ref()?;
+    // `for_each`, not `collect`: a fold takes the query's dense-table path
+    // (every agent is visited, and few have an order).
+    let mut pending: Vec<(u64, u64, Entity)> = Vec::new();
+    agents.iter().for_each(|(e, id, _, t)| {
+        if let Some(order) = &t.order {
             let store_id = ids.get(order.store).map_or(u64::MAX, |s| s.0);
-            Some((store_id, id.0, e))
-        })
-        .collect();
+            pending.push((store_id, id.0, e));
+        }
+    });
     if pending.is_empty() {
         return;
     }

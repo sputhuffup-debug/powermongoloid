@@ -139,7 +139,10 @@ pub struct Candidate {
     pub target: Option<Entity>,
     pub dropoff: Option<Entity>,
     pub good: Option<GoodId>,
-    /// Tile to walk to first (None = act in place).
+    /// Tile to walk to first (None = act in place). For `Idle`, the tile
+    /// its wander is drawn around (home, or the green): the spot itself is
+    /// drawn by [`AiWorld::goal_of`] only for the option chosen, so an Idle
+    /// that loses costs no random draw.
     pub goal: Option<IVec2>,
 }
 
@@ -549,9 +552,19 @@ impl AiWorld<'_, '_> {
             target: None,
             dropoff: None,
             good: None,
-            goal: Some(self.idle_spot(me, green.or(home_tile).unwrap_or(me.tile))),
+            goal: Some(green.or(home_tile).unwrap_or(me.tile)),
         });
         out
+    }
+
+    /// Where `c`'s action starts: its goal, or for `Idle` a spot drawn
+    /// around its anchor (`sim_agents::idle_spot`, keyed by the villager
+    /// and the tick, so drawing it only for a chosen Idle changes nothing).
+    pub fn goal_of(&self, me: &Me, c: &Candidate) -> Option<IVec2> {
+        match c.option.kind {
+            ActionKind::Idle => c.goal.map(|anchor| self.idle_spot(me, anchor)),
+            _ => c.goal,
+        }
     }
 
     /// Whether the villager can do a work cycle at its workplace.
@@ -797,11 +810,43 @@ pub fn choose(candidates: &[Candidate], current: Option<ActionKind>, inertia: f3
     best
 }
 
+/// The indices of the (up to) three best options, best first: by score,
+/// ties by kind (the order a stable sort by those keys gives; a list holds
+/// each kind once). For the [`DecisionTrace`]; allocates nothing.
+fn top_three(candidates: &[Candidate]) -> ([usize; 3], usize) {
+    let better = |a: usize, b: usize| {
+        let (a, b) = (&candidates[a].option, &candidates[b].option);
+        b.score.total_cmp(&a.score).then(a.kind.cmp(&b.kind)) == std::cmp::Ordering::Less
+    };
+    let mut top = [0usize; 3];
+    let mut n = 0;
+    for i in 0..candidates.len() {
+        // Insert after every kept option it does not beat (equal keys keep
+        // the earlier index first, as a stable sort would).
+        let mut at = n;
+        while at > 0 && better(i, top[at - 1]) {
+            at -= 1;
+        }
+        if at < 3 {
+            let end = n.min(2);
+            let mut k = end;
+            while k > at {
+                top[k] = top[k - 1];
+                k -= 1;
+            }
+            top[at] = i;
+            n = (n + 1).min(3);
+        }
+    }
+    (top, n)
+}
+
 #[allow(clippy::type_complexity)]
 pub(crate) fn decide(
     world: AiWorld,
     mut agents: Query<
         (
+            Entity,
             &SpawnId,
             &Villager,
             &Occupation,
@@ -830,21 +875,30 @@ pub(crate) fn decide(
     // decide in changes nothing).
     let fixes = run_fixes_on(world.run.as_deref(), &world.econ).then(|| {
         let mut f = RunFixes::default();
-        for (id, _, _, _, _, _, _, _, activity, ..) in agents.iter() {
-            if activity.kind == ActionKind::Haul
-                && activity.stage != Stage::Done
-                && let (Some(dropoff), Some(good)) = (activity.dropoff, activity.good)
-            {
-                f.claims
-                    .entry((dropoff, good))
-                    .and_modify(|c| *c = (*c).min(*id))
-                    .or_insert(*id);
-            }
-        }
+        // `for_each`, not `for`: a fold takes the query's dense-table path.
+        agents
+            .iter()
+            .for_each(|(_, id, _, _, _, _, _, _, _, activity, ..)| {
+                if activity.kind == ActionKind::Haul
+                    && activity.stage != Stage::Done
+                    && let (Some(dropoff), Some(good)) = (activity.dropoff, activity.good)
+                {
+                    f.claims
+                        .entry((dropoff, good))
+                        .and_modify(|c| *c = (*c).min(*id))
+                        .or_insert(*id);
+                }
+            });
         f
     });
+    // SIM-64: carters who chose an input delivery this tick, noted as they
+    // choose (in any order; sorted below), so no second pass over everyone
+    // is needed to find them.
+    let fresh: std::sync::Mutex<Vec<(SpawnId, Entity, GoodId, Entity)>> =
+        std::sync::Mutex::new(Vec::new());
     agents.par_iter_mut().for_each(
         |(
+            entity,
             id,
             villager,
             occupation,
@@ -898,16 +952,12 @@ pub(crate) fn decide(
             let current = (!done).then_some(activity.kind);
             let pick = choose(&candidates, current, inertia);
 
-            let mut order: Vec<usize> = (0..candidates.len()).collect();
-            order.sort_by(|&a, &b| {
-                let (a, b) = (&candidates[a].option, &candidates[b].option);
-                b.score.total_cmp(&a.score).then(a.kind.cmp(&b.kind))
-            });
+            let (top, n) = top_three(&candidates);
             trace.tick = tick;
             trace.options.clear();
             trace
                 .options
-                .extend(order.iter().take(3).map(|&i| candidates[i].option.clone()));
+                .extend(top[..n].iter().map(|&i| candidates[i].option.clone()));
 
             let c = &candidates[pick];
             if Some(c.option.kind) == current {
@@ -923,9 +973,20 @@ pub(crate) fn decide(
                 until_tick: 0,
                 started_tick: tick,
             };
-            match c.goal {
+            match world.goal_of(&me, c) {
                 Some(goal) if goal != pos.0 => travel.go_to(goal),
                 _ => travel.state = TravelState::Arrived,
+            }
+            if fixes.is_some()
+                && *occupation == Occupation::Carter
+                && c.option.kind == ActionKind::Haul
+                && let (Some(dropoff), Some(good)) = (c.dropoff, c.good)
+                && world.is_delivery(dropoff, good)
+            {
+                fresh
+                    .lock()
+                    .expect("no panics while held")
+                    .push((*id, entity, good, dropoff));
             }
         },
     );
@@ -933,37 +994,18 @@ pub(crate) fn decide(
     // same tick: the lowest SpawnId keeps it, the others decide again next
     // tick (when its claim shows).
     if let Some(fixes) = &fixes {
-        let mut fresh: Vec<(SpawnId, Entity, GoodId)> = agents
-            .iter()
-            .filter_map(|(id, _, occupation, .., activity, _, _, _, _)| {
-                let (Some(dropoff), Some(good)) = (activity.dropoff, activity.good) else {
-                    return None;
-                };
-                (*occupation == Occupation::Carter
-                    && activity.kind == ActionKind::Haul
-                    && activity.started_tick == tick
-                    && activity.stage == Stage::Travel
-                    && world.is_delivery(dropoff, good))
-                .then_some((*id, dropoff, good))
-            })
-            .collect();
+        let mut fresh = fresh.into_inner().expect("no panics while held");
         if fresh.len() > 1 {
-            fresh.sort_unstable();
+            fresh.sort_unstable_by_key(|(id, ..)| *id);
             let mut kept: Vec<(Entity, GoodId)> = Vec::new();
-            let mut losers: Vec<SpawnId> = Vec::new();
-            for (id, dropoff, good) in fresh {
+            for (id, entity, good, dropoff) in fresh {
                 if fixes.claimed_by_other(dropoff, good, id) || kept.contains(&(dropoff, good)) {
-                    losers.push(id);
-                } else {
-                    kept.push((dropoff, good));
-                }
-            }
-            if !losers.is_empty() {
-                for (id, .., mut activity, mut travel, _, _, _) in agents.iter_mut() {
-                    if losers.binary_search(id).is_ok() {
+                    if let Ok((.., mut activity, mut travel, _, _, _)) = agents.get_mut(entity) {
                         activity.stage = Stage::Done;
                         travel.state = TravelState::Idle;
                     }
+                } else {
+                    kept.push((dropoff, good));
                 }
             }
         }
@@ -985,6 +1027,33 @@ mod tests {
             dropoff: None,
             good: None,
             goal: None,
+        }
+    }
+
+    /// The trace's best three are the first three of a stable sort by
+    /// score (descending), then kind, whatever the ties.
+    #[test]
+    fn top_three_matches_a_stable_sort() {
+        use ActionKind::*;
+        let kinds = [Eat, Fetch, Sleep, Work, GoHome, Hide, Flee, Fight, Idle];
+        let scores = [0.5, 0.0, 0.5, 1.0, f32::NAN, 0.25, -0.0, 0.5, 0.0];
+        for len in 0..=kinds.len() {
+            for rot in 0..kinds.len() {
+                let c: Vec<Candidate> = (0..len)
+                    .map(|i| cand(kinds[(i + rot) % kinds.len()], scores[(i * 7 + rot) % 9]))
+                    .collect();
+                let mut order: Vec<usize> = (0..c.len()).collect();
+                order.sort_by(|&a, &b| {
+                    let (a, b) = (&c[a].option, &c[b].option);
+                    b.score.total_cmp(&a.score).then(a.kind.cmp(&b.kind))
+                });
+                let (top, n) = top_three(&c);
+                assert_eq!(
+                    &top[..n],
+                    &order[..order.len().min(3)],
+                    "len {len} rot {rot}"
+                );
+            }
         }
     }
 

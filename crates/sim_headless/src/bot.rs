@@ -313,20 +313,49 @@ pub struct Takes {
     pub raids_rival: u32,
     pub raids_player: u32,
     pub raids_other: u32,
-    /// Reprisals vowed, sent and the retakes they led to (a rival
-    /// Conquest of a town a `RivalReprisal` named).
+    /// Reprisals vowed and sent (`ReprisalVowed`, `RivalReprisal`).
     pub vows: u32,
     pub reprisals: u32,
+    /// Reprisals that led to a retake: the first change of hands of the
+    /// town a `RivalReprisal` named, after that band was sent, is a rival
+    /// `Conquest` (counted once per reprisal, so never more than
+    /// `reprisals`).
     pub retakes: u32,
+    /// Of those retakes, the ones the reprisal band's own captain made
+    /// (the rest fell to a raid band first).
+    pub retakes_by_band: u32,
+    /// The player's towns the rival conquered (a rival `Conquest` whose
+    /// previous owner was the player), by whose captain took them: a raid
+    /// band's (`RivalRaid`), a reprisal band's (`RivalReprisal`), or
+    /// another (an heir, who has no event of his own, or the rival's
+    /// garrison).
+    pub lost_raid: u32,
+    pub lost_reprisal: u32,
+    pub lost_other: u32,
     /// Revolts against the player.
     pub revolts: u32,
+}
+
+/// Whether an event of `kind` reports a settlement changing hands (its
+/// `subject` is the settlement): what [`Bot::takes`] follows a reprisal's
+/// town by.
+fn changes_hands(kind: SimEventKind) -> bool {
+    matches!(
+        kind,
+        SimEventKind::Conquest
+            | SimEventKind::Invited
+            | SimEventKind::Revolt
+            | SimEventKind::Submitted
+            | SimEventKind::Defied
+            | SimEventKind::Subverted
+    )
 }
 
 impl Takes {
     /// One line for reports: `takes attack 3 sack 0 submitted 2 ...`.
     pub fn describe(&self) -> String {
         format!(
-            "takes attack {} sack {} submitted {} invited {} (gifted {}) | defied {} | demands {} refused {} | gifts {} | bandits {} raids rival {} player {} other {} | vows {} reprisals {} retaken {} | revolts {}",
+            "takes attack {} sack {} submitted {} invited {} (gifted {}) | defied {} | demands {} refused {} | gifts {} | bandits {} raids rival {} player {} other {} | vows {} reprisals {} retaken {} (by its band {}) | lost to the rival: raids {} reprisals {} other {} | revolts {}",
             self.attack,
             self.sack,
             self.submitted,
@@ -343,6 +372,10 @@ impl Takes {
             self.vows,
             self.reprisals,
             self.retakes,
+            self.retakes_by_band,
+            self.lost_raid,
+            self.lost_reprisal,
+            self.lost_other,
             self.revolts
         )
     }
@@ -949,20 +982,52 @@ impl Bot {
             raids_other: self.raid_counts.2,
             ..Takes::default()
         };
-        let named: Vec<u64> = chronicle
-            .iter()
-            .filter(|e| e.event.kind == SimEventKind::RivalReprisal)
-            .map(|e| e.event.other)
-            .collect();
-        for e in chronicle {
+        let captains = |kind: SimEventKind| -> Vec<u64> {
+            chronicle
+                .iter()
+                .filter(|e| e.event.kind == kind)
+                .map(|e| e.event.subject)
+                .collect()
+        };
+        let (raiders, avengers) = (
+            captains(SimEventKind::RivalRaid),
+            captains(SimEventKind::RivalReprisal),
+        );
+        let conqueror = |e: &ChronicleEntry| match e.event.cause {
+            Cause::Conquest { captain } => Some(captain),
+            _ => None,
+        };
+        for (i, e) in chronicle.iter().enumerate() {
             match e.event.kind {
                 SimEventKind::BanditsRose => t.bands += 1,
                 SimEventKind::ReprisalVowed => t.vows += 1,
-                SimEventKind::RivalReprisal => t.reprisals += 1,
+                SimEventKind::RivalReprisal => {
+                    t.reprisals += 1;
+                    // The first change of hands of the named town from
+                    // here on: a rival conquest is the vow kept.
+                    let town = e.event.other;
+                    let next = chronicle[i + 1..]
+                        .iter()
+                        .find(|c| c.event.subject == town && changes_hands(c.event.kind));
+                    if let Some(c) = next
+                        && c.event.kind == SimEventKind::Conquest
+                        && c.event.faction == FactionId::RIVAL
+                    {
+                        t.retakes += 1;
+                        if conqueror(c) == Some(e.event.subject) {
+                            t.retakes_by_band += 1;
+                        }
+                    }
+                }
                 SimEventKind::Conquest
-                    if e.event.faction == FactionId::RIVAL && named.contains(&e.event.subject) =>
+                    if e.event.faction == FactionId::RIVAL
+                        && e.event.other == FactionId::PLAYER.0 as u64 =>
                 {
-                    t.retakes += 1;
+                    match conqueror(e) {
+                        Some(c) if raiders.contains(&c) => t.lost_raid += 1,
+                        Some(c) if avengers.contains(&c) => t.lost_reprisal += 1,
+                        _ => t.lost_other += 1,
+                    }
                 }
                 SimEventKind::Revolt if e.event.faction == FactionId::PLAYER => {
                     t.revolts += 1;
@@ -2210,5 +2275,169 @@ mod tests {
             t.describe()
                 .starts_with("takes attack 1 sack 1 submitted 1")
         );
+    }
+
+    /// MP3: a retake is the first change of hands of the town a reprisal
+    /// named, from the tick its band was sent, and counts once per
+    /// reprisal; the rival's conquests of the player's towns are counted
+    /// by whose band took them (seed 3's Thornbrook on the MP3 tree: a
+    /// raid band took it before the vow and again after the reprisal left,
+    /// and the reprisal band took another town instead).
+    #[test]
+    fn retakes_follow_the_reprisal() {
+        use sim_core::SimEvent;
+        let (me, rival) = (FactionId::PLAYER, FactionId::RIVAL);
+        let ev = |tick, kind, faction, subject, other, cause| ChronicleEntry {
+            tick,
+            event: SimEvent {
+                subject,
+                other,
+                cause,
+                ..SimEvent::new(kind, faction)
+            },
+        };
+        let mine = me.0 as u64;
+        let (thornbrook, duncombe, vanestow) = (10, 11, 12);
+        let (raider, avenger) = (5081, 5863);
+        let took = |captain| Cause::Conquest { captain };
+        let log = [
+            ev(
+                30_000,
+                SimEventKind::RivalRaid,
+                rival,
+                raider,
+                0,
+                Cause::Raid { captain: raider },
+            ),
+            ev(
+                35_022,
+                SimEventKind::Conquest,
+                rival,
+                thornbrook,
+                mine,
+                took(raider),
+            ),
+            ev(
+                36_200,
+                SimEventKind::Invited,
+                me,
+                thornbrook,
+                rival.0 as u64,
+                Cause::Invitation,
+            ),
+            ev(
+                36_200,
+                SimEventKind::ReprisalVowed,
+                rival,
+                thornbrook,
+                38_000,
+                Cause::Invitation,
+            ),
+            ev(
+                38_000,
+                SimEventKind::RivalReprisal,
+                rival,
+                avenger,
+                thornbrook,
+                Cause::Reprisal {
+                    settlement: thornbrook,
+                },
+            ),
+            ev(
+                38_107,
+                SimEventKind::Conquest,
+                rival,
+                thornbrook,
+                mine,
+                took(raider),
+            ),
+            // The same raid band again: a loss, not a second retake.
+            ev(
+                50_000,
+                SimEventKind::Invited,
+                me,
+                thornbrook,
+                rival.0 as u64,
+                Cause::Invitation,
+            ),
+            ev(
+                51_000,
+                SimEventKind::Conquest,
+                rival,
+                thornbrook,
+                mine,
+                took(raider),
+            ),
+            ev(
+                70_654,
+                SimEventKind::Conquest,
+                rival,
+                duncombe,
+                mine,
+                took(avenger),
+            ),
+            // An heir (no event of his own) and a free town's fall.
+            ev(
+                72_000,
+                SimEventKind::Conquest,
+                rival,
+                vanestow,
+                mine,
+                took(9999),
+            ),
+            ev(73_000, SimEventKind::Conquest, rival, 13, 0, took(raider)),
+        ];
+        let t = Bot::new(3).takes(&log);
+        assert_eq!((t.vows, t.reprisals), (1, 1));
+        assert_eq!((t.retakes, t.retakes_by_band), (1, 0), "{t:?}");
+        assert_eq!((t.lost_raid, t.lost_reprisal, t.lost_other), (3, 1, 1));
+        assert!(t.retakes <= t.reprisals);
+
+        // A town the reprisal named that changed hands otherwise first (a
+        // revolt) is no retake; the band's own conquest of it is one.
+        let log = [
+            ev(
+                100,
+                SimEventKind::RivalReprisal,
+                rival,
+                avenger,
+                thornbrook,
+                Cause::Reprisal {
+                    settlement: thornbrook,
+                },
+            ),
+            ev(150, SimEventKind::Revolt, me, thornbrook, 0, Cause::Revolt),
+            ev(
+                200,
+                SimEventKind::Conquest,
+                rival,
+                thornbrook,
+                0,
+                took(avenger),
+            ),
+            ev(
+                300,
+                SimEventKind::RivalReprisal,
+                rival,
+                avenger + 1,
+                duncombe,
+                Cause::Reprisal {
+                    settlement: duncombe,
+                },
+            ),
+            ev(
+                400,
+                SimEventKind::Conquest,
+                rival,
+                duncombe,
+                mine,
+                took(avenger + 1),
+            ),
+        ];
+        let t = Bot::new(3).takes(&log);
+        assert_eq!((t.reprisals, t.retakes, t.retakes_by_band), (2, 1, 1));
+        assert_eq!((t.lost_raid, t.lost_reprisal, t.lost_other), (0, 1, 0));
+        assert_eq!(t.revolts, 1);
+        assert!(t.describe().contains("retaken 1 (by its band 1)"));
     }
 }
