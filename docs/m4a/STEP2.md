@@ -50,7 +50,7 @@ Also:
 | Run replay: `--run --seed 42 --ticks 3000 --commands 50 --record run.ron`, then `--replay run.ron` and `--replay run.ron --single-threaded` | recorded 51 commands, hash `0x9cf30340f172f84a`; both replays ok with the same hash |
 | `RUSTDOCFLAGS="-D warnings" cargo doc -j 2 --workspace --no-deps` | clean |
 | Cost: `--run --seed 7 --difficulty steady --ticks 7200 --timings --stats-every 2400`, three runs, base vs step 2 | live window (no `run ended` before tick 7,200): mean tick base 2.78, 2.49, 2.29 ms (mean 2.52); step 2 2.56, 2.51, 2.40 ms (mean 2.49): within noise, under +5% |
-| `bot_run` (release, `--ignored`) | 5 of 5 won: seed 1 day 17.2, seed 2 day 29.3, seed 3 day 21.3, seed 4 day 22.1, seed 5 day 16.2 (534 s). The M4 reference (TESTING.md, 2026-10-12) is days 15.5-26.3 with no per-seed record, so the merge lead's baseline decides the per-seed shift; seed 2's 29.3 is beyond that range. The bot never equips in a run yet (step 4's tithe and lane D's bot do), so weapons can't be what moves it: the fixes change food and tools, and with them the towns' fights |
+| `bot_run` (release, `--ignored`) | 5 of 5 won: seed 1 day 17.2, seed 2 day 29.3, seed 3 day 21.3, seed 4 day 22.1, seed 5 day 16.2 (534 s). The M4 reference (TESTING.md, 2026-10-12) is days 15.5-26.3 with no per-seed record, so the merge lead's baseline decides the per-seed shift; seed 2's 29.3 is beyond that range. The fixes change what the bot's Equip finds in storehouses (weapons and tools) and the towns' food, so both can move the win days |
 
 ## Weapons census (three days, `--run --ticks 7200 --workshops`, no commands)
 
