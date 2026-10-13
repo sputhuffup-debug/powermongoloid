@@ -31,9 +31,9 @@
 //!    from day 16, 0.75 from day 24, any army from day 32): first to a
 //!    staging point, then an `Attack` on the seat together.
 //!
-//! 7. governs once a game day ([`Bot::govern`], LORDSHIP_DESIGN section
+//! 7. governs once a game day (`Bot::govern`, LORDSHIP_DESIGN section
 //!    12): Forge at the best smithy town while it has two days of food,
-//!    Tithe at fed, loyal towns within [`GOVERN_RANGE`] of a captain, a
+//!    Tithe at fed, loyal towns within `GOVERN_RANGE` of a captain, a
 //!    Levy at one big loyal town at a time, never Ration or Feast. Only
 //!    commands the sim would accept are sent.
 //!
