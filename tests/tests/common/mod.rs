@@ -91,6 +91,16 @@ pub fn run_app(seed: u64) -> App {
     headless_app(HeadlessConfig::run(seed, RunConfig::default()))
 }
 
+/// [`run_app`] without specialties (M4a step 9, SIM-62): villagers.ron
+/// `specialties` emptied before populate, so the run island is laid out as
+/// it was before step 9. For scenarios that guard something else and only
+/// moved because the island's layout did.
+pub fn run_app_without_specialties(seed: u64) -> App {
+    sim_headless::headless_app_with(HeadlessConfig::run(seed, RunConfig::default()), |w| {
+        w.resource_mut::<Villagers>().data.specialties.clear();
+    })
+}
+
 /// The id of the player's pending start boon offer (GP-27).
 pub fn start_offer(app: &App) -> u64 {
     sim_headless::start_offer(app).expect("a pending start boon offer")

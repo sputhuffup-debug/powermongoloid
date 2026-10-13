@@ -101,9 +101,11 @@ fn step_past_dawn(app: &mut App) {
     step_to(app, t + 3);
 }
 
-/// A fresh run of the seed, director silenced.
+/// A fresh run of the seed, director silenced, the island laid out without
+/// specialties (M4a step 9): these scenarios guard the edicts and pick
+/// their town (two smithies) from the MP2 layout.
 fn fresh() -> App {
-    let mut app = run_app(SEED);
+    let mut app = run_app_without_specialties(SEED);
     quiet_director(&mut app);
     app
 }

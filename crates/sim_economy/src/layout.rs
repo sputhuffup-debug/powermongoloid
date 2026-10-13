@@ -306,6 +306,30 @@ impl Reachable {
 /// Furthest any building goes from the centre.
 const MAX_RADIUS: i32 = 64;
 
+/// Tiles of `rule` within `radius` (at most 64) of `center` that villagers
+/// can walk to, counted on the map as it is (nothing built is considered).
+/// The site test and the reach are `build_settlement`'s own, so a count of
+/// Upland tiles is the land its mines could stand on (SIM-62: a run town's
+/// specialty, M4a step 9).
+pub fn site_tiles(map: &WorldMap, center: IVec2, radius: i32, rule: SiteRule) -> u32 {
+    let radius = radius.clamp(0, MAX_RADIUS);
+    let reachable = Reachable::new(map, center, MAX_RADIUS);
+    let mut n = 0;
+    for dy in -radius..=radius {
+        for dx in -radius..=radius {
+            let p = center + IVec2::new(dx, dy);
+            if dx * dx + dy * dy <= radius * radius
+                && map.in_bounds(p)
+                && reachable.contains(p)
+                && site_ok(map, p, rule)
+            {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
 /// Tiles within `radius` of `center`, nearest first (ties by tile index).
 fn ring(map: &WorldMap, center: IVec2, min_r: i32, radius: i32) -> Vec<IVec2> {
     let mut tiles = Vec::new();

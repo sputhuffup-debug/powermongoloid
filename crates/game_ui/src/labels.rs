@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 use game_render::{CameraRig, surface_point};
-use sim_agents::Owner;
+use sim_agents::{Owner, Specialty};
 use sim_core::{FactionId, NameTable, SpawnId};
 use sim_military::Tenure;
 use sim_world::{Settlement, WorldMap};
@@ -109,6 +109,11 @@ fn label_text(name: &str, mark: Option<String>) -> String {
     }
 }
 
+/// A run town's specialty tag, e.g. `[Mining]` (SIM-62, M4a step 9).
+fn specialty_tag(sp: Specialty) -> String {
+    format!("[{}]", sp.name())
+}
+
 /// Writes each label's text (one system, so the two parts never overwrite
 /// each other). The first line is the name with the run town's tenure mark:
 /// sword, broken sword, bent knee, ribbon or eye as ASCII tags, and
@@ -121,6 +126,7 @@ fn mark_labels(
     take: Res<TakeView>,
     govern: Res<crate::panels::GovernView>,
     towns: Query<(&SpawnId, Option<&Tenure>, Option<&Owner>)>,
+    specialties: Query<&Specialty>,
     mut labels: Query<(&SettlementLabel, &mut Text)>,
 ) {
     let _span = info_span!("game_ui::labels::mark_labels").entered();
@@ -134,6 +140,10 @@ fn mark_labels(
                 tenure.and_then(|t| take::tenure_mark(owner, t.how, watched))
             });
         let mut new = label_text(&label.name, mark);
+        if let Ok(sp) = specialties.get(label.settlement) {
+            new += "\n";
+            new += &specialty_tag(*sp);
+        }
         if let Some(lines) = govern.badges.get(&label.settlement) {
             for l in lines {
                 new += "\n";

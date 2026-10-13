@@ -100,41 +100,7 @@ pub fn setup(world: &mut World, data: &Progression, cards: &[u16], start: IVec2)
         }
         let mut rng = seed.stream(rng_key("sim_military::sellswords") ^ card as u64, 0);
         let angle = rng.random_range(0.0..std::f32::consts::TAU);
-        let want = start + (Vec2::from_angle(angle) * hire.distance).round().as_ivec2();
-        // A tile the champion can walk to (no cut-off spit or islet).
-        let at = {
-            let map = world.resource::<WorldMap>();
-            let r = hire.distance.ceil() as i32 + 24;
-            let reach = FlowField::build(
-                map,
-                &costs,
-                start,
-                start - IVec2::splat(r),
-                start + IVec2::splat(r),
-            );
-            nearest_reachable(&reach, want).unwrap_or(start)
-        };
-        // `spawn_army` seats a faction that has none; the independents have
-        // no seat, so theirs is put back as it was.
-        let seats = world.resource::<Factions>().clone();
-        let captain = spawn_army(
-            world,
-            &ArmySpec {
-                posture: Posture::Passive,
-                food_days: 0.0,
-                armed: hire.armed,
-                soldier: Some(hire.unit),
-                ..ArmySpec::new(FactionId::INDEPENDENT, at, n - 1)
-            },
-        );
-        *world.resource_mut::<Factions>() = seats;
-        // The captain is one of them, not army.ron's captain.
-        *world.get_mut::<CombatStats>(captain).expect("a soldier") = soldier_stats(hire.unit);
-        let id = world.get::<SpawnId>(captain).expect("spawned").0;
-        for m in members_of(world, captain) {
-            world.entity_mut(m).insert(NoUpkeep);
-        }
-        let price = price(&hire, per_day, n);
+        let (id, price) = camp(world, &hire, &costs, per_day, start, angle, n);
         // Queued quietly: `report_start` reports it on tick 0.
         world.resource_mut::<Offers>().post(
             FactionId::PLAYER,
@@ -153,6 +119,59 @@ pub fn setup(world: &mut World, data: &Progression, cards: &[u16], start: IVec2)
             format!("{n} sellswords camp near {who}'s start, for hire at {price} food"),
         );
     }
+}
+
+/// Camps a band of `n` men for hire (the captain one of them)
+/// `hire.distance` tiles from `from` at `angle`, snapped to the nearest tile
+/// one can walk to from `from`: an independent, passive army with
+/// `hire.unit`'s stats and `hire.armed`'s weapon, every man [`NoUpkeep`].
+/// Returns the captain's SpawnId and the band's price ([`price`]). The
+/// caller posts the `Hire` offer. Used by [`setup`] (GP-27) and by Market
+/// towns ([`crate::govern`], SIM-62).
+pub(crate) fn camp(
+    world: &mut World,
+    hire: &HireData,
+    costs: &sim_world::TravelCosts,
+    hunger_per_day: f32,
+    from: IVec2,
+    angle: f32,
+    n: u32,
+) -> (u64, u16) {
+    let want = from + (Vec2::from_angle(angle) * hire.distance).round().as_ivec2();
+    // A tile the champion can walk to (no cut-off spit or islet).
+    let at = {
+        let map = world.resource::<WorldMap>();
+        let r = hire.distance.ceil() as i32 + 24;
+        let reach = FlowField::build(
+            map,
+            costs,
+            from,
+            from - IVec2::splat(r),
+            from + IVec2::splat(r),
+        );
+        nearest_reachable(&reach, want).unwrap_or(from)
+    };
+    // `spawn_army` seats a faction that has none; the independents have
+    // no seat, so theirs is put back as it was.
+    let seats = world.resource::<Factions>().clone();
+    let captain = spawn_army(
+        world,
+        &ArmySpec {
+            posture: Posture::Passive,
+            food_days: 0.0,
+            armed: hire.armed,
+            soldier: Some(hire.unit),
+            ..ArmySpec::new(FactionId::INDEPENDENT, at, n - 1)
+        },
+    );
+    *world.resource_mut::<Factions>() = seats;
+    // The captain is one of them, not army.ron's captain.
+    *world.get_mut::<CombatStats>(captain).expect("a soldier") = soldier_stats(hire.unit);
+    let id = world.get::<SpawnId>(captain).expect("spawned").0;
+    for m in members_of(world, captain) {
+        world.entity_mut(m).insert(NoUpkeep);
+    }
+    (id, price(hire, hunger_per_day, n))
 }
 
 /// The band for hire led by `captain` (a SpawnId): its captain (an

@@ -22,7 +22,7 @@ use sim_economy::{
     Economy, Home, Inventory, Occupation, Occupied, SettlementEconomy, Stockpile, Transfers,
     Workplace, WorkplaceKind,
 };
-use sim_world::{Mobile, RegionId, Settlement, SettlementSize, Terrain, WorldMap};
+use sim_world::{Mobile, RegionId, RoadNetwork, Settlement, SettlementSize, Terrain, WorldMap};
 
 use crate::components::{
     Activity, CombatStats, DecisionTrace, Employment, Needs, NextDecision, Strike, Threat, Travel,
@@ -44,6 +44,53 @@ pub struct PopulationReport {
     /// Workers moved to another occupation because their workplace
     /// couldn't be built (no coast, no forest, ...).
     pub reassigned: u32,
+    /// (settlement, words drawn from its populate stream), in populate
+    /// order: specialties change who works where, never how many draws are
+    /// made (M4a step 9, BUILD_GUIDE G10; `populate_draws_are_unchanged`).
+    pub draws: Vec<(SpawnId, u128)>,
+    /// (settlement, its site counts) for each run settlement given a
+    /// specialty: reachable tiles of every specialty row's site, and its
+    /// road degree (diagnostics; `sim_headless --workshops` prints them).
+    pub sites: Vec<(SpawnId, SiteCounts)>,
+}
+
+/// What populate counted at a run settlement's site to pick its
+/// [`Specialty`] (SIM-62): reachable Upland, Coast and ForestEdge tiles
+/// within the specialty rows' radius, and the roads that meet there.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SiteCounts {
+    /// Hills and mountain tiles.
+    pub upland: u32,
+    /// Beach or grass next to water.
+    pub coast: u32,
+    /// Forest next to open land.
+    pub forest_edge: u32,
+    /// Roads with an end at the settlement.
+    pub roads: u32,
+}
+
+/// SIM-62 (M4a step 9): the specialty a site gives, from villagers.ron
+/// `specialties` (the first matching row), with the occupation shares it
+/// scales. `None` when no row matches (or the list is empty).
+pub fn specialty_of<'a>(
+    rules: &'a [crate::data::SpecialtyRule],
+    map: &WorldMap,
+    center: IVec2,
+    roads: u32,
+) -> Option<&'a crate::data::SpecialtyRule> {
+    rules.iter().find(|r| {
+        let tiles = r.site.map_or(0, |site| {
+            sim_economy::site_tiles(map, center, r.radius, site)
+        });
+        r.matches(tiles, roads)
+    })
+}
+
+/// Roads in `network` with an end at settlement `id`.
+pub fn road_degree(network: Option<&RoadNetwork>, id: SpawnId) -> u32 {
+    network.map_or(0, |n| {
+        n.roads.iter().filter(|r| r.a == id || r.b == id).count() as u32
+    })
 }
 
 /// What a run settlement's site makes it (SIM-62, M4a; LORDSHIP_DESIGN
@@ -229,7 +276,8 @@ pub fn populate(world: &mut World) {
         .map(|(_, e, _)| world.get::<SettlementSize>(*e).map(|s| s.people))
         .collect();
     let mut report = PopulationReport::default();
-    let (chosen, sizes) = if drawn.iter().any(Option::is_some) {
+    let sized = drawn.iter().any(Option::is_some);
+    let (chosen, sizes) = if sized {
         // GP-21 (run island): every settlement at its drawn size, in SpawnId
         // order. The total in villagers.ron (and any override) is ignored.
         let (chosen, sizes): (Vec<_>, Vec<_>) = settlements
@@ -265,12 +313,48 @@ pub fn populate(world: &mut World) {
         .iter()
         .map(|o| villagers.share(*o))
         .collect();
+    // SIM-62 (M4a step 9): in a run, each settlement's specialty, read from
+    // its site before anything is built. It scales the shares (so changes
+    // how many work each trade and how many workplaces are built), never
+    // the number of draws.
+    let in_run = sized
+        && world
+            .get_resource::<sim_core::RunState>()
+            .is_some_and(|r| r.in_run());
+    let specialties: Vec<Option<(Specialty, Vec<f32>)>> = if in_run {
+        let map = world.resource::<WorldMap>();
+        let roads = world.get_resource::<RoadNetwork>();
+        let rules = &villagers.data.specialties;
+        let radius = rules.iter().map(|r| r.radius).max().unwrap_or(0);
+        chosen
+            .iter()
+            .map(|(id, _, site)| {
+                let degree = road_degree(roads, *id);
+                let rule = specialty_of(rules, map, site.center, degree)?;
+                let count = |rule| sim_economy::site_tiles(map, site.center, radius, rule);
+                report.sites.push((
+                    *id,
+                    SiteCounts {
+                        upland: count(sim_economy::SiteRule::Upland),
+                        coast: count(sim_economy::SiteRule::Coast),
+                        forest_edge: count(sim_economy::SiteRule::ForestEdge),
+                        roads: degree,
+                    },
+                ));
+                Some((rule.kind, rule.scale(&shares)))
+            })
+            .collect()
+    } else {
+        vec![None; chosen.len()]
+    };
     let mut occupied = Occupied::default();
     // Every settlement starts independent (GP-05), its villagers at the
     // independent loyalty target (GP-06).
     let start_loyalty = villagers.data.loyalty.independent_target;
 
-    for ((settlement_id, settlement, site), target) in chosen.iter().zip(&sizes) {
+    for (((settlement_id, settlement, site), target), specialty) in
+        chosen.iter().zip(&sizes).zip(&specialties)
+    {
         let mut rng = seed.stream(rng_key("sim_agents::populate"), settlement_id.0);
 
         // Households.
@@ -312,7 +396,7 @@ pub fn populate(world: &mut World) {
 
         // Occupations for working-age villagers, shuffled.
         let workers = households.iter().flatten().filter(|m| m.working).count() as u32;
-        let counts = apportion(workers, &shares);
+        let counts = apportion(workers, specialty.as_ref().map_or(&shares, |s| &s.1));
         let mut jobs: Vec<Occupation> = Occupation::ALL
             .iter()
             .zip(&counts)
@@ -524,7 +608,11 @@ pub fn populate(world: &mut World) {
                 ..SettlementLoyalty::default()
             },
         ));
+        if let Some((kind, _)) = specialty {
+            world.entity_mut(*settlement).insert(*kind);
+        }
         report.settlements.push((*settlement, residents_total));
+        report.draws.push((*settlement_id, rng.get_word_pos()));
     }
     world.insert_resource(report);
 }
