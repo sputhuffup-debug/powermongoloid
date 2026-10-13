@@ -86,9 +86,19 @@ All commands used `-j 2` and `CARGO_INCREMENTAL=0`, and tests ran with `--test-t
 | `RUSTDOCFLAGS="-D warnings" cargo doc -j 2 --workspace --no-deps` | clean (after two private links in bot.rs were unlinked) |
 | Guarded stdout (release: developed, skirmish, battle) against `docs/m4a/baseline/*.out` | byte-identical, all three |
 | Run replay: `--run --seed 42 --ticks 3000 --commands 50 --record`, then `--replay` and `--replay --single-threaded` | the same hash `0x354db2a45cde09dd` all three |
-| `bot_run` (release, ignored) | see below |
+| `bot_run` (release, ignored) | 5 of 5 won, median day 20.3 (see below) |
 
-BOT_RUN_RESULTS
+**`bot_run`** (`cargo test --release -j 2 -p integration_tests --test bot_run -- --ignored --nocapture`, 346 s), with the bot's `govern` on: **5 of 5 won**.
+
+| Seed | Win day (step 4) | M4 baseline | Commands | Taken / lost / held | Kills / lost |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 16.5 | 17.4 | 112 | 15 / 4 / 11 | 300 / 65 |
+| 2 | 19.5 | 19.3 | 98 | 18 / 12 / 6 | 371 / 80 |
+| 3 | 35.7 | 26.3 | 287 | 34 / 29 / 5 | 442 / 121 |
+| 4 | 22.9 | 18.4 | 84 | 19 / 8 / 11 | 342 / 72 |
+| 5 | 20.3 | 15.5 | 154 | 20 / 9 / 11 | 334 / 68 |
+
+The floor holds: no seed before day 14 (earliest 16.5), and the median is 20.3 against the baseline's 18.4 (+1.9 days, within four). The quiet limit holds on every seed (999 of 1000 ticks at most). Seed 3 is slow: it took and lost towns back and forth (34 taken, 29 lost). Its cause wasn't isolated in this step: steps 1–3's loyalty terms, step 2's weapons and the bot's tithes all move it. The per-seed counts the gate asks for at merge points (takes by way, weapons tithed, men levied) aren't printed by `bot_run` yet; that is step 10's `bot_uses_lordship`.
 
 ## Open issues
 
