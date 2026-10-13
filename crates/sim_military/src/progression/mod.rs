@@ -1719,7 +1719,9 @@ pub(crate) mod tests {
             let r = p.rival(difficulty).unwrap();
             assert!(r.reprisal_size >= 2 && (0.0..=1.0).contains(&r.realm_floor));
         }
-        // An M4 progression text: none of the M4a blocks or rows.
+        // An M4 progression text: none of the M4a blocks or rows. The M4a
+        // cause phrases stay: every `chronicle.causes` phrase is required,
+        // one per cause (docs/dev/DATA.md), unlike the optional blocks.
         let mut text = ron::to_string(d).unwrap();
         for key in [
             "influence:",
@@ -1842,12 +1844,15 @@ pub(crate) mod tests {
     /// M4a (ADR 0020): run setup gives every populated settlement its
     /// Lordship state, inert: `Native` tenure (the rival's lands
     /// `Granted`), zero terms, an empty log, default edicts; the rival's
-    /// realm records its lands' starting people; nothing is spawned.
+    /// realm records its lands' starting people, the seat left out;
+    /// nothing is spawned.
     #[test]
     fn setup_gives_every_town_its_lordship_state() {
         use crate::tenure::{TakenBy, Tenure};
         let (mut app, _) = run_app(42);
         let world = app.world_mut();
+        let world_seat = world.resource::<crate::rival::RivalState>().seat;
+        assert!(world_seat.is_some(), "the rival has a seat");
         let mut q = world.query::<(
             &SpawnId,
             &sim_agents::Owner,
@@ -1864,13 +1869,19 @@ pub(crate) mod tests {
             n += 1;
             let t = t.expect("tenure");
             assert_eq!(t.by, owner.faction);
+            let seat = world_seat == Some(id.0);
             let expect = if owner.faction == FactionId::RIVAL {
-                rival_lands.push((id.0, se.population));
+                if !seat {
+                    rival_lands.push((id.0, se.population));
+                }
                 TakenBy::Granted
             } else {
                 TakenBy::Native
             };
-            assert_eq!((t.how, t.since, t.scar, t.blood), (expect, 0, 0.0, 0));
+            assert_eq!(
+                (t.how, t.since, t.scar, t.blood, t.blood_by),
+                (expect, 0, 0.0, 0, FactionId::INDEPENDENT)
+            );
             assert_eq!(*i.expect("influence"), Default::default());
             assert_eq!(terms.expect("terms").bias(), 0.0);
             assert!(log.expect("log").entries.is_empty());
@@ -1881,6 +1892,7 @@ pub(crate) mod tests {
         assert!(!rival_lands.is_empty());
         let state = world.resource::<crate::rival::RivalState>();
         assert_eq!(state.realm, rival_lands);
+        assert!(state.realm.iter().all(|&(s, _)| Some(s) != world_seat));
         assert_eq!((state.reprisal, state.last_reprisal), (None, None));
     }
 

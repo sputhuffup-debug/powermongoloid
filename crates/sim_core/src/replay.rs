@@ -169,6 +169,25 @@ mod tests {
             Replay::from_ron(&replay.to_ron()),
             Err(ReplayError::Format { .. })
         ));
+        // M4a (ADR 0020) bumps the format once, to 6: an M4 replay (5) is
+        // refused with the existing message.
+        assert_eq!(REPLAY_FORMAT, 6, "M4a bumps the replay format once");
+        replay.format = 5;
+        let err = Replay::from_ron(&replay.to_ron()).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ReplayError::Format {
+                    found: 5,
+                    expected: 6
+                }
+            ),
+            "{err}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "replay format 5 is not supported (expected 6)"
+        );
     }
 
     #[test]

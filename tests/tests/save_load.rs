@@ -6,8 +6,9 @@
 //! 1,000 more ticks of the same commands, with either executor. A
 //! coverage test fails if any hashed type isn't saved. A run saved before
 //! its first tick (an in-place new run, `--save-at 0`) starts exactly like
-//! a fresh one, its start and offers told on tick 0. See ADR 0016 and
-//! ADR 0017.
+//! a fresh one, its start and offers told on tick 0. Every Lordship type
+//! (M4a), including those no run creates yet, round-trips with its
+//! values. See ADR 0016, ADR 0017 and ADR 0020.
 
 mod common;
 
@@ -300,6 +301,239 @@ fn every_hashed_type_is_saved() {
         .filter(|n| hashed_names.contains(n))
         .collect();
     assert_eq!(saved_names, hashed_names);
+}
+
+/// The entity carrying SpawnId `id` in `app`.
+fn by_id(app: &mut App, id: u64) -> Entity {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &SpawnId)>()
+        .iter(world)
+        .find(|(_, s)| s.0 == id)
+        .map(|(e, _)| e)
+        .unwrap_or_else(|| panic!("an entity with SpawnId {id}"))
+}
+
+/// The first `n` entities with `T` (and none of `F`), by SpawnId:
+/// (entity, SpawnId).
+fn first<T: Component, F: bevy_ecs::query::QueryFilter>(
+    app: &mut App,
+    n: usize,
+) -> Vec<(Entity, u64)> {
+    let world = app.world_mut();
+    let mut all: Vec<(u64, Entity)> = world
+        .query_filtered::<(Entity, &SpawnId), (With<T>, F)>()
+        .iter(world)
+        .map(|(e, id)| (id.0, e))
+        .collect();
+    all.sort_unstable();
+    assert!(all.len() >= n, "{} of {n}", all.len());
+    all.into_iter().take(n).map(|(id, e)| (e, id)).collect()
+}
+
+/// M4a (ADR 0020; the step 1 review): `SAVE_FORMAT` 2 fixes the layout of
+/// every Lordship type for the whole milestone, so each one, including
+/// those no step 1 run creates yet (`Agent`, `Steward`, `Construction`,
+/// `Bandits`, `Rationed`, `Mustered`, `Assignment`, `Specialty`, a pending
+/// fallout band, a vow, a pinned rival band, a veteran's trade), is set to
+/// non-default values in a run, saved, and loaded into a fresh app: the
+/// state hash matches, every value comes back, and the `Entity` fields
+/// (saved as SpawnId + 1) name the same SpawnIds.
+#[test]
+fn every_lordship_type_round_trips() {
+    use sim_agents::{
+        Agent, Assignment, Deed, DeedLog, Edicts, Enlisted, LoyaltyTerm, LoyaltyTerms, Mustered,
+        Owner, Rationed, Specialty, Villager,
+    };
+    use sim_core::{BuildKind, Dues, Table, WorkFocus};
+    use sim_economy::{Construction, GoodId, Occupation, Workplace};
+    use sim_military::{
+        Bandits, Fallout, Influence, PendingBand, RivalBand, RivalState, Steward, TakenBy, Tenure,
+        Veteran, Vow,
+    };
+
+    let mut app = headless_app(HeadlessConfig::run(SEED, RunConfig::default()));
+    app.step(5);
+    let towns = first::<Owner, ()>(&mut app, 4);
+    let folk = first::<Villager, Without<Enlisted>>(&mut app, 5);
+    let site = first::<Workplace, ()>(&mut app, 1)[0];
+    let captain = first::<Captain, ()>(&mut app, 1)[0];
+    let soldier = first::<Enlisted, ()>(&mut app, 1)[0];
+    let (t0, t1) = (towns[0], towns[1]);
+
+    let agent = Agent {
+        town: t1.0,
+        by: FactionId::PLAYER,
+        since: 3,
+        suspicion: 0.25,
+    };
+    let steward = Steward {
+        town: t0.0,
+        traits: vec![0, 4],
+        appointed: true,
+        since: 4,
+    };
+    let assignment = Assignment {
+        from: Occupation::Farmer,
+        focus: WorkFocus::Forge,
+        since: 2,
+        by_steward: true,
+    };
+    let construction = Construction {
+        needs: vec![(GoodId(1), 3), (GoodId(2), 5)],
+        hours_left: 7.5,
+    };
+    let bandits = Bandits {
+        home: t0.1,
+        raids: 2,
+    };
+    let band = RivalBand {
+        target: Some(t1.1),
+        next_think: 900,
+        pinned: Some(t0.1),
+    };
+    let veteran = Veteran {
+        battles: 3,
+        rank: 1,
+        fought: true,
+        trade: Some(Occupation::Smith),
+    };
+    let world = app.world_mut();
+    world.entity_mut(folk[0].0).insert(agent);
+    world.entity_mut(folk[1].0).insert(steward.clone());
+    world.entity_mut(folk[2].0).insert(Rationed);
+    world.entity_mut(folk[3].0).insert(Mustered { since: 1 });
+    world.entity_mut(folk[4].0).insert(assignment);
+    world.entity_mut(towns[2].0).insert(Specialty::Mining);
+    world.entity_mut(site.0).insert(construction.clone());
+    world.entity_mut(captain.0).insert((bandits, band));
+    world.entity_mut(soldier.0).insert(veteran);
+    {
+        let mut t = world.get_mut::<Tenure>(t0.0).expect("a run town's tenure");
+        t.retake(TakenBy::Sacked, FactionId::PLAYER, 4, 0, 0.3);
+        t.spill(FactionId::RIVAL);
+        (t.stir, t.kept, t.broken, t.weak_days) = (0.2, 1, 2, 1);
+        (t.watched_hours, t.cool_until) = (5, 700);
+    }
+    world
+        .get_mut::<LoyaltyTerms>(t0.0)
+        .unwrap()
+        .set(LoyaltyTerm::Awe, 0.1);
+    world
+        .get_mut::<DeedLog>(t0.0)
+        .unwrap()
+        .record(0, FactionId::PLAYER, Deed::Gift, true, 0.09);
+    *world.get_mut::<Influence>(t0.0).unwrap() = Influence {
+        power: 2.5,
+        player: 0.4,
+        rival: 0.1,
+    };
+    {
+        let mut e = world.get_mut::<Edicts>(t0.0).unwrap();
+        (e.work, e.dues, e.table) = (WorkFocus::Walls, Dues::Levy, Table::Feast);
+        (e.pending_work, e.pending_table) = (Some(WorkFocus::Fields), Some(Table::Ration));
+        e.dials[1].by_player = true;
+        e.dials[2].locked_until = 4_800;
+        (e.feast_until, e.next_feast) = (300, 600);
+        e.builds = vec![BuildKind::Granary, BuildKind::Palisade];
+    }
+    world.resource_mut::<Fallout>().pending.push(PendingBand {
+        settlement: t0.1,
+        men: 7,
+        due: 500,
+    });
+    world.resource_mut::<Fallout>().last_violent = Some(4);
+    world.resource_mut::<RivalState>().reprisal = Some(Vow {
+        settlement: t1.1,
+        due: 900,
+    });
+    world.resource_mut::<RivalState>().last_reprisal = Some(4);
+
+    let hash = compute_state_hash(app.world_mut());
+    let bytes = save_app(&mut app);
+    let mut loaded = load_app(&bytes, Threading::Single).expect("the save loads");
+    assert_eq!(compute_state_hash(loaded.world_mut()), hash, "loaded hash");
+    assert_eq!(component_sets(&mut loaded), component_sets(&mut app));
+    assert_eq!(save_app(&mut loaded), bytes, "the same bytes again");
+
+    // Every value, the entities resolved by SpawnId.
+    let (l0, l1) = (by_id(&mut loaded, t0.1), by_id(&mut loaded, t1.1));
+    let at = |app: &mut App, i: usize| by_id(app, folk[i].1);
+    let e = at(&mut loaded, 0);
+    assert_eq!(
+        *loaded.world().get::<Agent>(e).unwrap(),
+        Agent { town: l1, ..agent }
+    );
+    let e = at(&mut loaded, 1);
+    assert_eq!(
+        *loaded.world().get::<Steward>(e).unwrap(),
+        Steward {
+            town: l0,
+            ..steward
+        }
+    );
+    let e = at(&mut loaded, 2);
+    assert!(loaded.world().get::<Rationed>(e).is_some());
+    let e = at(&mut loaded, 3);
+    assert_eq!(
+        loaded.world().get::<Mustered>(e),
+        Some(&Mustered { since: 1 })
+    );
+    let e = at(&mut loaded, 4);
+    assert_eq!(loaded.world().get::<Assignment>(e), Some(&assignment));
+    let e = by_id(&mut loaded, towns[2].1);
+    assert_eq!(loaded.world().get::<Specialty>(e), Some(&Specialty::Mining));
+    let e = by_id(&mut loaded, site.1);
+    assert_eq!(loaded.world().get::<Construction>(e), Some(&construction));
+    let e = by_id(&mut loaded, captain.1);
+    assert_eq!(loaded.world().get::<Bandits>(e), Some(&bandits));
+    assert_eq!(loaded.world().get::<RivalBand>(e), Some(&band));
+    let e = by_id(&mut loaded, soldier.1);
+    assert_eq!(loaded.world().get::<Veteran>(e), Some(&veteran));
+    for (ty, same) in [
+        (
+            "Tenure",
+            loaded.world().get::<Tenure>(l0) == app.world().get::<Tenure>(t0.0),
+        ),
+        (
+            "LoyaltyTerms",
+            loaded.world().get::<LoyaltyTerms>(l0) == app.world().get::<LoyaltyTerms>(t0.0),
+        ),
+        (
+            "DeedLog",
+            loaded.world().get::<DeedLog>(l0) == app.world().get::<DeedLog>(t0.0),
+        ),
+        (
+            "Influence",
+            loaded.world().get::<Influence>(l0) == app.world().get::<Influence>(t0.0),
+        ),
+        (
+            "Edicts",
+            loaded.world().get::<Edicts>(l0) == app.world().get::<Edicts>(t0.0),
+        ),
+        (
+            "Fallout",
+            loaded.world().resource::<Fallout>() == app.world().resource::<Fallout>(),
+        ),
+        (
+            "RivalState",
+            loaded.world().resource::<RivalState>() == app.world().resource::<RivalState>(),
+        ),
+    ] {
+        assert!(same, "{ty} comes back");
+    }
+    let t = loaded.world().get::<Tenure>(l0).unwrap();
+    assert_eq!(
+        (t.how, t.blood, t.blood_by),
+        (TakenBy::Sacked, 1, FactionId::RIVAL)
+    );
+    assert_eq!(loaded.world().resource::<Fallout>().pending.len(), 1);
+    println!(
+        "{} bytes; tenure {:?}, vow {:?}",
+        bytes.len(),
+        (t.how, t.scar, t.history.len()),
+        loaded.world().resource::<RivalState>().reprisal
+    );
 }
 
 /// The feed's entries, oldest first.

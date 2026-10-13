@@ -10,7 +10,9 @@
 //!   takes the [`TakenBy`] from the [`Cause`] (`record_taking`);
 //!   [`crate::rival::setup`] writes `Granted` and
 //!   [`crate::rival::free_lands`] `Freed`. Militia deaths add to `blood`
-//!   (`combat::casualties`).
+//!   (`combat::casualties`, [`Tenure::spill`]), counted for the faction
+//!   they fought; a taking reads only its taker's ([`Tenure::blood_of`])
+//!   and rebuilds the town's terms at once.
 //! - [`step`] (progress slot 14, hourly, run only) rebuilds each town's
 //!   `sim_agents::LoyaltyTerms` from its tenure and the terms other modules
 //!   expose (`influence::contest_term`, `govern::dues_term`,
@@ -123,9 +125,15 @@ pub struct Tenure {
     pub since: u64,
     /// Resentment (0..0.45), the Resentment term's size; fades daily.
     pub scar: f32,
-    /// Militia of this town killed since it last changed hands: the next
-    /// taking's scar and broken men read it, then it starts again at 0.
+    /// Militia of this town killed by [`Tenure::blood_by`] since it last
+    /// changed hands (rebels not counted): the next taking's scar (and its
+    /// broken men, step 6) reads it through [`Tenure::blood_of`] when that
+    /// taking is `blood_by`'s, then it starts again at 0.
     pub blood: u32,
+    /// Whose men spilt [`Tenure::blood`] (the independents when none): a
+    /// militiaman killed fighting another faction starts the count again,
+    /// so a taking never reads blood another faction spilt.
+    pub blood_by: FactionId,
     /// An agent's stir (0..`subvert.max_stir`), the Stirred term's size.
     pub stir: f32,
     /// Promises of defence kept (an invited town's bond).
@@ -161,6 +169,7 @@ impl Tenure {
             since,
             scar: 0.0,
             blood: 0,
+            blood_by: FactionId::INDEPENDENT,
             stir: 0.0,
             kept: 0,
             broken: 0,
@@ -168,6 +177,28 @@ impl Tenure {
             watched_hours: 0,
             cool_until: 0,
             history: VecDeque::from([Taking { how, by, day }]),
+        }
+    }
+
+    /// A militiaman of this town killed fighting `by` (SIM-60; never a
+    /// rebel, who fights the town's own owner): one more drop of `by`'s
+    /// blood, the count starting again if the last blood was another
+    /// faction's.
+    pub fn spill(&mut self, by: FactionId) {
+        if self.blood_by != by {
+            self.blood = 0;
+            self.blood_by = by;
+        }
+        self.blood = self.blood.saturating_add(1);
+    }
+
+    /// The blood `taker` spilt here since the town last changed hands:
+    /// [`Tenure::blood`] if [`Tenure::blood_by`] is `taker`, else 0.
+    pub fn blood_of(&self, taker: FactionId) -> u32 {
+        if self.blood_by == taker {
+            self.blood
+        } else {
+            0
         }
     }
 
@@ -180,6 +211,7 @@ impl Tenure {
         self.since = tick;
         self.scar = scar;
         self.blood = 0;
+        self.blood_by = FactionId::INDEPENDENT;
         self.stir = 0.0;
         self.kept = 0;
         self.broken = 0;
@@ -199,6 +231,7 @@ impl StateHash for Tenure {
         h.u64(self.since);
         h.f32(self.scar);
         h.u32(self.blood);
+        h.u16(self.blood_by.0);
         h.f32(self.stir);
         h.u8(self.kept);
         h.u8(self.broken);
@@ -222,6 +255,7 @@ sim_core::save_fields!(Tenure {
     since,
     scar,
     blood,
+    blood_by,
     stir,
     kept,
     broken,
@@ -584,24 +618,53 @@ pub(crate) fn record_taking(
 }
 
 /// Writes a taking `how` by `to` into `s`'s [`Tenure`], if it has one,
-/// with the scar the town's blood gives it.
+/// with the scar the blood `to` spilt there gives it
+/// ([`Tenure::blood_of`]), and rebuilds the town's `LoyaltyTerms` at once
+/// ([`rebuild_terms`]), so the terms change in the same tick as the owner.
 pub(crate) fn retake(world: &mut World, s: Entity, how: TakenBy, to: FactionId) -> Option<TakenBy> {
-    let blood = world.get::<Tenure>(s)?.blood;
+    let blood = world.get::<Tenure>(s)?.blood_of(to);
     let scar = world.resource::<Progression>().data.tenure.scar(how, blood);
     let tick = world.resource::<SimTick>().0;
     let day = day_of(world, tick);
     world.get_mut::<Tenure>(s)?.retake(how, to, tick, day, scar);
+    rebuild_terms(world, s);
     Some(how)
+}
+
+/// SIM-60: rebuilds `s`'s `LoyaltyTerms` (if it has them and a
+/// [`Tenure`]): Resentment `-scar`, Stirred `-stir`, Contest from
+/// [`crate::influence::contest_term`], Dues, Table and Steward from
+/// [`crate::govern`]'s `dues_term`, `table_term` and `steward_term`. Awe
+/// and Bond come with M4a step 5 and stay 0 until then. Called by [`step`]
+/// hourly and by a taking ([`retake`]); serial steps only.
+pub(crate) fn rebuild_terms(world: &mut World, s: Entity) {
+    let Some(t) = world.get::<Tenure>(s) else {
+        return;
+    };
+    // `0.0 - x`, not `-x`: no negative zero for an unscarred town.
+    let mut next = LoyaltyTerms::default();
+    next.set(LoyaltyTerm::Resentment, 0.0 - t.scar);
+    next.set(LoyaltyTerm::Stirred, 0.0 - t.stir);
+    next.set(
+        LoyaltyTerm::Contest,
+        crate::influence::contest_term(world, s),
+    );
+    next.set(LoyaltyTerm::Dues, crate::govern::dues_term(world, s));
+    next.set(LoyaltyTerm::Table, crate::govern::table_term(world, s));
+    next.set(LoyaltyTerm::Steward, crate::govern::steward_term(world, s));
+    if let Some(mut terms) = world.get_mut::<LoyaltyTerms>(s)
+        && *terms != next
+    {
+        *terms = next;
+    }
 }
 
 /// SIM-60: progress slot 14, hourly, run only (span
 /// `sim_military::tenure::step`). For each settlement with a [`Tenure`],
 /// in SpawnId order: on the day tick its scar fades by
-/// `tenure.scar_fade_per_day`; then its `LoyaltyTerms` are rebuilt:
-/// Resentment `-scar`, Stirred `-stir`, Contest from
-/// [`crate::influence::contest_term`], Dues, Table and Steward from
-/// [`crate::govern`]'s `dues_term`, `table_term` and `steward_term`. Awe
-/// and Bond come with M4a step 5 and stay 0 until then.
+/// `tenure.scar_fade_per_day` (unless it was taken this very tick: a
+/// taking's scar stands for its first day tick); then its `LoyaltyTerms`
+/// are rebuilt (`rebuild_terms`).
 pub fn step(world: &mut World) {
     let _span = tracing::info_span!("sim_military::tenure::step").entered();
     if !world.resource::<RunState>().in_run() {
@@ -621,28 +684,11 @@ pub fn step(world: &mut World) {
         if on_day
             && let Some(mut t) = world.get_mut::<Tenure>(s)
             && t.scar > 0.0
+            && t.since < tick
         {
             t.scar = (t.scar - fade).max(0.0);
         }
-        let Some(t) = world.get::<Tenure>(s) else {
-            continue;
-        };
-        // `0.0 - x`, not `-x`: no negative zero for an unscarred town.
-        let mut next = LoyaltyTerms::default();
-        next.set(LoyaltyTerm::Resentment, 0.0 - t.scar);
-        next.set(LoyaltyTerm::Stirred, 0.0 - t.stir);
-        next.set(
-            LoyaltyTerm::Contest,
-            crate::influence::contest_term(world, s),
-        );
-        next.set(LoyaltyTerm::Dues, crate::govern::dues_term(world, s));
-        next.set(LoyaltyTerm::Table, crate::govern::table_term(world, s));
-        next.set(LoyaltyTerm::Steward, crate::govern::steward_term(world, s));
-        if let Some(mut terms) = world.get_mut::<LoyaltyTerms>(s)
-            && *terms != next
-        {
-            *terms = next;
-        }
+        rebuild_terms(world, s);
     }
 }
 
@@ -684,12 +730,19 @@ mod tests {
         for (cause, to, how, blood) in cases {
             world.resource_mut::<SimTick>().0 += 7;
             let tick = world.resource::<SimTick>().0;
-            world.get_mut::<Tenure>(s).unwrap().blood = blood;
+            {
+                let mut t = world.get_mut::<Tenure>(s).unwrap();
+                (t.blood, t.blood_by) = (blood, to);
+            }
             transfer(world, s, to, cause).expect("populated");
             let t = world.get::<Tenure>(s).unwrap();
             assert_eq!((t.how, t.by, t.since), (how, to, tick), "{cause:?}");
             assert_eq!(t.scar, data.scar(how, blood), "{cause:?}");
-            assert_eq!(t.blood, 0, "blood starts again after a taking");
+            assert_eq!(
+                (t.blood, t.blood_by),
+                (0, FactionId::INDEPENDENT),
+                "blood starts again after a taking"
+            );
             assert_eq!(t.history.back().map(|h| (h.how, h.by)), Some((how, to)));
             assert!(t.history.len() <= Tenure::HISTORY);
         }
@@ -735,6 +788,66 @@ mod tests {
         }
         assert_eq!(world.get::<Tenure>(s).unwrap().scar, 0.0, "faded away");
         assert_eq!(world.get::<LoyaltyTerms>(s).unwrap().bias(), 0.0);
+    }
+
+    /// SIM-60 (review of step 1): blood counts for the faction the militia
+    /// fought, starting again when another faction kills; a taking reads
+    /// only its taker's blood, so a conquest after a raid gets the bare
+    /// conquest scar.
+    #[test]
+    fn a_taking_reads_only_its_takers_blood() {
+        let mut t = Tenure::default();
+        let (p, raiders) = (FactionId::PLAYER, FactionId::RAIDERS);
+        assert_eq!((t.blood_of(p), t.blood_of(FactionId::INDEPENDENT)), (0, 0));
+        for _ in 0..12 {
+            t.spill(raiders);
+        }
+        assert_eq!((t.blood, t.blood_by), (12, raiders));
+        assert_eq!((t.blood_of(raiders), t.blood_of(p)), (12, 0));
+        t.spill(p);
+        t.spill(p);
+        assert_eq!((t.blood, t.blood_by), (2, p), "another's kill restarts");
+        assert_eq!((t.blood_of(p), t.blood_of(raiders)), (2, 0));
+
+        let (mut app, _) = run_app(42);
+        let (_, s, _) = settlements(app.world_mut())[0];
+        let world = app.world_mut();
+        world.resource_mut::<SimTick>().0 = 5;
+        let data = world.resource::<Progression>().data.tenure;
+        for _ in 0..12 {
+            world.get_mut::<Tenure>(s).unwrap().spill(raiders);
+        }
+        transfer(world, s, p, Cause::Conquest { captain: 1 }).unwrap();
+        let t = world.get::<Tenure>(s).unwrap();
+        assert_eq!(t.scar, data.conquest_scar, "the raiders' blood is not ours");
+        assert_eq!((t.blood, t.blood_by), (0, FactionId::INDEPENDENT));
+        // The terms change with the owner, not an hour later.
+        assert_eq!(
+            world
+                .get::<LoyaltyTerms>(s)
+                .unwrap()
+                .get(LoyaltyTerm::Resentment),
+            -data.conquest_scar
+        );
+    }
+
+    /// SIM-60 (review of step 1): a taking on a day tick keeps its whole
+    /// scar through that tick's fade; the next day tick fades it.
+    #[test]
+    fn a_scar_is_not_faded_on_the_tick_of_its_taking() {
+        let (mut app, _) = run_app(42);
+        let (_, s, _) = settlements(app.world_mut())[0];
+        let world = app.world_mut();
+        let day = world.resource::<Calendar>().ticks_per_day;
+        world.resource_mut::<SimTick>().0 = 3 * day;
+        transfer(world, s, FactionId::PLAYER, Cause::Conquest { captain: 1 }).unwrap();
+        let scar = world.get::<Tenure>(s).unwrap().scar;
+        step(world);
+        assert_eq!(world.get::<Tenure>(s).unwrap().scar, scar, "not faded yet");
+        world.resource_mut::<SimTick>().0 = 4 * day;
+        step(world);
+        let faded = world.get::<Tenure>(s).unwrap().scar;
+        assert!((faded - (scar - 0.02)).abs() < 1e-6, "{faded}");
     }
 
     #[test]

@@ -247,9 +247,12 @@ pub(crate) fn casualties(world: &mut World) {
             if let Some(home) = world.get::<Villager>(e).map(|v| v.settlement) {
                 crate::orders::goodwill_deed(world, home, against, Deed::Killing);
                 // SIM-60 (M4a, run only: `Tenure` exists only in a run): the
-                // blood spilt there, which the next taking's scar reads.
-                if let Some(mut t) = world.get_mut::<crate::tenure::Tenure>(home) {
-                    t.blood = t.blood.saturating_add(1);
+                // blood `against` spilt there, which its next taking's scar
+                // reads. A rebel (fighting its own owner) spills none.
+                if against != faction
+                    && let Some(mut t) = world.get_mut::<crate::tenure::Tenure>(home)
+                {
+                    t.spill(against);
                 }
             }
         }

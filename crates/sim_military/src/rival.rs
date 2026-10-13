@@ -182,8 +182,10 @@ pub struct RivalState {
     /// Villagers levied so far.
     pub levied: u32,
     /// M4a (GP-31): the realm at the start, `(settlement SpawnId, people)`
-    /// for each settlement the rival was granted, in SpawnId order; the
-    /// share of it the rival still owns scales the seat's defence (step 6).
+    /// for each settlement the rival was granted except the seat, in
+    /// SpawnId order; the share of it the rival still owns scales the
+    /// seat's defence (step 6): 1.0 at the start, 0.0 (the bonus at
+    /// `realm_floor`) when the seat holds nothing else.
     pub realm: Vec<(u64, u32)>,
     /// M4a (GP-33): the pending vow, if any (the newest replaces an older
     /// one); `clock` launches it when due (step 6).
@@ -337,11 +339,15 @@ pub fn setup(world: &mut World, seat: u64, seat_center: IVec2, region: sim_world
             *t =
                 crate::tenure::Tenure::new(crate::tenure::TakenBy::Granted, FactionId::RIVAL, 0, 0);
         }
-        // M4a (GP-31): the realm's starting people.
-        let people = world
-            .get::<SettlementEconomy>(s)
-            .map_or(0, |se| se.population);
-        realm.push((id.0, people));
+        // M4a (GP-31): the realm's starting people, the seat left out (its
+        // defence follows the share of the rest: `realm_floor` when the
+        // seat holds nothing else, LORDSHIP_DESIGN section 6.1).
+        if id.0 != seat {
+            let people = world
+                .get::<SettlementEconomy>(s)
+                .map_or(0, |se| se.population);
+            realm.push((id.0, people));
+        }
     }
     let followers = (data.garrison as f32 * strength).round() as u32;
     spawn_garrison(world, seat, seat_center, followers, data.garrison_food_days);

@@ -149,7 +149,8 @@ Then M4c "Saga" (kill lines, battle moments, epithets, earned traits, legends, p
   `every_hashed_type_is_saved` fails otherwise. Exempt types the next tick reads before
   rebuilding them (`ArmyIndex`, `FighterGrid`) are saved too.
 - `Entity` fields save as SpawnId + 1 and load as the entity now carrying that SpawnId. Saved
-  enums are append only, as `CommandKind`, `OrderSpec`, `SimEventKind` and `Cause` are.
+  and replayed enums are append only, as `OrderSpec`, `SimEventKind`, `Cause` and (in
+  replays) `CommandKind` are.
 - The map is regenerated from the seed on load and checked against the saved digest, so
   worldgen changes make old saves unloadable. Bump `SAVE_FORMAT` when the layout changes.
 - Events: any sim crate writes a `SimEvent`; `record_events` (`BookkeepingSet::Record`) sorts

@@ -7,6 +7,8 @@
 //! - `transfer_writes_tenure`: each cause leaves its `TakenBy`, owner, tick
 //!   and scar; militia killed add blood; the hourly step writes the
 //!   Resentment term and the day tick fades the scar by 0.02.
+//! - `another_factions_blood_is_not_the_takers`: raiders' kills are not
+//!   the player's blood; the terms change with the owner.
 //! - `every_cause_maps_to_its_kind_and_counters`: a sack is a conquest, a
 //!   submission and a subversion are takes with no `conquests` count, a
 //!   defiance reads like a revolt; the run summary counts them.
@@ -137,6 +139,7 @@ fn transfer_writes_tenure() {
     let blood = tenure(&app, s).blood;
     println!("  {} militia fell; blood {blood}", killed(&app));
     assert_eq!(blood, killed(&app), "blood counts the militia killed");
+    assert_eq!(tenure(&app, s).blood_by, FactionId::PLAYER, "ours");
     assert!(app.world().resource::<Casualties>().pending.is_empty());
 
     // The taking reads the blood.
@@ -183,7 +186,10 @@ fn transfer_writes_tenure() {
     let mut taken = vec![(TakenBy::Native, FactionId::INDEPENDENT), (t.how, t.by)];
     for (cause, to, how, blood) in cases {
         app.step(1);
-        app.world_mut().get_mut::<Tenure>(s).unwrap().blood = blood;
+        {
+            let mut t = app.world_mut().get_mut::<Tenure>(s).unwrap();
+            (t.blood, t.blood_by) = (blood, to);
+        }
         transfer(app.world_mut(), s, to, cause).expect("populated");
         let t = tenure(&app, s);
         let owner = *app.world().get::<Owner>(s).unwrap();
@@ -201,6 +207,67 @@ fn transfer_writes_tenure() {
     assert_eq!(data.scar(TakenBy::Subverted, 9), data.subverted_scar);
     assert_eq!(data.scar(TakenBy::Invited, 9), 0.0);
     assert_eq!(data.scar(TakenBy::Submitted, 9), 0.0);
+}
+
+/// SIM-60 (the step 1 review): blood is counted for the faction the
+/// militia fought. Raiders kill the town's militia; a player conquest with
+/// no kills of its own then reads none of that blood and leaves the bare
+/// conquest scar, with the terms written in the same tick.
+#[test]
+fn another_factions_blood_is_not_the_takers() {
+    let mut app = run_app(SEED);
+    quiet_director(&mut app);
+    let (s, id) = free_town(&mut app);
+    let data = app.world().resource::<Progression>().data.tenure;
+    let at = {
+        let centre = app.world().get::<Settlement>(s).unwrap().center;
+        passable_near(&app, centre).expect("somewhere to stand")
+    };
+    let raiders = FactionId::RAIDERS;
+    spawn_army(
+        app.world_mut(),
+        &ArmySpec {
+            posture: Posture::Aggressive,
+            ..ArmySpec::new(raiders, at, 40)
+        },
+    );
+    provoke(app.world_mut(), s, raiders);
+    let killed = |app: &App| {
+        app.world()
+            .resource::<ArmyStats>()
+            .get(raiders)
+            .villagers_killed
+    };
+    while killed(&app) < 3 {
+        assert!(tick(&app) < 2_000, "no militia fell in 2000 ticks");
+        app.step(10);
+    }
+    let t = tenure(&app, s);
+    println!(
+        "town #{id}: raiders killed {}; blood {} by {:?}",
+        killed(&app),
+        t.blood,
+        t.blood_by
+    );
+    assert_eq!((t.blood, t.blood_by), (killed(&app), raiders));
+    assert_eq!(t.blood_of(FactionId::PLAYER), 0);
+
+    transfer(
+        app.world_mut(),
+        s,
+        FactionId::PLAYER,
+        Cause::Conquest { captain: 1 },
+    )
+    .expect("populated");
+    let t = tenure(&app, s);
+    println!("  conquered by the player: scar {}", t.scar);
+    assert_eq!(t.scar, data.conquest_scar, "the raiders' blood is not ours");
+    assert_eq!((t.blood, t.blood_by), (0, FactionId::INDEPENDENT));
+    assert_eq!(
+        terms(&app, s).get(LoyaltyTerm::Resentment),
+        -data.conquest_scar,
+        "the terms change with the owner"
+    );
 }
 
 /// GP-32 (LORDSHIP_DESIGN section 11): every cause maps to its event kind,
@@ -631,10 +698,12 @@ fn terms_sum_into_the_target() {
     let (s, _) = free_town(&mut app);
     assert_eq!(terms(&app, s).bias(), 0.0);
     // A conquest with 4 militia dead: scar 0.16; an hour later the term
-    // holds it, and the town's real target is lower by exactly that. (Not
-    // at tick 0, which is itself a day tick that would fade the scar.)
+    // holds it, and the town's real target is lower by exactly that.
     app.step(1);
-    app.world_mut().get_mut::<Tenure>(s).unwrap().blood = 4;
+    {
+        let mut t = app.world_mut().get_mut::<Tenure>(s).unwrap();
+        (t.blood, t.blood_by) = (4, FactionId::PLAYER);
+    }
     transfer(
         app.world_mut(),
         s,

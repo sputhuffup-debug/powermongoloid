@@ -9,7 +9,7 @@
 //! `loyalty_target`, `loyalty_pulls`, `deciding_term`), not here.
 
 use sim_agents::data::LoyaltyData;
-use sim_agents::loyalty::{deciding_term, loyalty_parts, loyalty_pulls, loyalty_target};
+use sim_agents::loyalty::{Pull, deciding_term, loyalty_parts, loyalty_pulls, loyalty_target};
 use sim_agents::{Deed, DeedLog, Goodwill, LoyaltyTerm, LoyaltyTerms, Owner, SettlementLoyalty};
 use sim_core::FactionId;
 use sim_military::{TakenBy, Tenure};
@@ -67,6 +67,23 @@ impl Why<'_> {
 
     fn owned(&self) -> bool {
         self.owner.faction != FactionId::INDEPENDENT
+    }
+
+    /// A term's name from the owner's side: the Contest term is the other
+    /// side's influence, so at a rival town it is your pull.
+    fn term_name(&self, term: LoyaltyTerm) -> &'static str {
+        match term {
+            LoyaltyTerm::Contest if self.owner.faction == FactionId::RIVAL => "your pull",
+            _ => term.name(),
+        }
+    }
+
+    /// A pull's name, its term named from the owner's side.
+    fn pull_name(&self, pull: Pull) -> &'static str {
+        match pull {
+            Pull::Term(term) => self.term_name(term),
+            _ => pull.name(),
+        }
     }
 }
 
@@ -205,7 +222,7 @@ fn loyalty_block(w: &Why, food_days: f32) -> (String, Target) {
     ];
     if let Some(terms) = w.terms {
         for (term, v) in terms.nonzero() {
-            let mut item = format!("{} {}", term.name(), signed(v));
+            let mut item = format!("{} {}", w.term_name(term), signed(v));
             if term == LoyaltyTerm::Resentment && w.scar_fade_per_day > 0.0 {
                 item += &format!(" (fading {:.2} a day)", w.scar_fade_per_day);
             }
@@ -306,7 +323,7 @@ fn risk_block(w: &Why, food_days: f32, target: &Target) -> String {
         };
         s += &format!(
             "    {} ({}) {verb} the line\n",
-            capitalise(term.name()),
+            capitalise(w.term_name(term)),
             signed(v)
         );
     }
@@ -316,7 +333,7 @@ fn risk_block(w: &Why, food_days: f32, target: &Target) -> String {
         let named: Vec<String> = pulls
             .iter()
             .take(2)
-            .map(|(p, v)| format!("{} {}", p.name(), signed(*v)))
+            .map(|(p, v)| format!("{} {}", w.pull_name(*p), signed(*v)))
             .collect();
         if !named.is_empty() {
             s += &format!("    Pulled down by {}\n", named.join(" and "));
@@ -942,5 +959,28 @@ mod tests {
         let mut world = bevy::ecs::world::World::new();
         let mut system = IntoSystem::into_system(super::super::settlement_panel);
         system.initialize(&mut world);
+    }
+
+    /// The Contest term is the other side's pull: the rival's at your
+    /// towns, yours at the rival's.
+    #[test]
+    fn the_contest_is_named_from_the_owners_side() {
+        let d = data();
+        let g = goodwill(0.0, 0.0);
+        let mut terms = LoyaltyTerms::default();
+        terms.set(LoyaltyTerm::Contest, -0.06);
+        let mut w = town(&d, owner(FactionId::PLAYER, 0), 4, d.food_days, &g);
+        w.terms = Some(&terms);
+        assert!(
+            loyalty_block(&w, d.food_days)
+                .0
+                .contains("rival's pull -0.06")
+        );
+        w.owner = owner(FactionId::RIVAL, 0);
+        let text = loyalty_block(&w, d.food_days).0;
+        assert!(text.contains("your pull -0.06"), "{text}");
+        assert!(!text.contains("rival's pull"), "{text}");
+        assert_eq!(w.pull_name(Pull::Term(LoyaltyTerm::Contest)), "your pull");
+        assert_eq!(w.pull_name(Pull::Hunger), "hunger");
     }
 }
