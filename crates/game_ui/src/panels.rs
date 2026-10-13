@@ -5,19 +5,22 @@ use std::collections::BTreeMap;
 
 use bevy::prelude::*;
 use sim_agents::{
-    ActionKind, Activity, CombatStats, DecisionTrace, Employment, Enlisted, FoodSecurity, Goodwill,
-    Needs, Owner, SettlementLoyalty, Stage, Stance, Threat, Villager, Villagers,
+    ActionKind, Activity, CombatStats, DecisionTrace, DeedLog, Employment, Enlisted, FoodSecurity,
+    Goodwill, LoyaltyTerms, Needs, Owner, SettlementLoyalty, Stage, Stance, Threat, Villager,
+    Villagers,
 };
 use sim_core::{Calendar, FactionId, NameTable, SimTick, SpawnId};
 use sim_economy::{Building, Economy, Occupation, SettlementEconomy, Stockpile};
 use sim_military::{
-    Army, Captain, Equipment, Follower, Progression, RequestBoard, RequestKind, Soldier, Traits,
-    Veteran,
+    Army, Captain, Equipment, Follower, Progression, RequestBoard, RequestKind, Soldier, Tenure,
+    Traits, Veteran,
 };
 use sim_world::Settlement;
 
 use crate::selection::Selection;
 use crate::style;
+
+mod why;
 
 pub struct PanelsPlugin;
 
@@ -389,6 +392,17 @@ fn settlement_panel(
         Option<&Goodwill>,
         Option<&SettlementLoyalty>,
     )>,
+    // UI-11 (M4a): what the "Why they feel this way" section reads.
+    (lordship, villagers_data, progression): (
+        Query<(
+            &Owner,
+            Option<&Tenure>,
+            Option<&LoyaltyTerms>,
+            Option<&DeedLog>,
+        )>,
+        Option<Res<Villagers>>,
+        Option<Res<Progression>>,
+    ),
     (board, calendar, tick): (
         Option<Res<RequestBoard>>,
         Option<Res<Calendar>>,
@@ -474,6 +488,38 @@ fn settlement_panel(
                         reward.join(", ")
                     }
                 );
+            }
+        }
+        // UI-11, SIM-60, SIM-61 (M4a): the town's own account of its mood.
+        if let (Some(vd), Some(cal), Some(tick), Ok((held, tenure, terms, log))) = (
+            villagers_data.as_ref(),
+            calendar.as_ref(),
+            tick.as_ref(),
+            lordship.get(sel),
+        ) {
+            let name = |f: FactionId| {
+                army.as_ref()
+                    .map_or("?".to_string(), |a| a.faction_name(f).to_string())
+            };
+            let why = why::section(&why::Why {
+                owner: *held,
+                goodwill,
+                food_days: food.map(|f| f.days),
+                loyalty,
+                terms,
+                log,
+                tenure,
+                data: &vd.data.loyalty,
+                scar_fade_per_day: progression
+                    .as_ref()
+                    .map_or(0.0, |p| p.data.tenure.scar_fade_per_day),
+                tick: tick.0,
+                ticks_per_day: cal.ticks_per_day,
+                name: &name,
+            });
+            if !why.is_empty() {
+                s += "\n";
+                s += &why;
             }
         }
         s += "\n";

@@ -12,6 +12,12 @@
 //! Enlisted villagers are neither drifted nor counted. A deserter who
 //! comes home takes the settlement's current mean loyalty (sim_military's
 //! `apply_desertions`), since its owner may have changed meanwhile.
+//!
+//! M4a (Lordship, SIM-60, ADR 0020), run only: [`LoyaltyTerms`] itemise
+//! what else pulls a town's target (resentment, awe, the rival's pull ...),
+//! rebuilt hourly by sim_military's `tenure::step`; their sum is
+//! [`loyalty_target`]'s `bias`. Outside a run the component is absent and
+//! the bias is exactly 0.0, so nothing moves.
 
 use std::collections::BTreeMap;
 
@@ -88,6 +94,132 @@ impl StateHash for SettlementLoyalty {
     }
 }
 
+/// One itemised term of a run settlement's loyalty target (SIM-60, M4a;
+/// LORDSHIP_DESIGN section 4). Append only: its position indexes
+/// [`LoyaltyTerms`], which is saved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
+pub enum LoyaltyTerm {
+    /// `-Tenure.scar`: a violent taking's resentment, fading daily.
+    Resentment,
+    /// A submitted town while it is watched (M4a step 5).
+    Awe,
+    /// The other side's influence there; your heartland (M4a step 3).
+    Contest,
+    /// An invited town's bond, kept or forsaken (M4a step 5).
+    Bond,
+    /// The Dues edict (M4a step 4).
+    Dues,
+    /// The Table edict: rationing, a feast's afterglow (M4a step 4).
+    Table,
+    /// The steward's traits: a native steward (M4a step 9).
+    Steward,
+    /// `-Tenure.stir`: an agent at work (M4a step 7).
+    Stirred,
+}
+
+impl LoyaltyTerm {
+    /// How many terms there are.
+    pub const COUNT: usize = 8;
+
+    /// Every term, in position order.
+    pub const ALL: [LoyaltyTerm; Self::COUNT] = [
+        LoyaltyTerm::Resentment,
+        LoyaltyTerm::Awe,
+        LoyaltyTerm::Contest,
+        LoyaltyTerm::Bond,
+        LoyaltyTerm::Dues,
+        LoyaltyTerm::Table,
+        LoyaltyTerm::Steward,
+        LoyaltyTerm::Stirred,
+    ];
+
+    /// Display name ("why" lines, logs).
+    pub fn name(self) -> &'static str {
+        match self {
+            LoyaltyTerm::Resentment => "resentment",
+            LoyaltyTerm::Awe => "awe",
+            LoyaltyTerm::Contest => "rival's pull",
+            LoyaltyTerm::Bond => "bond",
+            LoyaltyTerm::Dues => "dues",
+            LoyaltyTerm::Table => "table",
+            LoyaltyTerm::Steward => "steward",
+            LoyaltyTerm::Stirred => "stirred",
+        }
+    }
+}
+
+/// A run settlement's itemised loyalty terms (SIM-60, M4a), one value per
+/// [`LoyaltyTerm`], added to its [`loyalty_target`] as their sum
+/// ([`LoyaltyTerms::bias`]). Inserted by sim_military's `setup_run` on
+/// every populated settlement of a run (all zero) and rebuilt hourly by
+/// its `tenure::step`; nothing else writes it. Hashed and saved.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
+pub struct LoyaltyTerms(pub [f32; LoyaltyTerm::COUNT]);
+
+impl LoyaltyTerms {
+    /// The value of `term`.
+    pub fn get(&self, term: LoyaltyTerm) -> f32 {
+        self.0[term as usize]
+    }
+
+    /// Sets the value of `term`.
+    pub fn set(&mut self, term: LoyaltyTerm, value: f32) {
+        self.0[term as usize] = value;
+    }
+
+    /// The sum of the terms, in position order: `loyalty_target`'s `bias`.
+    pub fn bias(&self) -> f32 {
+        self.0.iter().sum()
+    }
+
+    /// The non-zero terms, in position order ("why" lines).
+    pub fn nonzero(&self) -> impl Iterator<Item = (LoyaltyTerm, f32)> + '_ {
+        LoyaltyTerm::ALL
+            .into_iter()
+            .map(|t| (t, self.get(t)))
+            .filter(|(_, v)| *v != 0.0)
+    }
+}
+
+impl StateHash for LoyaltyTerms {
+    fn hash_state(&self, h: &mut StateHasher) {
+        for v in self.0 {
+            h.f32(v);
+        }
+    }
+}
+
+sim_core::save_newtype!(LoyaltyTerms);
+
+/// The three weighted parts of an owned settlement's loyalty target before
+/// its terms (UI-11, the "why" lines), as their contributions to the
+/// target: `(food, treatment, time)`, each already multiplied by its weight
+/// and divided by the weights' sum, so they add up to [`loyalty_target`]
+/// with a bias of 0. All three are 0 for an independent settlement.
+pub fn loyalty_parts(
+    data: &LoyaltyData,
+    owner: Owner,
+    goodwill: f32,
+    food_days: f32,
+    tick: u64,
+    ticks_per_day: u64,
+) -> (f32, f32, f32) {
+    if owner.faction == FactionId::INDEPENDENT {
+        return (0.0, 0.0, 0.0);
+    }
+    let food = (food_days / data.food_days).clamp(0.0, 1.0);
+    let treatment = ((goodwill + 1.0) / 2.0).clamp(0.0, 1.0);
+    let days = tick.saturating_sub(owner.since) as f32 / ticks_per_day.max(1) as f32;
+    let time = (days / data.settle_days).clamp(0.0, 1.0);
+    let weights = data.w_food + data.w_goodwill + data.w_time;
+    (
+        data.w_food * food / weights,
+        data.w_goodwill * treatment / weights,
+        data.w_time * time / weights,
+    )
+}
+
 /// The loyalty a settlement's villagers drift toward (GP-06, SIM-24).
 ///
 /// Independent (`owner.faction` 0): `independent_target`. Under an owner:
@@ -95,7 +227,11 @@ impl StateHash for SettlementLoyalty {
 /// - food security: `food_days / data.food_days`, capped at 1;
 /// - treatment: goodwill toward the owner as `(goodwill + 1) / 2`;
 /// - time under the owner: days since `owner.since` over `settle_days`,
-///   capped at 1.
+///   capped at 1;
+///
+/// plus `bias`, the sum of the settlement's [`LoyaltyTerms`] (SIM-60, M4a),
+/// clamped to 0..1. A bias of exactly 0.0 (outside a run) returns the
+/// weighted mean untouched, so the developed world is an exact no-op.
 pub fn loyalty_target(
     data: &LoyaltyData,
     owner: Owner,
@@ -103,6 +239,7 @@ pub fn loyalty_target(
     food_days: f32,
     tick: u64,
     ticks_per_day: u64,
+    bias: f32,
 ) -> f32 {
     if owner.faction == FactionId::INDEPENDENT {
         return data.independent_target;
@@ -112,7 +249,92 @@ pub fn loyalty_target(
     let days = tick.saturating_sub(owner.since) as f32 / ticks_per_day.max(1) as f32;
     let time = (days / data.settle_days).clamp(0.0, 1.0);
     let weights = data.w_food + data.w_goodwill + data.w_time;
-    (data.w_food * food + data.w_goodwill * treatment + data.w_time * time) / weights
+    let mean = (data.w_food * food + data.w_goodwill * treatment + data.w_time * time) / weights;
+    if bias == 0.0 || !bias.is_finite() {
+        return mean;
+    }
+    (mean + bias).clamp(0.0, 1.0)
+}
+
+/// One reason an owned settlement's loyalty target falls short (UI-11,
+/// SIM-60, M4a): what the settlement panel names when it explains a town's
+/// risk of revolt. Not saved or hashed; derived from state on demand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Pull {
+    /// The food weight left unmet: less than `loyalty.food_days` of food.
+    Hunger,
+    /// Goodwill toward the owner below neutral.
+    IllWill,
+    /// A negative itemised term (resentment, the rival's pull, a levy ...).
+    Term(LoyaltyTerm),
+}
+
+impl Pull {
+    /// Display name ("hunger", "ill will", a term's name).
+    pub fn name(self) -> &'static str {
+        match self {
+            Pull::Hunger => "hunger",
+            Pull::IllWill => "ill will",
+            Pull::Term(t) => t.name(),
+        }
+    }
+}
+
+/// The negative pulls on an owned settlement's loyalty target, largest
+/// first (ties in [`Pull`] order), each as its contribution to the target
+/// (negative): hunger is the food weight left unmet, ill will goodwill
+/// toward the owner below neutral, and every negative [`LoyaltyTerms`]
+/// term as it stands. Time under the owner is not a pull: a new town is
+/// not unhappy for being new. Empty for an independent settlement. The
+/// first two are what a revolt's words would cite (LORDSHIP_DESIGN
+/// section 4).
+pub fn loyalty_pulls(
+    data: &LoyaltyData,
+    owner: Owner,
+    goodwill: f32,
+    food_days: f32,
+    terms: &LoyaltyTerms,
+) -> Vec<(Pull, f32)> {
+    if owner.faction == FactionId::INDEPENDENT {
+        return Vec::new();
+    }
+    let weights = data.w_food + data.w_goodwill + data.w_time;
+    let food = (food_days / data.food_days).clamp(0.0, 1.0);
+    let treatment = ((goodwill + 1.0) / 2.0).clamp(0.0, 1.0);
+    let mut out = Vec::new();
+    let hunger = 0.0 - data.w_food * (1.0 - food) / weights;
+    if hunger < 0.0 {
+        out.push((Pull::Hunger, hunger));
+    }
+    let ill_will = 0.0 - data.w_goodwill * (0.5 - treatment).max(0.0) / weights;
+    if ill_will < 0.0 {
+        out.push((Pull::IllWill, ill_will));
+    }
+    out.extend(
+        terms
+            .nonzero()
+            .filter(|(_, v)| *v < 0.0)
+            .map(|(t, v)| (Pull::Term(t), v)),
+    );
+    out.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+    out
+}
+
+/// The term that decides whether an owned settlement stays on its side of
+/// `line` (the revolt threshold), if one does (LORDSHIP_DESIGN section 4,
+/// "terms are named when they decide"): the one whose removal alone would
+/// carry the clamped target (`base`, the target without terms, plus
+/// their bias) to the other side. A positive term returned holds the town
+/// above the line; a negative one pulls it under. The largest by size wins,
+/// ties by term order. `None` when no single term decides, and always
+/// without terms.
+pub fn deciding_term(base: f32, terms: &LoyaltyTerms, line: f32) -> Option<(LoyaltyTerm, f32)> {
+    let sum = base + terms.bias();
+    let above = sum.clamp(0.0, 1.0) >= line;
+    terms
+        .nonzero()
+        .filter(|(_, v)| ((sum - v).clamp(0.0, 1.0) >= line) != above)
+        .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()).then(b.0.cmp(&a.0)))
 }
 
 /// One day of drift: `loyalty` closes `rate` (clamped to 0..1) of the gap to
@@ -124,21 +346,23 @@ pub fn drift_toward(loyalty: f32, target: f32, rate: f32) -> f32 {
 
 /// Daily (GP-06, SIM-24): every villager who isn't enlisted drifts toward
 /// its settlement's [`loyalty_target`], at `loyalty.drift_per_day` times
-/// the owner's `LoyaltyDrift` modifier. Parallel: each villager writes only
-/// its own `Loyalty` and reads settlement components.
+/// the owner's `LoyaltyDrift` modifier. In a run the target carries the
+/// settlement's [`LoyaltyTerms`] as its bias (SIM-60); without them the
+/// bias is 0.0. Parallel: each villager writes only its own `Loyalty` and
+/// reads settlement components.
 pub fn drift_loyalty(
     tick: Res<SimTick>,
     calendar: Res<Calendar>,
     villagers: Res<Villagers>,
     mods: Res<FactionModifiers>,
-    settlements: Query<(&Owner, &Goodwill, &FoodSecurity)>,
+    settlements: Query<(&Owner, &Goodwill, &FoodSecurity, Option<&LoyaltyTerms>)>,
     mut people: Query<(&Villager, &mut Loyalty), Without<Enlisted>>,
 ) {
     let _span = tracing::info_span!("sim_agents::drift_loyalty").entered();
     let data = &villagers.data.loyalty;
     let (tick, tpd) = (tick.0, calendar.ticks_per_day);
     people.par_iter_mut().for_each(|(v, mut loyalty)| {
-        let Ok((owner, goodwill, food)) = settlements.get(v.settlement) else {
+        let Ok((owner, goodwill, food, terms)) = settlements.get(v.settlement) else {
             return;
         };
         let target = loyalty_target(
@@ -148,6 +372,7 @@ pub fn drift_loyalty(
             food.days,
             tick,
             tpd,
+            terms.map_or(0.0, LoyaltyTerms::bias),
         );
         let rate = data.drift_per_day * mods.mult(owner.faction, Stat::LoyaltyDrift);
         let next = drift_toward(loyalty.0, target, rate);
@@ -240,21 +465,21 @@ mod tests {
     fn the_target_weighs_food_goodwill_and_time() {
         let d = data();
         let tpd = 2_400;
-        let independent = loyalty_target(&d, Owner::default(), -1.0, 0.0, 0, tpd);
+        let independent = loyalty_target(&d, Owner::default(), -1.0, 0.0, 0, tpd, 0.0);
         assert_eq!(independent, d.independent_target);
 
-        let starved = loyalty_target(&d, owned(0), 0.0, 0.0, 0, tpd);
-        let fed = loyalty_target(&d, owned(0), 0.0, d.food_days, 0, tpd);
-        let overfed = loyalty_target(&d, owned(0), 0.0, 10.0 * d.food_days, 0, tpd);
-        let liked = loyalty_target(&d, owned(0), 1.0, 0.0, 0, tpd);
-        let settled = loyalty_target(&d, owned(0), 0.0, 0.0, 100 * tpd, tpd);
+        let starved = loyalty_target(&d, owned(0), 0.0, 0.0, 0, tpd, 0.0);
+        let fed = loyalty_target(&d, owned(0), 0.0, d.food_days, 0, tpd, 0.0);
+        let overfed = loyalty_target(&d, owned(0), 0.0, 10.0 * d.food_days, 0, tpd, 0.0);
+        let liked = loyalty_target(&d, owned(0), 1.0, 0.0, 0, tpd, 0.0);
+        let settled = loyalty_target(&d, owned(0), 0.0, 0.0, 100 * tpd, tpd, 0.0);
         let weights = d.w_food + d.w_goodwill + d.w_time;
         assert!((starved - 0.5 * d.w_goodwill / weights).abs() < 1e-6);
         assert!((fed - starved - d.w_food / weights).abs() < 1e-6);
         assert_eq!(overfed, fed, "food security is capped at food_days");
         assert!((liked - starved - 0.5 * d.w_goodwill / weights).abs() < 1e-6);
         assert!((settled - starved - d.w_time / weights).abs() < 1e-6);
-        let everything = loyalty_target(&d, owned(0), 1.0, d.food_days, 100 * tpd, tpd);
+        let everything = loyalty_target(&d, owned(0), 1.0, d.food_days, 100 * tpd, tpd, 0.0);
         assert!((everything - 1.0).abs() < 1e-6);
         // The tuning the conquest scenario relies on: a starved conquest
         // aims below the revolt threshold, a fed one above its seed.
@@ -295,6 +520,171 @@ mod tests {
         assert!(l(&liked) > l(&neutral), "{} vs {}", l(&liked), l(&neutral));
         assert!(l(&neutral) > l(&hated), "{} vs {}", l(&neutral), l(&hated));
         assert_eq!(l(&elsewhere), l(&neutral), "goodwill toward the rival");
+    }
+
+    /// SIM-60 (M4a): each term moves the target by exactly its value
+    /// (clamped to 0..1); a bias of 0.0 is an exact no-op; an independent
+    /// settlement ignores it; the parts add up to the unbiased target.
+    #[test]
+    fn terms_sum_into_the_target() {
+        let d = data();
+        let tpd = 2_400;
+        let base = loyalty_target(&d, owned(0), -0.2, d.food_days, 3 * tpd, tpd, 0.0);
+        let mut terms = LoyaltyTerms::default();
+        assert_eq!(terms.bias(), 0.0);
+        terms.set(LoyaltyTerm::Resentment, -0.12);
+        let one = loyalty_target(&d, owned(0), -0.2, d.food_days, 3 * tpd, tpd, terms.bias());
+        assert!((one - (base - 0.12)).abs() < 1e-6, "{one} vs {base}");
+        terms.set(LoyaltyTerm::Awe, 0.1);
+        terms.set(LoyaltyTerm::Stirred, -0.3);
+        let all = loyalty_target(&d, owned(0), -0.2, d.food_days, 3 * tpd, tpd, terms.bias());
+        assert!((all - (base - 0.32)).abs() < 1e-6, "{all}");
+        assert_eq!(
+            terms.nonzero().map(|(t, _)| t).collect::<Vec<_>>(),
+            [
+                LoyaltyTerm::Resentment,
+                LoyaltyTerm::Awe,
+                LoyaltyTerm::Stirred
+            ]
+        );
+        assert_eq!(
+            loyalty_target(&d, owned(0), 1.0, d.food_days, 100 * tpd, tpd, 0.5),
+            1.0,
+            "clamped"
+        );
+        assert_eq!(
+            loyalty_target(&d, owned(0), -1.0, 0.0, 0, tpd, -0.9),
+            0.0,
+            "clamped"
+        );
+        assert_eq!(
+            loyalty_target(&d, Owner::default(), 0.0, 0.0, 0, tpd, -0.4),
+            d.independent_target,
+            "nobody to be loyal to"
+        );
+        let (food, treatment, time) = loyalty_parts(&d, owned(0), -0.2, d.food_days, 3 * tpd, tpd);
+        assert!((food + treatment + time - base).abs() < 1e-6);
+        assert_eq!(
+            loyalty_parts(&d, Owner::default(), 0.0, 1.0, 0, tpd),
+            (0.0, 0.0, 0.0)
+        );
+        for (i, t) in LoyaltyTerm::ALL.iter().enumerate() {
+            assert_eq!(*t as usize, i, "{}", t.name());
+        }
+    }
+
+    /// UI-11 (M4a): the pulls on a target are the unmet food weight, goodwill
+    /// below neutral and every negative term, largest first; an independent
+    /// town, a fed liked town and a town with only positive terms have none.
+    #[test]
+    fn pulls_are_named_largest_first() {
+        let d = data();
+        let weights = d.w_food + d.w_goodwill + d.w_time;
+        let mut terms = LoyaltyTerms::default();
+        terms.set(LoyaltyTerm::Resentment, -0.14);
+        terms.set(LoyaltyTerm::Contest, -0.05);
+        terms.set(LoyaltyTerm::Awe, 0.1);
+        let pulls = loyalty_pulls(&d, owned(0), -0.4, 0.0, &terms);
+        let hunger = -d.w_food / weights;
+        let ill_will = -d.w_goodwill * 0.2 / weights;
+        let names: Vec<_> = pulls.iter().map(|(p, _)| p.name()).collect();
+        assert_eq!(
+            names,
+            ["hunger", "resentment", "ill will", "rival's pull"],
+            "{pulls:?}"
+        );
+        assert!((pulls[0].1 - hunger).abs() < 1e-6);
+        assert!((pulls[2].1 - ill_will).abs() < 1e-6);
+        assert!(pulls.iter().all(|(_, v)| *v < 0.0), "Awe is no pull");
+
+        let fed = loyalty_pulls(&d, owned(0), 0.0, d.food_days, &LoyaltyTerms::default());
+        assert!(fed.is_empty(), "neutral goodwill and full food: {fed:?}");
+        let mut kind = LoyaltyTerms::default();
+        kind.set(LoyaltyTerm::Bond, 0.05);
+        assert!(loyalty_pulls(&d, owned(0), 0.5, 5.0 * d.food_days, &kind).is_empty());
+        assert!(loyalty_pulls(&d, Owner::default(), -1.0, 0.0, &terms).is_empty());
+        // Half the food is half the hunger; the sum of what is missing
+        // from the food and treatment parts is what the parts leave out.
+        let half = loyalty_pulls(&d, owned(0), 0.0, d.food_days / 2.0, &kind);
+        assert_eq!(half.len(), 1);
+        assert!((half[0].1 - hunger / 2.0).abs() < 1e-6);
+    }
+
+    /// UI-11 (M4a): a term decides when taking it away alone would carry the
+    /// target across the revolt line; the biggest such term is named, a
+    /// positive one holds the town above, a negative one pulls it under.
+    #[test]
+    fn the_deciding_term_flips_the_line() {
+        let line = 0.35;
+        let mut terms = LoyaltyTerms::default();
+        assert_eq!(deciding_term(0.3, &terms, line), None, "no terms");
+        terms.set(LoyaltyTerm::Awe, 0.1);
+        // 0.30 + 0.10 = 0.40: awe holds the town above the line.
+        assert_eq!(
+            deciding_term(0.3, &terms, line),
+            Some((LoyaltyTerm::Awe, 0.1))
+        );
+        // 0.50 + 0.10: it would be above without awe too.
+        assert_eq!(deciding_term(0.5, &terms, line), None);
+        // 0.20 + 0.10 = 0.30: below with it, below without it.
+        assert_eq!(deciding_term(0.2, &terms, line), None);
+        terms.set(LoyaltyTerm::Bond, 0.08);
+        // 0.30 + 0.18 = 0.48: without either term alone it is still above.
+        assert_eq!(deciding_term(0.3, &terms, line), None, "neither alone");
+        // 0.20 + 0.18 = 0.38: without the awe 0.28, without the bond 0.30,
+        // so either alone decides, and the bigger is named.
+        assert_eq!(
+            deciding_term(0.2, &terms, line),
+            Some((LoyaltyTerm::Awe, 0.1))
+        );
+        // A bond alone, a negative term pulling under.
+        let mut bond = LoyaltyTerms::default();
+        bond.set(LoyaltyTerm::Bond, 0.08);
+        assert_eq!(
+            deciding_term(0.3, &bond, line),
+            Some((LoyaltyTerm::Bond, 0.08))
+        );
+        let mut scar = LoyaltyTerms::default();
+        scar.set(LoyaltyTerm::Resentment, -0.14);
+        assert_eq!(
+            deciding_term(0.45, &scar, line),
+            Some((LoyaltyTerm::Resentment, -0.14)),
+            "0.31 with the scar, 0.45 without it"
+        );
+        assert_eq!(deciding_term(0.8, &scar, line), None);
+        // The clamp counts: a target pinned at 1.0 is decided by nothing.
+        let mut big = LoyaltyTerms::default();
+        big.set(LoyaltyTerm::Awe, 0.1);
+        assert_eq!(deciding_term(1.5, &big, line), None);
+    }
+
+    /// SIM-60 (M4a): a settlement with `LoyaltyTerms` drifts toward the
+    /// biased target; one without them (every preset but a run) drifts
+    /// exactly as before.
+    #[test]
+    fn drift_reads_the_terms() {
+        let mut app = App::new();
+        app.add_plugins(TaskPoolPlugin::default());
+        let world = app.world_mut();
+        let calendar = Calendar::default_data();
+        world.insert_resource(Villagers::default_data(&calendar));
+        world.insert_resource(calendar);
+        world.insert_resource(SimTick(0));
+        world.insert_resource(FactionModifiers::default());
+        let d = data();
+        let plain = village(world, 0, owned(0), d.food_days);
+        let resentful = village(world, 10, owned(0), d.food_days);
+        let mut terms = LoyaltyTerms::default();
+        terms.set(LoyaltyTerm::Resentment, -0.2);
+        world.entity_mut(resentful.settlement).insert(terms);
+        day(world, 0);
+        let target = loyalty_target(&d, owned(0), 0.0, d.food_days, 0, 2_400, 0.0);
+        let expect = |t: f32| drift_toward(0.5, t, d.drift_per_day);
+        assert_eq!(loyalty(world, plain.people[0]), expect(target));
+        assert_eq!(
+            loyalty(world, resentful.people[0]),
+            expect((target - 0.2).clamp(0.0, 1.0))
+        );
     }
 
     #[test]
@@ -462,7 +852,7 @@ mod tests {
         );
         day(world, 0);
         let d = data();
-        let target = loyalty_target(&d, owned(0), 0.0, 0.0, 0, 2_400);
+        let target = loyalty_target(&d, owned(0), 0.0, 0.0, 0, 2_400, 0.0);
         let expect = |rate: f32| 0.5 + (target - 0.5) * rate;
         assert_eq!(
             loyalty(world, fast.people[0]),

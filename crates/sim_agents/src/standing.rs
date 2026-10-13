@@ -18,10 +18,20 @@
 //! Both components sit on every populated settlement from the start (all
 //! presets), next to `SettlementEconomy`, so the state hash covers them
 //! from tick 0.
+//!
+//! M4a (Lordship, ADR 0020), run only:
+//! - [`DeedLog`]: a run settlement's last eight goodwill changes, dated,
+//!   written by [`apply_goodwill`] where present (SIM-61).
+//! - [`Agent`]: a villager sent by a faction to stir a rival town (GP-32;
+//!   written by sim_military's `Subvert` dealing, M4a step 7).
+//! - [`Deed::spreads`]: influence and an agent's whispers never spread by
+//!   word of mouth ([`spread_totals`]).
+
+use std::collections::VecDeque;
 
 use bevy_ecs::prelude::*;
 use bevy_math::IVec2;
-use sim_core::{Allegiance, FactionId, SimTick, SpawnId, StateHash, StateHasher};
+use sim_core::{Allegiance, Calendar, FactionId, SimTick, SpawnId, StateHash, StateHasher};
 use sim_world::Settlement;
 
 use crate::components::{Enlisted, Threat, Villager};
@@ -138,6 +148,54 @@ pub enum Deed {
     Request = 6,
     /// A boon's goodwill (the "Known" start boon).
     Boon = 7,
+    /// Food given by an army to a town it doesn't hold (M4a, courting;
+    /// its delta is computed from the food given).
+    Gift = 8,
+    /// An army fought near the town for it (M4a, courting).
+    Defended = 9,
+    /// Influence from the land a faction holds near the town (M4a; computed,
+    /// never spreads).
+    Influence = 10,
+    /// An agent's whispers (M4a; computed, never spreads).
+    Whisper = 11,
+    /// A feast the town's lord gave (M4a, the Table edict).
+    Festival = 12,
+    /// A sworn town's call left unanswered (M4a).
+    Forsaken = 13,
+    /// A demand the town refused (M4a).
+    Threat = 14,
+    /// An agent caught plotting in the town (M4a).
+    Plot = 15,
+}
+
+impl Deed {
+    /// Every deed, in tag order.
+    pub const ALL: [Deed; 16] = [
+        Deed::Trade,
+        Deed::Equip,
+        Deed::Seize,
+        Deed::Plunder,
+        Deed::Provoke,
+        Deed::Killing,
+        Deed::Request,
+        Deed::Boon,
+        Deed::Gift,
+        Deed::Defended,
+        Deed::Influence,
+        Deed::Whisper,
+        Deed::Festival,
+        Deed::Forsaken,
+        Deed::Threat,
+        Deed::Plot,
+    ];
+
+    /// Whether word of the deed spreads to neighbouring settlements
+    /// ([`spread_totals`], villagers.ron `goodwill`). Influence and
+    /// whispers don't: influence is already a field over the land, and an
+    /// agent works one town (M4a, LORDSHIP_DESIGN section 6).
+    pub fn spreads(self) -> bool {
+        !matches!(self, Deed::Influence | Deed::Whisper)
+    }
 }
 
 /// One change of a settlement's goodwill toward a faction, waiting in the
@@ -160,18 +218,9 @@ impl sim_core::SaveState for Deed {
         w.u8(*self as u8);
     }
     fn load(r: &mut sim_core::SaveReader) -> Result<Self, sim_core::SaveError> {
-        const ALL: [Deed; 8] = [
-            Deed::Trade,
-            Deed::Equip,
-            Deed::Seize,
-            Deed::Plunder,
-            Deed::Provoke,
-            Deed::Killing,
-            Deed::Request,
-            Deed::Boon,
-        ];
         let t = r.u8()?;
-        ALL.get(t as usize)
+        Deed::ALL
+            .get(t as usize)
             .copied()
             .ok_or_else(|| sim_core::SaveError::Corrupt(format!("bad deed tag {t}")))
     }
@@ -247,7 +296,8 @@ pub fn ledger_nonempty(ledger: Res<GoodwillLedger>) -> bool {
 ///
 /// `settlements` is (SpawnId, centre), sorted by SpawnId. Each change
 /// counts in full at its own settlement and `fraction` of it at every other
-/// settlement whose centre is within `radius` of its centre. `changes` is
+/// settlement whose centre is within `radius` of its centre, unless its
+/// deed doesn't [spread](Deed::spreads). `changes` is
 /// sorted into its canonical order first and settlements are visited in
 /// SpawnId order, so the sums don't depend on the order anything was pushed
 /// or spawned in. A change naming no listed settlement is dropped.
@@ -277,7 +327,10 @@ pub fn spread_totals(
             };
             let d = if c.settlement == id.0 {
                 c.delta
-            } else if fraction > 0.0 && (from - centre).as_vec2().length_squared() <= r2 {
+            } else if fraction > 0.0
+                && c.cause.spreads()
+                && (from - centre).as_vec2().length_squared() <= r2
+            {
                 c.delta * fraction
             } else {
                 continue;
@@ -296,14 +349,21 @@ pub fn spread_totals(
 /// the ledger's changes and their spread ([`spread_totals`],
 /// villagers.ron `goodwill`) per settlement and faction, adds each sum to
 /// the settlement's [`Goodwill`] (clamped to -1..1), and clears the ledger.
+///
+/// SIM-61 (M4a, run only): a settlement with a [`DeedLog`] also records
+/// each change that reached it, in the ledger's canonical order: its own
+/// deeds in full, a neighbour's that spread as `heard`, dated with the
+/// day ([`DeedLog::record`]).
 pub fn apply_goodwill(
+    tick: Res<SimTick>,
+    calendar: Res<Calendar>,
     villagers: Res<Villagers>,
     mut ledger: ResMut<GoodwillLedger>,
-    mut q: Query<(&SpawnId, &Settlement, &mut Goodwill)>,
+    mut q: Query<(&SpawnId, &Settlement, &mut Goodwill, Option<&mut DeedLog>)>,
 ) {
     let _span = tracing::info_span!("sim_agents::apply_goodwill").entered();
     let mut settlements: Vec<(SpawnId, IVec2)> =
-        q.iter().map(|(id, s, _)| (*id, s.center)).collect();
+        q.iter().map(|(id, s, ..)| (*id, s.center)).collect();
     settlements.sort_unstable_by_key(|(id, _)| *id);
     let g = &villagers.data.goodwill;
     let totals = spread_totals(
@@ -312,15 +372,153 @@ pub fn apply_goodwill(
         g.spread_radius,
         g.spread_fraction,
     );
-    ledger.0.clear();
-    let mut by_id: Vec<(SpawnId, Mut<Goodwill>)> =
-        q.iter_mut().map(|(id, _, gw)| (*id, gw)).collect();
-    by_id.sort_unstable_by_key(|(id, _)| *id);
+    // `spread_totals` sorted the ledger into its canonical order.
+    let changes = std::mem::take(&mut ledger.0);
+    let day = (tick.0 / calendar.ticks_per_day.max(1)) as u32;
+    // The same entities as `settlements`, in the same (SpawnId) order.
+    let mut rows: Vec<_> = q.iter_mut().collect();
+    rows.sort_unstable_by_key(|(id, ..)| **id);
     for (i, faction, delta) in totals {
-        // `settlements` and `by_id` list the same entities in the same order.
-        by_id[i].1.add(faction, delta);
+        rows[i].2.add(faction, delta);
+    }
+    let (r2, fraction) = (g.spread_radius * g.spread_radius, g.spread_fraction);
+    for (id, s, _, log) in &mut rows {
+        let Some(log) = log.as_mut() else {
+            continue;
+        };
+        for c in &changes {
+            if c.settlement == id.0 {
+                log.record(day, c.faction, c.cause, false, c.delta);
+                continue;
+            }
+            if fraction <= 0.0 || !c.cause.spreads() {
+                continue;
+            }
+            let Ok(k) = settlements.binary_search_by_key(&c.settlement, |(s, _)| s.0) else {
+                continue;
+            };
+            if (settlements[k].1 - s.center).as_vec2().length_squared() <= r2 {
+                log.record(day, c.faction, c.cause, true, c.delta * fraction);
+            }
+        }
     }
 }
+
+/// One line of a settlement's [`DeedLog`] (SIM-61): on `day`, `faction`'s
+/// `deed` moved its goodwill toward that faction by `delta`; `heard` when
+/// word of it came from a neighbour (the ledger's spread).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeedEntry {
+    /// The day the change was applied, counted from 0 (`Calendar::at`'s
+    /// `day`; the chronicle and the UI show it as day + 1).
+    pub day: u32,
+    /// The faction whose deed it was.
+    pub faction: FactionId,
+    /// The deed.
+    pub deed: Deed,
+    /// Word of a deed done elsewhere (spread), not done here.
+    pub heard: bool,
+    /// The summed change of goodwill toward `faction`.
+    pub delta: f32,
+}
+
+/// A run settlement's last [`DeedLog::CAPACITY`] goodwill changes (SIM-61,
+/// M4a): what makes its mood readable ("day 6 you plundered us -0.10").
+/// Changes of the same day, faction, deed and `heard` merge into one entry
+/// (deltas summed); the oldest entry drops off. Inserted by sim_military's
+/// `setup_run` on every populated settlement of a run; written only by
+/// [`apply_goodwill`]. Hashed and saved.
+#[derive(Component, Debug, Clone, PartialEq, Default)]
+pub struct DeedLog {
+    /// Oldest first.
+    pub entries: VecDeque<DeedEntry>,
+}
+
+impl DeedLog {
+    /// Entries kept.
+    pub const CAPACITY: usize = 8;
+
+    /// Records a change: merged into the newest entry of the same day,
+    /// faction, deed and `heard` if there is one, else appended (dropping
+    /// the oldest at [`Self::CAPACITY`]). A zero or non-finite delta is
+    /// dropped.
+    pub fn record(&mut self, day: u32, faction: FactionId, deed: Deed, heard: bool, delta: f32) {
+        if delta == 0.0 || !delta.is_finite() {
+            return;
+        }
+        if let Some(e) =
+            self.entries.iter_mut().rev().find(|e| {
+                e.day == day && e.faction == faction && e.deed == deed && e.heard == heard
+            })
+        {
+            e.delta += delta;
+            return;
+        }
+        if self.entries.len() == Self::CAPACITY {
+            self.entries.pop_front();
+        }
+        self.entries.push_back(DeedEntry {
+            day,
+            faction,
+            deed,
+            heard,
+            delta,
+        });
+    }
+}
+
+impl StateHash for DeedLog {
+    fn hash_state(&self, h: &mut StateHasher) {
+        h.u32(self.entries.len() as u32);
+        for e in &self.entries {
+            h.u32(e.day);
+            h.u16(e.faction.0);
+            h.u8(e.deed as u8);
+            h.bool(e.heard);
+            h.f32(e.delta);
+        }
+    }
+}
+
+/// A villager living in a town as `by`'s agent (GP-32, M4a,
+/// LORDSHIP_DESIGN section 5.4): nobody's recruit and nobody's militia. Put
+/// on by sim_military's `Subvert` dealing (M4a step 7); defined here so the
+/// villager AI and recruiting can read it. Hashed and saved.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct Agent {
+    /// The settlement he works in.
+    pub town: Entity,
+    /// The faction he works for.
+    pub by: FactionId,
+    /// The tick he arrived.
+    pub since: u64,
+    /// How close the town is to catching him (caught at 1.0).
+    pub suspicion: f32,
+}
+
+impl StateHash for Agent {
+    fn hash_state(&self, h: &mut StateHasher) {
+        h.entity(self.town);
+        h.u16(self.by.0);
+        h.u64(self.since);
+        h.f32(self.suspicion);
+    }
+}
+
+sim_core::save_fields!(DeedEntry {
+    day,
+    faction,
+    deed,
+    heard,
+    delta
+});
+sim_core::save_fields!(DeedLog { entries });
+sim_core::save_fields!(Agent {
+    town,
+    by,
+    since,
+    suspicion
+});
 
 /// What [`set_owner`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -585,6 +783,8 @@ mod tests {
             "test assumes"
         );
         world.insert_resource(villagers);
+        world.insert_resource(SimTick(0));
+        world.insert_resource(Calendar::default_data());
         let xs = [0, 100, 140, 400, 50];
         for &id in order {
             let mut e = world.spawn((
@@ -667,6 +867,118 @@ mod tests {
         // 3 (x 400) is out of everyone's reach; zero deltas add nothing.
         assert_eq!(a.iter().find(|(s, _)| *s == 3).unwrap().1, vec![]);
         assert_eq!(a.len(), 4, "the field has no goodwill");
+    }
+
+    /// M4a: influence and whispers never spread (`Deed::spreads`); every
+    /// other deed does, and every deed has its tag as its position.
+    #[test]
+    fn influence_and_whispers_do_not_spread() {
+        for (i, d) in Deed::ALL.iter().enumerate() {
+            assert_eq!(*d as usize, i);
+            assert_eq!(d.spreads(), !matches!(d, Deed::Influence | Deed::Whisper));
+        }
+        let change = |cause| GoodwillChange {
+            settlement: 0,
+            faction: FactionId::PLAYER,
+            delta: 0.4,
+            cause,
+        };
+        let a = spread_world(&[0, 1, 2, 3, 4], &[change(Deed::Influence)]);
+        let b = spread_world(&[0, 1, 2, 3, 4], &[change(Deed::Gift)]);
+        let at = |w: &[(u64, Vec<(FactionId, f32)>)], id: u64| {
+            w.iter().find(|(s, _)| *s == id).unwrap().1.clone()
+        };
+        assert_eq!(at(&a, 0), vec![(FactionId::PLAYER, 0.4)], "in full here");
+        assert_eq!(at(&a, 1), vec![], "influence stays where it is");
+        assert_eq!(at(&b, 1), vec![(FactionId::PLAYER, 0.1)], "a gift is heard");
+    }
+
+    /// SIM-61: the deed log dates each change, merges the same day,
+    /// faction, deed and hearsay, keeps eight entries, and drops zeros.
+    #[test]
+    fn the_deed_log_dates_and_merges() {
+        let mut log = DeedLog::default();
+        let (p, r) = (FactionId::PLAYER, FactionId::RIVAL);
+        log.record(2, p, Deed::Plunder, false, -0.1);
+        log.record(2, p, Deed::Plunder, false, -0.1);
+        log.record(2, p, Deed::Plunder, true, -0.025);
+        log.record(2, r, Deed::Plunder, false, -0.1);
+        log.record(3, p, Deed::Plunder, false, -0.1);
+        log.record(3, p, Deed::Gift, false, 0.0);
+        let shape: Vec<(u32, FactionId, Deed, bool)> = log
+            .entries
+            .iter()
+            .map(|e| (e.day, e.faction, e.deed, e.heard))
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                (2, p, Deed::Plunder, false),
+                (2, p, Deed::Plunder, true),
+                (2, r, Deed::Plunder, false),
+                (3, p, Deed::Plunder, false),
+            ]
+        );
+        assert!((log.entries[0].delta + 0.2).abs() < 1e-6, "merged");
+        for day in 4..20 {
+            log.record(day, p, Deed::Request, false, 0.2);
+        }
+        assert_eq!(log.entries.len(), DeedLog::CAPACITY);
+        assert_eq!(log.entries.front().unwrap().day, 12, "the oldest dropped");
+    }
+
+    /// SIM-61: `apply_goodwill` writes the log where there is one: the
+    /// deed in full where it was done, word of it (`heard`) at neighbours
+    /// within the spread radius, nothing for a deed that doesn't spread;
+    /// a settlement without a log just keeps its goodwill.
+    #[test]
+    fn apply_goodwill_writes_the_deed_log() {
+        use bevy_ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let cal = Calendar::default_data();
+        world.insert_resource(Villagers::default_data(&cal));
+        world.insert_resource(SimTick(3 * cal.ticks_per_day + 7));
+        world.insert_resource(cal);
+        let xs = [0, 100, 400];
+        let mut ids = Vec::new();
+        for (i, x) in xs.iter().enumerate() {
+            let mut e = world.spawn((
+                SpawnId(i as u64),
+                Settlement {
+                    name: sim_core::NameId(i as u32),
+                    region: 0,
+                    center: IVec2::new(*x, 0),
+                },
+                Goodwill::default(),
+            ));
+            if i != 2 {
+                e.insert(DeedLog::default());
+            }
+            ids.push(e.id());
+        }
+        let mut ledger = GoodwillLedger::default();
+        ledger.push(0, FactionId::PLAYER, -0.1, Deed::Plunder);
+        ledger.push(0, FactionId::PLAYER, 0.05, Deed::Whisper);
+        ledger.push(2, FactionId::RIVAL, 0.2, Deed::Request);
+        world.insert_resource(ledger);
+        world.run_system_once(apply_goodwill).unwrap();
+        let log = |e: Entity| world.get::<DeedLog>(e).unwrap().entries.clone();
+        let here = log(ids[0]);
+        assert_eq!(here.len(), 2);
+        assert_eq!(
+            (here[0].day, here[0].deed, here[0].heard, here[0].delta),
+            (3, Deed::Plunder, false, -0.1)
+        );
+        assert_eq!((here[1].deed, here[1].heard), (Deed::Whisper, false));
+        let near = log(ids[1]);
+        assert_eq!(near.len(), 1, "the whisper isn't heard next door");
+        assert_eq!((near[0].deed, near[0].heard), (Deed::Plunder, true));
+        assert!((near[0].delta + 0.025).abs() < 1e-6);
+        assert!(world.get::<DeedLog>(ids[2]).is_none());
+        assert_eq!(
+            world.get::<Goodwill>(ids[2]).unwrap().get(FactionId::RIVAL),
+            0.2
+        );
     }
 
     #[test]

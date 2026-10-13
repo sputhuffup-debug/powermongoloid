@@ -58,15 +58,37 @@ pub fn transfer(world: &mut World, s: Entity, to: FactionId, cause: Cause) -> Op
     transfer_seeded(world, s, to, cause, None)
 }
 
+/// The event kind a change of hands because of `cause` is reported as
+/// (M4a, LORDSHIP_DESIGN section 11): `Invited` for an invitation,
+/// `Revolt` for a revolt, `Submitted` for a submission, `Subverted` for a
+/// subversion, `Defied` for a defiance, and `Conquest` for everything else
+/// (a conquest, a sack, a reprisal's retake, a test's `None`).
+pub fn taking_kind(cause: Cause) -> SimEventKind {
+    match cause {
+        Cause::Invitation => SimEventKind::Invited,
+        Cause::Revolt => SimEventKind::Revolt,
+        Cause::Submission { .. } => SimEventKind::Submitted,
+        Cause::Subversion => SimEventKind::Subverted,
+        Cause::Defiance => SimEventKind::Defied,
+        _ => SimEventKind::Conquest,
+    }
+}
+
 /// Hands settlement `s` to `to` because of `cause`, seeding residents'
 /// loyalty with `seed` (or as [`sim_agents::set_owner`] does when `None`).
 /// Call it from serial steps only.
 ///
 /// - Sets the owner, allegiance and loyalty through `set_owner`.
-/// - Writes a [`SimEvent`]: `Invited` for [`Cause::Invitation`], `Revolt`
-///   (with the old owner as its faction) for [`Cause::Revolt`], otherwise
-///   `Conquest`.
-/// - A conquest counts in the taker's `FactionStats::conquests`.
+/// - Writes a [`SimEvent`] of [`taking_kind`]`(cause)`. A `Revolt` or a
+///   `Defied` has the old owner as its faction and the new one (the
+///   independents) as `other`; every other kind has the taker as its
+///   faction and the old owner as `other`.
+/// - Only a `Conquest` (a conquest or a sack) counts in the taker's
+///   `FactionStats::conquests`; every kind but `Revolt` and `Defied`
+///   credits the champion's rank.
+/// - M4a (SIM-60, run only): records the taking in the settlement's
+///   [`Tenure`](crate::tenure::Tenure) (`tenure::record_taking`):
+///   how (from the cause), by whom, the scar, the history.
 /// - A faction (not the independents) that held no settlement before gets
 ///   its seat (where `Return` leads) at this one's centre.
 /// - GP-28: when the player takes the rival's seat in a run, the run ends
@@ -88,12 +110,9 @@ pub fn transfer_seeded(
     let center = world.get::<Settlement>(s)?.center;
     let landless = to != FactionId::INDEPENDENT && !holds_land(world, to, s);
     let change = sim_agents::set_owner(world, s, to, seed)?;
-    let kind = match cause {
-        Cause::Invitation => SimEventKind::Invited,
-        Cause::Revolt => SimEventKind::Revolt,
-        _ => SimEventKind::Conquest,
-    };
-    let (faction, other) = if kind == SimEventKind::Revolt {
+    let kind = taking_kind(cause);
+    let revolt_like = matches!(kind, SimEventKind::Revolt | SimEventKind::Defied);
+    let (faction, other) = if revolt_like {
         (change.previous, to)
     } else {
         (to, change.previous)
@@ -110,10 +129,12 @@ pub fn transfer_seeded(
         world.resource_mut::<ArmyStats>().of(to).conquests += 1;
     }
     // SIM-35: a settlement taken or invited into counts toward the
-    // champion's rank (a revolt's new owner is nobody).
-    if kind != SimEventKind::Revolt {
+    // champion's rank (a revolt's or a defiance's new owner is nobody).
+    if !revolt_like {
         crate::progression::champion::credit(world, to, crate::progression::Feat::Settlement);
     }
+    // SIM-60 (M4a): how it was taken, where the town keeps a tenure.
+    crate::tenure::record_taking(world, s, cause, to);
     if landless {
         world.resource_mut::<Factions>().set_seat(to, center);
     }
@@ -123,7 +144,15 @@ pub fn transfer_seeded(
             let who = faction_name(world, change.previous);
             format!("{name} threw off {who} and is free")
         }
+        SimEventKind::Defied => {
+            let who = faction_name(world, change.previous);
+            format!("{name} defied {who} and is free")
+        }
         SimEventKind::Invited => format!("{name} invited {} in", faction_name(world, to)),
+        SimEventKind::Submitted => format!("{name} knelt to {}", faction_name(world, to)),
+        SimEventKind::Subverted => {
+            format!("{name} opened its gates to {}", faction_name(world, to))
+        }
         _ => format!("{} took {name}", faction_name(world, to)),
     };
     log(world, text);
@@ -472,6 +501,106 @@ pub(crate) mod tests {
         let run = *app.world().resource::<RunState>();
         assert_eq!(run.outcome, Some(RunOutcome::Won));
         assert_eq!(run.cause, cause);
+    }
+
+    /// M4a (LORDSHIP_DESIGN section 11): every cause maps to its event
+    /// kind, faction and other, `conquests` count and champion credit: a
+    /// sack is a conquest, a submission and a subversion are takes of their
+    /// own with no `conquests` count, a defiance reads like a revolt with no
+    /// champion credit.
+    #[test]
+    fn every_cause_maps_to_its_kind_and_counters() {
+        use crate::progression::ChampionRank;
+        let (mut app, start) = run_app(42);
+        let list = settlements(app.world_mut());
+        let (pl, ind) = (FactionId::PLAYER, FactionId::INDEPENDENT);
+        // (cause, to, kind, event faction, event other, conquests +, credit)
+        let cases = [
+            (
+                Cause::Conquest { captain: 1 },
+                pl,
+                SimEventKind::Conquest,
+                pl,
+                ind,
+                1,
+                true,
+            ),
+            (Cause::Revolt, ind, SimEventKind::Revolt, pl, ind, 0, false),
+            (
+                Cause::Sack { captain: 1 },
+                pl,
+                SimEventKind::Conquest,
+                pl,
+                ind,
+                1,
+                true,
+            ),
+            (
+                Cause::Defiance,
+                ind,
+                SimEventKind::Defied,
+                pl,
+                ind,
+                0,
+                false,
+            ),
+            (
+                Cause::Invitation,
+                pl,
+                SimEventKind::Invited,
+                pl,
+                ind,
+                0,
+                true,
+            ),
+            (Cause::Revolt, ind, SimEventKind::Revolt, pl, ind, 0, false),
+            (
+                Cause::Submission { captain: 1 },
+                pl,
+                SimEventKind::Submitted,
+                pl,
+                ind,
+                0,
+                true,
+            ),
+            (Cause::Revolt, ind, SimEventKind::Revolt, pl, ind, 0, false),
+            (
+                Cause::Subversion,
+                pl,
+                SimEventKind::Subverted,
+                pl,
+                ind,
+                0,
+                true,
+            ),
+        ];
+        let (sid, s, _) = list[3];
+        for (cause, to, kind, faction, other, conquests, credit) in cases {
+            assert_eq!(taking_kind(cause), kind, "{cause:?}");
+            let world = app.world_mut();
+            let before = world.resource::<ArmyStats>().get(pl).conquests;
+            let points = world.get::<ChampionRank>(start.champion).unwrap().points;
+            transfer(world, s, to, cause).expect("populated");
+            let after = world.resource::<ArmyStats>().get(pl).conquests;
+            assert_eq!(after - before, conquests, "{cause:?}");
+            let gained = world.get::<ChampionRank>(start.champion).unwrap().points > points;
+            assert_eq!(gained, credit && to == pl, "{cause:?}");
+            app.step(1);
+            let last = *app
+                .world()
+                .resource::<Chronicle>()
+                .entries()
+                .iter()
+                .rev()
+                .find(|e| e.event.subject == sid)
+                .expect("chronicled");
+            let e = last.event;
+            assert_eq!(
+                (e.kind, e.faction, e.other, e.cause),
+                (kind, faction, other.0 as u64, cause),
+                "{cause:?}"
+            );
+        }
     }
 
     /// GP-06: a day of unrest frees an unguarded conquest at once, raises

@@ -123,6 +123,224 @@ pub enum OrderSpec {
     Give {
         settlement: u64,
     },
+    /// Demand the settlement's submission (GP-32, M4a, tag 11): an hour's
+    /// parley at the gate, then a kneeling or a refusal
+    /// (LORDSHIP_DESIGN section 5.2). Refused ("not yet") until M4a step 5.
+    Demand {
+        settlement: u64,
+    },
+    /// Send an agent into a rival settlement (GP-32, M4a, tag 12): the
+    /// lowest-ranked villager follower goes to live there and stirs it
+    /// (LORDSHIP_DESIGN section 5.4). Refused ("not yet") until M4a step 7.
+    Subvert {
+        settlement: u64,
+    },
+}
+
+/// The Work dial of a settlement's edicts (GP-34, M4a; LORDSHIP_DESIGN
+/// section 8.1). Append only: saves store the variant's position. The
+/// default, `Balanced`, is an exact no-op.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
+pub enum WorkFocus {
+    /// Today's layout: workers drift back to the trade they had before an
+    /// edict moved them.
+    #[default]
+    Balanced,
+    /// Workers move to food (farms, fishing spots, pastures, the bakery).
+    Fields,
+    /// Smithies turn to weapons; workers move to the smithies, the mine
+    /// and the woodcutters' camp.
+    Forge,
+    /// Carters for building sites; the militia and the watch are sharper.
+    Walls,
+}
+
+/// The Dues dial (GP-34, M4a): men or goods for the owner's armies within
+/// reach. Append only. The default, `Light`, is an exact no-op.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
+pub enum Dues {
+    /// Today's behaviour: an owned town feeds an army that gathers there.
+    #[default]
+    Light,
+    /// Food beyond a reserve and the storehouse's arms go to the nearest
+    /// owner captain within reach.
+    Tithe,
+    /// Able adults muster on the green and join the nearest owner captain.
+    Levy,
+}
+
+/// The Table dial (GP-34, M4a). Append only. The default, `Normal`, is an
+/// exact no-op.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
+pub enum Table {
+    /// Nothing changes.
+    #[default]
+    Normal,
+    /// Residents eat a quarter less and work a little slower.
+    Ration,
+    /// The town gathers on the green for a day and eats half a day's food.
+    Feast,
+}
+
+/// A building a settlement can be ordered to build (SIM-63, M4a;
+/// LORDSHIP_DESIGN section 8.3). sim_economy maps it to a `WorkplaceKind`.
+/// Append only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum BuildKind {
+    /// Another smithy (six more smith places).
+    Smithy,
+    /// Keeps 1.5 days of food from plunder, seizure and the tithe.
+    Granary,
+    /// A ring of stakes: the militia's defence, a slower hold.
+    Palisade,
+    /// Sees raiders sooner (a wider threat radius).
+    Watchtower,
+}
+
+/// One of a settlement's three edict dials (GP-34, M4a). Append only; its
+/// position indexes per-dial arrays (`sim_agents::Edicts::dials`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum Dial {
+    /// [`WorkFocus`].
+    Work,
+    /// [`Dues`].
+    Dues,
+    /// [`Table`].
+    Table,
+}
+
+impl Dial {
+    /// Every dial, in position order.
+    pub const ALL: [Dial; 3] = [Dial::Work, Dial::Dues, Dial::Table];
+}
+
+/// What a [`CommandKind::Govern`] does at a settlement the issuer owns
+/// (GP-34, SIM-63, M4a). Append only. Refused ("not yet") until M4a
+/// step 4 (dials), step 8 (`Build`) and step 9 (`Steward`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GovernAct {
+    /// Set the Work dial.
+    Work(WorkFocus),
+    /// Set the Dues dial.
+    Dues(Dues),
+    /// Set the Table dial.
+    Table(Table),
+    /// Order a building (one at a time, two a town per run).
+    Build(BuildKind),
+    /// Appoint `follower` (a villager follower's SpawnId, of a captain
+    /// within reach) as the settlement's steward.
+    Steward { follower: u64 },
+    /// Hand a dial back to the steward's habits.
+    Release(Dial),
+}
+
+macro_rules! tag_of {
+    ($($t:ident),*) => {$(
+        impl $t {
+            /// Stable tag of the variant (its position; hashing, saves).
+            pub fn tag(self) -> u8 {
+                self as u8
+            }
+        }
+    )*};
+}
+tag_of!(WorkFocus, Dues, Table, BuildKind, Dial);
+
+impl WorkFocus {
+    /// Every setting, in tag order.
+    pub const ALL: [WorkFocus; 4] = [
+        WorkFocus::Balanced,
+        WorkFocus::Fields,
+        WorkFocus::Forge,
+        WorkFocus::Walls,
+    ];
+
+    /// Display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            WorkFocus::Balanced => "Balanced",
+            WorkFocus::Fields => "Fields",
+            WorkFocus::Forge => "Forge",
+            WorkFocus::Walls => "Walls",
+        }
+    }
+}
+
+impl Dues {
+    /// Every setting, in tag order.
+    pub const ALL: [Dues; 3] = [Dues::Light, Dues::Tithe, Dues::Levy];
+
+    /// Display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Dues::Light => "Light",
+            Dues::Tithe => "Tithe",
+            Dues::Levy => "Levy",
+        }
+    }
+}
+
+impl Table {
+    /// Every setting, in tag order.
+    pub const ALL: [Table; 3] = [Table::Normal, Table::Ration, Table::Feast];
+
+    /// Display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Table::Normal => "Normal",
+            Table::Ration => "Ration",
+            Table::Feast => "Feast",
+        }
+    }
+}
+
+impl BuildKind {
+    /// Every kind, in tag order.
+    pub const ALL: [BuildKind; 4] = [
+        BuildKind::Smithy,
+        BuildKind::Granary,
+        BuildKind::Palisade,
+        BuildKind::Watchtower,
+    ];
+
+    /// Display name, lower case ("a granary").
+    pub fn name(self) -> &'static str {
+        match self {
+            BuildKind::Smithy => "smithy",
+            BuildKind::Granary => "granary",
+            BuildKind::Palisade => "palisade",
+            BuildKind::Watchtower => "watchtower",
+        }
+    }
+}
+
+impl Dial {
+    /// Display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Dial::Work => "Work",
+            Dial::Dues => "Dues",
+            Dial::Table => "Table",
+        }
+    }
+
+    /// The display name of the setting with tag `setting` on this dial
+    /// (`"?"` for none): the words of an `EdictSet` event's `amount`.
+    pub fn setting_name(self, setting: u8) -> &'static str {
+        let i = setting as usize;
+        match self {
+            Dial::Work => WorkFocus::ALL.get(i).map(|s| s.name()),
+            Dial::Dues => Dues::ALL.get(i).map(|s| s.name()),
+            Dial::Table => Table::ALL.get(i).map(|s| s.name()),
+        }
+        .unwrap_or("?")
+    }
 }
 
 /// Command payloads.
@@ -156,6 +374,13 @@ pub enum CommandKind {
     },
     /// Give up the current run (GP-21).
     AbandonRun,
+    /// Govern settlement `settlement` (a SpawnId) the issuer owns: set a
+    /// dial, order a building, appoint a steward or hand a dial back
+    /// (GP-34, M4a, tag 7). Recorded in replays like every player command.
+    Govern {
+        settlement: u64,
+        act: GovernAct,
+    },
 }
 
 /// Ordering inside [`SimSet::Input`](crate::SimSet::Input), chained: scripted
@@ -232,6 +457,8 @@ impl StateHash for CommandsProcessed {
 crate::save_newtype!(CommandsProcessed);
 // Saved by variant index (append only, guide D4).
 crate::save_serde!(OrderSpec, Posture);
+// M4a: the edict payloads, saved in sim_agents' `Edicts` and the like.
+crate::save_serde!(WorkFocus, Dues, Table, BuildKind, Dial, GovernAct);
 
 pub(crate) fn inject_scripted(
     tick: Res<SimTick>,
@@ -265,5 +492,68 @@ pub(crate) fn drain_commands(
     // Counts every command; military commands are applied by sim_military.
     for _ in commands.read() {
         processed.0 += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M4a: the edict payloads' tags are their positions (saves and hashes
+    /// store them), every setting has its own name, and the new command
+    /// and orders survive the replay's RON round trip.
+    #[test]
+    fn edict_payloads_are_tagged_and_round_trip() {
+        for (i, s) in WorkFocus::ALL.iter().enumerate() {
+            assert_eq!(s.tag() as usize, i);
+            assert_eq!(Dial::Work.setting_name(i as u8), s.name());
+        }
+        for (i, s) in Dues::ALL.iter().enumerate() {
+            assert_eq!(s.tag() as usize, i);
+            assert_eq!(Dial::Dues.setting_name(i as u8), s.name());
+        }
+        for (i, s) in Table::ALL.iter().enumerate() {
+            assert_eq!(s.tag() as usize, i);
+            assert_eq!(Dial::Table.setting_name(i as u8), s.name());
+        }
+        for (i, b) in BuildKind::ALL.iter().enumerate() {
+            assert_eq!(b.tag() as usize, i);
+        }
+        for (i, d) in Dial::ALL.iter().enumerate() {
+            assert_eq!(d.tag() as usize, i);
+        }
+        assert_eq!(Dial::Dues.setting_name(9), "?");
+        assert_eq!(WorkFocus::default(), WorkFocus::Balanced);
+        assert_eq!(Dues::default(), Dues::Light);
+        assert_eq!(Table::default(), Table::Normal);
+        let commands = [
+            CommandKind::Govern {
+                settlement: 7,
+                act: GovernAct::Work(WorkFocus::Forge),
+            },
+            CommandKind::Govern {
+                settlement: 7,
+                act: GovernAct::Steward { follower: 9 },
+            },
+            CommandKind::Govern {
+                settlement: 7,
+                act: GovernAct::Release(Dial::Table),
+            },
+            CommandKind::IssueOrder {
+                captain: 3,
+                order: OrderSpec::Demand { settlement: 7 },
+                queue: false,
+            },
+            CommandKind::IssueOrder {
+                captain: 3,
+                order: OrderSpec::Subvert { settlement: 7 },
+                queue: true,
+            },
+        ];
+        for kind in commands {
+            let c = SimCommand::player(crate::FactionId::PLAYER, kind);
+            let text = ron::to_string(&c).unwrap();
+            assert_eq!(ron::from_str::<SimCommand>(&text).unwrap(), c, "{text}");
+        }
     }
 }

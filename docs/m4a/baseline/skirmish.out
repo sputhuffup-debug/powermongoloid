@@ -1,0 +1,26 @@
+day 0 Night   | sleep=4961 | asleep@home 4961 | work 0/1979 | hunger 0.19 (max 0.63) rest 0.75 | food days [0.3 1.2 1.6 1.2 0.8 1.4 1.2 1.2 1.7 1.3]
+    Your warband captain 6584 (neutral) at (564,480) goal None order none | 50 men, 0 fighting, 0 routed, max spread 10 | morale 1.00/0.90 hunger 0.26 | food 1.8 days
+    Raiders captain 6635 (aggressive) at (297,863) goal Some((563, 480)) order move to (563, 480) | 30 men, 0 fighting, 0 routed, max spread 10 | morale 1.00/0.90 hunger 0.16 | food 3.1 days
+    Raiders: FactionStats { recruited: 0, deserted: 0, lost: 0, kills: 39, villagers_killed: 38, seized: 83.6, bought: 0.0, given: 0.0, provocations: 1, starvation_damage: 0.0, first_desertion: None, first_starvation: None, rejected_commands: 0, conquests: 0, supplied: 0.0, donated: 0.0, foraged: 0.0 }
+day 1 Evening | idle=4 eat=115 fetch=446 sleep=3924 home=190 hide=244 fight=3 | asleep@home 3893 | work 0/1952 | hunger 0.17 (max 0.67) rest 0.49 | food days [0.4 1.6 1.9 1.5 0.7 1.8 1.5 0.6 2.1 1.2]
+    Your warband captain 6584 (neutral) at (564,480) goal None order none | 50 men, 0 fighting, 0 routed, max spread 10 | morale 1.00/0.90 hunger 0.18 | food 0.8 days
+    Raiders captain 6635 (aggressive) at (399,719) goal Some((563, 480)) order move to (563, 480) | 29 men, 2 fighting, 0 routed, max spread 40 | morale 1.00/0.89 hunger 0.11 | food 3.7 days
+    Independent: FactionStats { recruited: 0, deserted: 0, lost: 0, kills: 1, villagers_killed: 0, seized: 0.0, bought: 0.0, given: 0.0, provocations: 0, starvation_damage: 0.0, first_desertion: None, first_starvation: None, rejected_commands: 0, conquests: 0, supplied: 0.0, donated: 0.0, foraged: 0.0 }
+    Raiders: FactionStats { recruited: 0, deserted: 0, lost: 1, kills: 74, villagers_killed: 71, seized: 120.8, bought: 0.0, given: 0.0, provocations: 2, starvation_damage: 0.0, first_desertion: None, first_starvation: None, rejected_commands: 0, conquests: 0, supplied: 0.0, donated: 0.0, foraged: 0.0 }
+day 2 Work    | idle=2601 eat=536 fetch=105 work=1415 haul=268 | asleep@home 0 | work 1683/1951 | hunger 0.14 (max 0.49) rest 0.53 | food days [0.9 1.7 1.9 1.5 1.2 1.9 1.7 0.3 2.5 0.8]
+    Your warband captain 6584 (neutral) at (564,480) goal None order none | 50 men, 0 fighting, 0 routed, max spread 10 | morale 1.00/0.90 hunger 0.26 | food 0.1 days
+    Raiders captain 6635 (aggressive) at (533,543) goal Some((563, 480)) order move to (563, 480) | 29 men, 0 fighting, 0 routed, max spread 10 | morale 1.00/0.90 hunger 0.13 | food 2.9 days
+    Independent: FactionStats { recruited: 0, deserted: 0, lost: 0, kills: 1, villagers_killed: 0, seized: 0.0, bought: 0.0, given: 0.0, provocations: 0, starvation_damage: 0.0, first_desertion: None, first_starvation: None, rejected_commands: 0, conquests: 0, supplied: 0.0, donated: 0.0, foraged: 0.0 }
+    Raiders: FactionStats { recruited: 0, deserted: 0, lost: 1, kills: 75, villagers_killed: 72, seized: 120.8, bought: 0.0, given: 0.0, provocations: 2, starvation_damage: 0.0, first_desertion: None, first_starvation: None, rejected_commands: 0, conquests: 0, supplied: 0.0, donated: 0.0, foraged: 0.0 }
+cycles by occupation: {Farmer: 7995, Fisher: 660, Shepherd: 1042, Woodcutter: 661, Miner: 18, Smith: 176, Baker: 1389, Carter: 3759, Idle: 0}
+ever ate: 4925/4925
+  Dunworth       pop  318 food  0.90 days hunger 0.13 store {"grain": 539, "ore": 262, "wood": 249} waiting {"bread": 35, "fish": 61, "grain": 302, "mutton": 44, "ore": 75, "wood": 90}
+  Daleworth      pop  606 food  1.71 days hunger 0.15 store {"bread": 2, "grain": 1648, "ore": 256, "wood": 564} waiting {"bread": 196, "grain": 842, "mutton": 151, "ore": 310, "wood": 160}
+  Oakworth       pop  357 food  1.91 days hunger 0.16 store {"grain": 1266, "ore": 125, "wood": 399} waiting {"bread": 71, "grain": 613, "mutton": 55, "ore": 237, "wood": 161}
+  Sedgestow      pop  747 food  1.49 days hunger 0.15 store {"grain": 1521, "ore": 328, "wood": 576} waiting {"bread": 430, "grain": 1219, "mutton": 308, "ore": 367, "wood": 302}
+  Millfield      pop  419 food  1.20 days hunger 0.12 store {"bread": 2, "grain": 872, "ore": 158, "wood": 343} waiting {"bread": 139, "grain": 839, "mutton": 80, "ore": 252, "wood": 254}
+  Woldmoor       pop  668 food  1.95 days hunger 0.15 store {"grain": 2276, "ore": 412, "wood": 573} waiting {"bread": 407, "grain": 495, "mutton": 94, "ore": 195, "wood": 274}
+  Gorsecross     pop  620 food  1.71 days hunger 0.14 store {"bread": 14, "grain": 1877, "mutton": 2, "ore": 447, "wood": 361} waiting {"bread": 288, "fish": 151, "grain": 536, "mutton": 154, "ore": 129, "wood": 222}
+  Bramfield      pop  291 food  0.32 days hunger 0.15 store {"grain": 9, "ore": 226, "wood": 332} waiting {"bread": 52, "fish": 23, "grain": 377, "mutton": 28, "ore": 85, "wood": 77}
+  Emberwick      pop  278 food  2.49 days hunger 0.15 store {"bread": 47, "fish": 73, "grain": 1077, "ore": 86, "wood": 374} waiting {"bread": 62, "fish": 10, "grain": 353, "mutton": 33, "ore": 184, "wood": 53}
+  Millham        pop  621 food  0.79 days hunger 0.15 store {"grain": 425, "ore": 262, "wood": 556} waiting {"bread": 279, "fish": 291, "grain": 1208, "mutton": 174, "ore": 318, "wood": 174}

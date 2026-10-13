@@ -14,19 +14,23 @@ use sim_economy::Economy;
 
 use crate::combat::Casualties;
 use crate::components::{
-    ArmyStats, Captain, Equipment, FactionStats, Factions, Follower, MilitaryLog, Order, Raider,
-    Soldier,
+    ArmyStats, Bandits, Captain, Equipment, FactionStats, Factions, Follower, MilitaryLog, Order,
+    Raider, Soldier,
 };
 use crate::data::Army;
 use crate::director::{Director, DirectorData};
+use crate::fallout::Fallout;
+use crate::govern::Steward;
 use crate::index::{ArmyIndex, FighterGrid};
+use crate::influence::Influence;
 use crate::monuments::{Guard, Holder, NoUpkeep};
 use crate::orders::CommandInbox;
 use crate::progression::{
     Champion, ChampionRank, Progression, RegionTally, RunProgress, StartTerrain, Traits,
 };
 use crate::requests::{Request, RequestBoard, RequestKind, Reward, Watch};
-use crate::rival::{RivalBand, RivalState};
+use crate::rival::{RivalBand, RivalState, Vow};
+use crate::tenure::Tenure;
 use crate::upkeep::Deserters;
 use crate::veterans::Veteran;
 use crate::wild::WildFood;
@@ -155,7 +159,8 @@ sim_core::save_fields!(Guard { monument });
 sim_core::save_fields!(Veteran {
     battles,
     rank,
-    fought
+    fought,
+    trade
 });
 sim_core::save_fields!(ChampionRank { rank, points });
 sim_core::save_fields!(RivalState {
@@ -166,9 +171,18 @@ sim_core::save_fields!(RivalState {
     next_levy,
     next_raid,
     raids,
-    levied
+    levied,
+    realm,
+    reprisal,
+    last_reprisal
 });
-sim_core::save_fields!(RivalBand { target, next_think });
+sim_core::save_fields!(Vow { settlement, due });
+sim_core::save_fields!(RivalBand {
+    target,
+    next_think,
+    pinned
+});
+sim_core::save_fields!(Bandits { home, raids });
 sim_core::save_fields!(Director {
     tension,
     last_spawn,
@@ -265,6 +279,12 @@ pub(crate) fn register(app: &mut App) {
         .register_saved::<RivalBand>()
         .register_saved_resource::<DirectorData>()
         .register_saved_resource::<Director>()
+        // M4a (ADR 0020).
+        .register_saved::<Tenure>()
+        .register_saved::<Influence>()
+        .register_saved_resource::<Fallout>()
+        .register_saved::<Bandits>()
+        .register_saved::<Steward>()
         .register_saved_resource::<MilitaryLog>()
         .register_saved_resource_with::<ArmyIndex>(
             crate::index::save_index,

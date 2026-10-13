@@ -55,8 +55,8 @@ use bevy_ecs::prelude::*;
 
 pub use calendar::{Calendar, ClockReading, Phase};
 pub use command::{
-    CommandKind, CommandLog, CommandOrigin, CommandScript, CommandsProcessed, LoggedCommand,
-    OrderSpec, Posture, SimCommand, SimInputSet,
+    BuildKind, CommandKind, CommandLog, CommandOrigin, CommandScript, CommandsProcessed, Dial,
+    Dues, GovernAct, LoggedCommand, OrderSpec, Posture, SimCommand, SimInputSet, Table, WorkFocus,
 };
 pub use components::{Allegiance, DetailLevel, FactionId, Motion, NextSpawnId, Position, SpawnId};
 pub use events::{

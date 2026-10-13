@@ -12,9 +12,11 @@
 //!   touches a building's stock (ADR 0007).
 //! - [`Building`], [`Workplace`], [`Home`], [`SettlementEconomy`], and
 //!   [`layout::build_settlement`], which places them.
+//! - [`Construction`]: a building site ordered in a run (SIM-63, M4a).
 //!
 //! Never depends on rendering, windowing, audio or asset crates.
 
+pub mod construction;
 pub mod data;
 pub mod goods;
 pub mod layout;
@@ -23,6 +25,7 @@ use bevy_app::{App, FixedUpdate, Plugin};
 use bevy_ecs::prelude::*;
 use sim_core::{AppHashExt, AppSaveExt, SimSet};
 
+pub use construction::Construction;
 pub use data::{Economy, GoodId, Occupation, RecipeId, WorkplaceKind};
 pub use goods::{Inventory, Stockpile, TransferOp, Transfers};
 pub use layout::{Building, BuildingKind, Home, Occupied, SettlementEconomy, Workplace};
@@ -61,6 +64,8 @@ impl Plugin for EconomyPlugin {
             .register_hashed::<Home>()
             .register_hashed::<SettlementEconomy>()
             .register_hashed::<Occupation>()
+            // M4a: a building site (run only).
+            .register_hashed::<Construction>()
             // GP-12: every hashed type is saved.
             .register_saved_resource::<Economy>()
             .register_saved::<Stockpile>()
@@ -70,6 +75,7 @@ impl Plugin for EconomyPlugin {
             .register_saved::<Workplace>()
             .register_saved::<Home>()
             .register_saved::<SettlementEconomy>()
-            .register_saved::<Occupation>();
+            .register_saved::<Occupation>()
+            .register_saved::<Construction>();
     }
 }

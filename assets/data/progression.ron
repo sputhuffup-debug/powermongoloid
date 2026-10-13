@@ -115,6 +115,13 @@
         provoke: -0.1,   // the settlement is provoked into arms
         killing: -0.02,  // each of its militia killed
         request: 0.2,    // a request answered (M4 step 3b)
+        // M4a (Lordship). Gift, Influence and Whisper are computed where
+        // they happen (court, influence, subvert below).
+        defended: 0.1,   // an army fought near the town for it (once a day)
+        festival: 0.08,  // a feast its lord gave (word travels)
+        forsaken: -0.15, // a sworn town's call left unanswered (word travels)
+        threat: -0.05,   // a demand the town refused
+        plot: -0.15,     // an agent caught plotting there (word travels)
     ),
 
     // SIM-38: wild food. The island is cut into 16-tile patches; a full
@@ -309,6 +316,13 @@
             raid_from_day: 10.0,
             raid_every_days: 3.0,
             raid_size: 10,
+            // M4a (GP-31, GP-33): reprisals (from step 6) and the seat's defence
+            // at an empty realm, as a share of its clock (1.0 at a full realm).
+            reprisal_from_day: 6.0,
+            reprisal_size: 8,
+            reprisal_min_garrison: 8,
+            turned_mult: 1.5,
+            realm_floor: 0.4,
         ),
         (
             difficulty: Chaotic,
@@ -322,6 +336,13 @@
             raid_from_day: 8.0,
             raid_every_days: 2.0,
             raid_size: 12,
+            // M4a (GP-31, GP-33): reprisals (from step 6) and the seat's defence
+            // at an empty realm, as a share of its clock (1.0 at a full realm).
+            reprisal_from_day: 5.0,
+            reprisal_size: 10,
+            reprisal_min_garrison: 8,
+            turned_mult: 1.5,
+            realm_floor: 0.4,
         ),
         (
             difficulty: Harsh,
@@ -335,6 +356,13 @@
             raid_from_day: 8.0,
             raid_every_days: 2.5,
             raid_size: 14,
+            // M4a (GP-31, GP-33): reprisals (from step 6) and the seat's defence
+            // at an empty realm, as a share of its clock (1.0 at a full realm).
+            reprisal_from_day: 5.0,
+            reprisal_size: 12,
+            reprisal_min_garrison: 8,
+            turned_mult: 1.5,
+            realm_floor: 0.5,
         ),
     ],
     // UI-09: how the chronicle words why something happened, one phrase
@@ -356,6 +384,204 @@
             lapsed: "for no help came in time",
             neglect: "left unwatched too long",
             fight: "against {foe}",
+            // M4a (Lordship).
+            sack: "sacked by the army of {captain}",
+            submission: "kneeling to the army of {captain} at its gate",
+            subversion: "turned from within by an agent",
+            defiance: "defying a lord who looked weak",
+            fallout: "broken men of {settlement}, taken by the sword",
+            reprisal: "to take back {settlement}",
+            edict: "by edict",
+            caught: "caught spying and hanged",
+            deposed: "deposed when the town changed hands",
         ),
+    ),
+
+    // ---- M4a "Lordship" (LORDSHIP_DESIGN section 10, ADR 0020) ----------
+    // Every block below is run-only and optional (text without it reads
+    // these values); each has a switch or a default that makes it a no-op.
+    // Step 1 lands the data; the step named in each comment brings it to
+    // life. See docs/dev/DATA.md.
+
+    // GP-31 (step 3): influence radiates from held towns, people and
+    // loyalty only, falling to nothing at `reach` tiles.
+    influence: (
+        enabled: true,
+        reach: 200.0,
+        people_unit: 100.0,
+        loyalty_floor: 0.25,
+        seat_power: 2.0,
+        independence: 0.5,
+        warm_above: 0.1,
+        goodwill_per_day: 0.12,
+        goodwill_cap: 0.6,
+        envoy_net: 0.5,
+        max_envoys_per_day: 1,
+        contest: 0.25,
+        heartland: 0.05,
+        warming: 0.2,
+        sphere: 0.5,
+        front: 0.1,
+        rank_people: 500.0,
+        rank_points: 1,
+        drifter_ease: 0.1,
+    ),
+
+    // SIM-60 (step 1): a taking's scar (the Resentment term, fading daily)
+    // and an invited town's bond (step 5).
+    tenure: (
+        conquest_scar: 0.12,
+        sack_scar: 0.25,
+        scar_per_kill: 0.01,
+        max_conquest_scar: 0.3,
+        max_sack_scar: 0.45,
+        subverted_scar: 0.1,
+        scar_fade_per_day: 0.02,
+        bond: 0.05,
+        kept_bond: 0.02,
+        max_bond: 0.1,
+        forsaken_bond: -0.1,
+        forsaken_after: 2,
+    ),
+
+    // GP-32 (step 5): demanding submission, and the watch over the land.
+    demand: (
+        radius: 40.0,
+        parley_hours: 1.0,
+        ratio: 1.5,
+        militia_weight: 0.25,
+        garrison_weight: 1.0,
+        armed_weight: 1.5,
+        seed: 0.45,
+        awe: 0.1,
+        watch_radius: 80.0,
+        hold_ratio: 0.75,
+        watch_hours: 6,
+        watch_garrison: 4,
+        watch_share: 0.5,
+        weak_days: 2,
+        settle_days: 10.0,
+        refuse_cooldown_days: 2.0,
+    ),
+
+    // GP-32 (step 5): courting with gifts.
+    court: (
+        gift_per_day_of_need: 0.25,
+        max_gift: 0.12,
+        hungry_mult: 2.0,
+    ),
+
+    // GP-32 (step 7): agents in the rival's towns.
+    subvert: (
+        bribe_food: 10.0,
+        bribe_goods: 2,
+        max_agents: 3,
+        whisper_rival: -0.06,
+        whisper_you: 0.05,
+        hungry_mult: 1.5,
+        stir_per_day: 0.1,
+        max_stir: 0.4,
+        suspicion_base: 0.06,
+        suspicion_per_10_guards: 0.1,
+        suspicion_loyalty: 0.08,
+        guard_radius: 30.0,
+        purse_relief: 0.3,
+        turn_loyalty: 0.5,
+        turn_goodwill: 0.25,
+        seed: 0.5,
+        fragile_days: 6.0,
+    ),
+
+    // GP-33 (step 6): bands of broken men, and the rival's vows.
+    fallout: (
+        enabled: true,
+        min_people: 60,
+        per_people: 0.04,
+        per_kill: 0.5,
+        sack_mult: 1.5,
+        haste_days: 2.0,
+        haste_mult: 1.25,
+        min_band: 4,
+        max_men: 16,
+        max_bands: 2,
+        delay_hours: 2.0,
+        food_days: 2.0,
+        brood_scar: 0.05,
+        weights: (rival: 2.0, player: 1.0, independent: 0.75),
+        turn_after_raids: 2,
+        distance_scale: 150.0,
+        garrison_scale: 5.0,
+        shadow: 0.3,
+        vow_delay_hours: 18.0,
+        vow_cooldown_days: 2.0,
+    ),
+
+    // GP-34 (step 4): the three dials. Every default is an exact no-op.
+    edicts: (
+        lock_days: 2.0,
+        reach: 60.0,
+        moves_share: 0.1,
+        min_moves: 2,
+        carter_floor: 0.08,
+        fields_cap: 0.85,
+        forge_cap: 0.2,
+        walls_carters: 6,
+        walls_build: 1.5,
+        walls_defence: 0.25,
+        walls_threat: 1.25,
+        tithe: (keep_days: 0.5, term: -0.05),
+        levy: (per_day: 0.02, cap: 0.1, term: -0.08, harsh_term: -0.12),
+        ration: (hunger: 0.75, work: 1.1, term: -0.1),
+        feast: (
+            min_food_days: 1.0,
+            food_days: 0.5,
+            gather_hours: 24.0,
+            work: 0.3,
+            term: 0.08,
+            term_days: 5.0,
+            cooldown_days: 6.0,
+        ),
+    ),
+
+    // GP-34 (step 9): stewards. Each trait is visible habits, rows of
+    // (dial, setting, condition) applied in table order at dawn to the
+    // dials the player hasn't set; `never` vetoes (Native's beats any
+    // habit). No yield multipliers.
+    stewards: (
+        habits: true,
+        traits: [
+            (name: "Stern", from: Veteran,
+                habits: [(Dues, Levy, PeopleAtLeast(100)), (Table, Ration, FoodDaysUnder(2.0))],
+                never: [(Table, Feast)]),
+            (name: "Forge-wise", from: Trades([Smith, Miner]),
+                habits: [(Work, Forge, Always)]),
+            (name: "Husband", from: Trades([Farmer, Fisher, Shepherd, Baker]),
+                habits: [(Work, Fields, FoodDaysUnder(3.0)), (Table, Feast, FoodDaysAtLeast(2.0))],
+                never: [(Work, Forge)]),
+            (name: "Reeve", from: Trades([Carter]),
+                habits: [(Dues, Tithe, FoodDaysAtLeast(1.0))],
+                lock_days: Some(1.0)),
+            (name: "Wright", from: Trades([Woodcutter]),
+                habits: [(Work, Walls, SiteOpenOrVow)]),
+            (name: "Native", from: Resident, never: [(Dues, Levy)], term: 0.05),
+        ],
+    ),
+
+    // SIM-62 (step 9): a Market town you own posts a Hire offer.
+    market: (
+        hire_days: 5.0,
+        min_men: 3,
+        max_men: 6,
+        people_per_man: 80,
+    ),
+
+    // SIM-63 (step 8): ordered buildings' limits and effects.
+    buildings: (
+        max_per_town: 2,
+        granary_keep_days: 1.5,
+        palisade_defence: 0.5,
+        palisade_hold: 1.5,
+        palisade_demand: 1.5,
+        watchtower_threat: 1.5,
     ),
 )

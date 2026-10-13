@@ -117,11 +117,78 @@ pub enum SimEventKind {
     DriftersJoined,
     /// The run ended. `subject`: the [`RunOutcome`](crate::RunOutcome) as a number.
     RunEnded,
+    /// A settlement knelt to `faction` after a demand (GP-32, M4a, tag 22;
+    /// cause [`Cause::Submission`]). `subject`: the settlement; `other`:
+    /// its previous owner's faction id; `at`: its centre; `amount`:
+    /// residents handed over. A take: no `conquests` count.
+    Submitted,
+    /// A submitted settlement defied `faction`, its owner, and is free
+    /// again (GP-32, M4a, tag 23; cause [`Cause::Defiance`]), told like a
+    /// [`SimEventKind::Revolt`]. `subject`: the settlement; `other`: the new
+    /// owner's faction id (0); `at`: its centre; `amount`: residents.
+    Defied,
+    /// A settlement an agent turned opened its gates to `faction` (GP-32,
+    /// M4a, tag 24; cause [`Cause::Subversion`]). `subject`: the
+    /// settlement; `other`: its previous owner's faction id; `at`: its
+    /// centre; `amount`: residents handed over. A take: no `conquests`.
+    Subverted,
+    /// Broken men of a taken settlement took to the woods as bandits
+    /// (GP-33, M4a, tag 25; cause [`Cause::Fallout`] naming the
+    /// settlement). `faction`: who took it; `subject`: the band's captain;
+    /// `other`: the settlement (its home); `at`: where they rose;
+    /// `amount`: men in the band, its captain included.
+    BanditsRose,
+    /// The rival vowed to retake a settlement (GP-33, M4a, tag 26).
+    /// `faction`: the rival; `subject`: the settlement it names; `other`:
+    /// the tick the reprisal is due; `at`: its centre; `amount`: game
+    /// hours until then; `cause`: what provoked it (the taking's cause, or
+    /// [`Cause::Caught`]).
+    ReprisalVowed,
+    /// The rival sent a reprisal band (GP-33, M4a, tag 27; cause
+    /// [`Cause::Reprisal`] naming its target). `faction`: the rival;
+    /// `subject`: its captain; `other`: the settlement it is pinned to;
+    /// `at`: the seat's centre; `amount`: people in the band, its captain
+    /// included.
+    RivalReprisal,
+    /// An agent was caught and killed (GP-32, M4a, tag 28; cause
+    /// [`Cause::Caught`]). `faction`: the agent's lord; `subject`: the
+    /// agent's SpawnId; `other`: the settlement; `at`: its centre;
+    /// `amount`: the agent's name (a `NameId`, since the person is gone).
+    AgentCaught,
+    /// A sworn settlement's call went unanswered (GP-32, M4a, tag 29;
+    /// cause [`Cause::Lapsed`]). `faction`: its lord, who forsook it;
+    /// `subject`: the settlement; `other`: the request id; `at`: its
+    /// centre; `amount`: times it has been forsaken. Chronicled, quiet.
+    Forsaken,
+    /// An ordered building was finished (SIM-63, M4a, tag 30). `faction`:
+    /// the settlement's owner; `subject`: the building; `other`: the
+    /// settlement; `at`: the building's tile; `amount`: the
+    /// [`BuildKind`](crate::BuildKind) tag. Chronicled, quiet.
+    Built,
+    /// A settlement has a new steward, or lost one (GP-34, M4a, tag 31).
+    /// `faction`: the owner; `subject`: the steward; `other`: the
+    /// settlement; `at`: its centre; `amount`: 0 a resident named, 1 a
+    /// follower appointed, 2 deposed (cause [`Cause::Deposed`]); `cause`
+    /// otherwise `None` or `Player`. Chronicled, quiet.
+    StewardNamed,
+    /// A dial of a settlement's edicts turned (GP-34, M4a, tag 32).
+    /// `faction`: the owner; `subject`: the settlement; `other`: the
+    /// [`Dial`](crate::Dial) tag; `at`: its centre; `amount`: the new
+    /// setting's tag; `cause`: `Player` when the player set it,
+    /// [`Cause::Edict`] when the steward's habit did. Feed only.
+    EdictSet,
+    /// An owner's lands sent its army food, arms and men (GP-34, M4a, tag
+    /// 33; cause [`Cause::Edict`]), one per receiving captain a day.
+    /// `faction`: the owner; `subject`: the captain; `other`: food value
+    /// delivered (whole units) in the low 32 bits and arms (weapons and
+    /// tools) in the high 32 bits; `at`: the captain's tile; `amount`: men.
+    /// Feed only.
+    Tribute,
 }
 
 impl SimEventKind {
     /// Every kind, in discriminant order.
-    pub const ALL: [SimEventKind; 22] = [
+    pub const ALL: [SimEventKind; 34] = [
         SimEventKind::RunStarted,
         SimEventKind::OfferPosted,
         SimEventKind::OfferChosen,
@@ -144,6 +211,18 @@ impl SimEventKind {
         SimEventKind::Battle,
         SimEventKind::DriftersJoined,
         SimEventKind::RunEnded,
+        SimEventKind::Submitted,
+        SimEventKind::Defied,
+        SimEventKind::Subverted,
+        SimEventKind::BanditsRose,
+        SimEventKind::ReprisalVowed,
+        SimEventKind::RivalReprisal,
+        SimEventKind::AgentCaught,
+        SimEventKind::Forsaken,
+        SimEventKind::Built,
+        SimEventKind::StewardNamed,
+        SimEventKind::EdictSet,
+        SimEventKind::Tribute,
     ];
 
     /// Display name (debug output, logs).
@@ -171,12 +250,24 @@ impl SimEventKind {
             SimEventKind::Battle => "battle",
             SimEventKind::DriftersJoined => "drifters joined",
             SimEventKind::RunEnded => "run ended",
+            SimEventKind::Submitted => "submitted",
+            SimEventKind::Defied => "defied",
+            SimEventKind::Subverted => "subverted",
+            SimEventKind::BanditsRose => "bandits rose",
+            SimEventKind::ReprisalVowed => "reprisal vowed",
+            SimEventKind::RivalReprisal => "rival reprisal",
+            SimEventKind::AgentCaught => "agent caught",
+            SimEventKind::Forsaken => "forsaken",
+            SimEventKind::Built => "built",
+            SimEventKind::StewardNamed => "steward named",
+            SimEventKind::EdictSet => "edict set",
+            SimEventKind::Tribute => "tribute",
         }
     }
 
     /// Whether events of this kind go into the [`Chronicle`] (UI-09). The
     /// rest (offers posted, requests posted, levies, single soldiers' ranks,
-    /// drifters) are feed-only.
+    /// drifters, and M4a's edicts set and tribute) are feed-only.
     pub fn chronicled(self) -> bool {
         !matches!(
             self,
@@ -185,14 +276,28 @@ impl SimEventKind {
                 | SimEventKind::VeteranRank
                 | SimEventKind::RivalLevy
                 | SimEventKind::DriftersJoined
+                | SimEventKind::EdictSet
+                | SimEventKind::Tribute
+        )
+    }
+
+    /// Chronicled kinds that are not news (M4a, ADR 0020): they go into the
+    /// [`Chronicle`] but don't reset the director's quiet clock or stop
+    /// fast-forward: `Forsaken`, `Built` and `StewardNamed`.
+    pub fn quiet(self) -> bool {
+        matches!(
+            self,
+            SimEventKind::Forsaken | SimEventKind::Built | SimEventKind::StewardNamed
         )
     }
 
     /// Whether this kind resets the pacing director's quiet clock
-    /// ([`Chronicle::last_notable`], GP-16): every chronicled kind, plus a
-    /// posted request (something for the player to do).
+    /// ([`Chronicle::last_notable`], GP-16): every chronicled kind that
+    /// isn't [`quiet`](Self::quiet), plus a posted request (something for
+    /// the player to do). No kind before M4a is quiet, so their
+    /// classification is unchanged.
     pub fn notable(self) -> bool {
-        self.chronicled() || self == SimEventKind::RequestPosted
+        (self.chronicled() && !self.quiet()) || self == SimEventKind::RequestPosted
     }
 }
 
@@ -232,6 +337,29 @@ pub enum Cause {
     Neglect,
     /// Fighting `faction` (a battle; its first foe by faction id).
     Fight { faction: FactionId },
+    /// A town sacked by the army of `captain`: a conquest at Aggressive
+    /// posture that plunders the storehouse (GP-32, M4a, tag 15).
+    Sack { captain: u64 },
+    /// A town that knelt to the army of `captain` after a demand (GP-32,
+    /// M4a, tag 16).
+    Submission { captain: u64 },
+    /// A town an agent turned, its gates opened (GP-32, M4a, tag 17).
+    Subversion,
+    /// A submitted town that defied its lord (GP-32, M4a, tag 18).
+    Defiance,
+    /// The fallout of taking `settlement` (a SpawnId): its broken men
+    /// (GP-33, M4a, tag 19).
+    Fallout { settlement: u64 },
+    /// The rival's reprisal for `settlement` (a SpawnId) (GP-33, M4a,
+    /// tag 20).
+    Reprisal { settlement: u64 },
+    /// By a settlement's edict, or its steward's order (GP-34, M4a,
+    /// tag 21).
+    Edict,
+    /// An agent caught at his work (GP-32, M4a, tag 22).
+    Caught,
+    /// A steward deposed when the town changed hands (GP-34, M4a, tag 23).
+    Deposed,
 }
 
 impl Cause {
@@ -253,6 +381,15 @@ impl Cause {
             Cause::Lapsed => 12,
             Cause::Neglect => 13,
             Cause::Fight { .. } => 14,
+            Cause::Sack { .. } => 15,
+            Cause::Submission { .. } => 16,
+            Cause::Subversion => 17,
+            Cause::Defiance => 18,
+            Cause::Fallout { .. } => 19,
+            Cause::Reprisal { .. } => 20,
+            Cause::Edict => 21,
+            Cause::Caught => 22,
+            Cause::Deposed => 23,
         }
     }
 
@@ -277,6 +414,15 @@ impl Cause {
             Cause::Lapsed => "left unanswered",
             Cause::Neglect => "neglect",
             Cause::Fight { .. } => "a battle",
+            Cause::Sack { .. } => "a sack",
+            Cause::Submission { .. } => "a submission",
+            Cause::Subversion => "an agent's work",
+            Cause::Defiance => "defiance",
+            Cause::Fallout { .. } => "the fallout of a taking",
+            Cause::Reprisal { .. } => "a reprisal",
+            Cause::Edict => "an edict",
+            Cause::Caught => "caught spying",
+            Cause::Deposed => "deposed",
         }
     }
 
@@ -284,9 +430,13 @@ impl Cause {
     pub fn payload(self) -> u64 {
         match self {
             Cause::Request { id } => id,
-            Cause::Conquest { captain } | Cause::Raid { captain } => captain,
+            Cause::Conquest { captain }
+            | Cause::Raid { captain }
+            | Cause::Sack { captain }
+            | Cause::Submission { captain } => captain,
             Cause::Boon { card } => card as u64,
             Cause::Death { faction } | Cause::Fight { faction } => faction.0 as u64,
+            Cause::Fallout { settlement } | Cause::Reprisal { settlement } => settlement,
             Cause::None
             | Cause::Player
             | Cause::Invitation
@@ -295,7 +445,12 @@ impl Cause {
             | Cause::Revolt
             | Cause::Hold
             | Cause::Lapsed
-            | Cause::Neglect => 0,
+            | Cause::Neglect
+            | Cause::Subversion
+            | Cause::Defiance
+            | Cause::Edict
+            | Cause::Caught
+            | Cause::Deposed => 0,
         }
     }
 }
@@ -745,7 +900,19 @@ mod tests {
             Cause::Lapsed,
             Cause::Neglect,
             Cause::Fight { faction: f },
+            Cause::Sack { captain: 6 },
+            Cause::Submission { captain: 7 },
+            Cause::Subversion,
+            Cause::Defiance,
+            Cause::Fallout { settlement: 8 },
+            Cause::Reprisal { settlement: 9 },
+            Cause::Edict,
+            Cause::Caught,
+            Cause::Deposed,
         ];
+        for (i, c) in causes.iter().enumerate() {
+            assert_eq!(c.tag() as usize, i, "tags are positions: {}", c.describe());
+        }
         let mut words: Vec<&str> = causes.iter().map(|c| c.describe()).collect();
         assert!(
             words
@@ -842,5 +1009,62 @@ mod tests {
         for (i, kind) in SimEventKind::ALL.iter().enumerate() {
             assert_eq!(*kind as usize, i, "{}", kind.name());
         }
+    }
+
+    /// M4a (ADR 0020): every kind's classification, as a table. The kinds
+    /// before M4a keep theirs; Forsaken, Built and StewardNamed are
+    /// chronicled but quiet; EdictSet and Tribute are feed only; the other
+    /// new kinds are notable.
+    #[test]
+    fn every_kind_is_classified() {
+        use SimEventKind as K;
+        // (kind, chronicled, quiet, notable)
+        let table = [
+            (K::RunStarted, true, false, true),
+            (K::OfferPosted, false, false, false),
+            (K::OfferChosen, true, false, true),
+            (K::MonumentTaken, true, false, true),
+            (K::MonumentLost, true, false, true),
+            (K::RequestPosted, false, false, true),
+            (K::RequestDone, true, false, true),
+            (K::RequestFailed, true, false, true),
+            (K::Conquest, true, false, true),
+            (K::Invited, true, false, true),
+            (K::Revolt, true, false, true),
+            (K::RankUp, true, false, true),
+            (K::TraitGained, true, false, true),
+            (K::VeteranRank, false, false, false),
+            (K::ChampionFell, true, false, true),
+            (K::Succession, true, false, true),
+            (K::RivalLevy, false, false, false),
+            (K::RivalRaid, true, false, true),
+            (K::RaidersArrived, true, false, true),
+            (K::Battle, true, false, true),
+            (K::DriftersJoined, false, false, false),
+            (K::RunEnded, true, false, true),
+            (K::Submitted, true, false, true),
+            (K::Defied, true, false, true),
+            (K::Subverted, true, false, true),
+            (K::BanditsRose, true, false, true),
+            (K::ReprisalVowed, true, false, true),
+            (K::RivalReprisal, true, false, true),
+            (K::AgentCaught, true, false, true),
+            (K::Forsaken, true, true, false),
+            (K::Built, true, true, false),
+            (K::StewardNamed, true, true, false),
+            (K::EdictSet, false, false, false),
+            (K::Tribute, false, false, false),
+        ];
+        assert_eq!(table.len(), SimEventKind::ALL.len());
+        for (i, (kind, chronicled, quiet, notable)) in table.into_iter().enumerate() {
+            assert_eq!(kind as usize, i, "{}", kind.name());
+            assert_eq!(kind.chronicled(), chronicled, "{}", kind.name());
+            assert_eq!(kind.quiet(), quiet, "{}", kind.name());
+            assert_eq!(kind.notable(), notable, "{}", kind.name());
+        }
+        let mut names: Vec<&str> = SimEventKind::ALL.iter().map(|k| k.name()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), SimEventKind::ALL.len(), "names are distinct");
     }
 }

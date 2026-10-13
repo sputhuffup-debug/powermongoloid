@@ -20,6 +20,12 @@
 //!   summed into [`SettlementLoyalty`] ([`loyalty`], [`AgentSet::Standing`]).
 //!   Deeds move goodwill through the [`GoodwillLedger`], applied with its
 //!   spread to nearby settlements first in [`AgentSet::Standing`] (GP-22).
+//! - Lordship (M4a, ADR 0020), run only: a settlement's itemised
+//!   [`LoyaltyTerms`] (the bias of its loyalty target) and dated
+//!   [`DeedLog`], an [`Agent`] living in a rival town, the [`edicts`]
+//!   ([`Edicts`], [`Rationed`], [`Mustered`], [`Assignment`]) and a
+//!   settlement's [`Specialty`]. Inserted by sim_military's `setup_run`
+//!   (or populate's run branch); absent elsewhere.
 //!
 //! Tuning lives in `villagers.ron` ([`Villagers`]). Never depends on
 //! rendering, windowing, audio or asset crates.
@@ -28,6 +34,7 @@ pub mod act;
 pub mod ai;
 pub mod components;
 pub mod data;
+pub mod edicts;
 pub mod food;
 pub mod loyalty;
 pub mod movement;
@@ -45,11 +52,15 @@ pub use components::{
     NextDecision, ScoredOption, Stage, Stance, Strike, Threat, Travel, TravelState, Villager,
 };
 pub use data::Villagers;
+pub use edicts::{Assignment, DialState, Edicts, Mustered, Rationed};
 pub use food::FoodSecurity;
-pub use loyalty::{Loyalty, SettlementLoyalty};
-pub use population::PopulationReport;
+pub use loyalty::{Loyalty, LoyaltyTerm, LoyaltyTerms, SettlementLoyalty};
 pub use population::civilian_stats;
-pub use standing::{Deed, Goodwill, GoodwillChange, GoodwillLedger, Owner, OwnerChange, set_owner};
+pub use population::{PopulationReport, Specialty};
+pub use standing::{
+    Agent, Deed, DeedEntry, DeedLog, Goodwill, GoodwillChange, GoodwillLedger, Owner, OwnerChange,
+    set_owner,
+};
 
 /// Villager systems, for ordering other crates' systems around them.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -133,6 +144,16 @@ impl Plugin for AgentsPlugin {
             .register_hashed::<Loyalty>()
             .register_hashed::<SettlementLoyalty>()
             .register_hashed_resource::<GoodwillLedger>()
+            // M4a (ADR 0020): Lordship's per-town and per-person state,
+            // present only in a run.
+            .register_hashed::<LoyaltyTerms>()
+            .register_hashed::<DeedLog>()
+            .register_hashed::<Agent>()
+            .register_hashed::<Edicts>()
+            .register_hashed::<Rationed>()
+            .register_hashed::<Mustered>()
+            .register_hashed::<Assignment>()
+            .register_hashed::<Specialty>()
             .exempt_from_hash::<DecisionTrace>(
                 "explains the last decision; derived, never read by the sim",
             )
@@ -156,6 +177,14 @@ impl Plugin for AgentsPlugin {
             .register_saved::<Loyalty>()
             .register_saved::<SettlementLoyalty>()
             .register_saved_resource::<GoodwillLedger>()
+            .register_saved::<LoyaltyTerms>()
+            .register_saved::<DeedLog>()
+            .register_saved::<Agent>()
+            .register_saved::<Edicts>()
+            .register_saved::<Rationed>()
+            .register_saved::<Mustered>()
+            .register_saved::<Assignment>()
+            .register_saved::<Specialty>()
             .register_saved::<DecisionTrace>();
     }
 

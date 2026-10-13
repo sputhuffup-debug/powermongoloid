@@ -80,6 +80,14 @@ fn hash_spec(spec: &OrderSpec, h: &mut StateHasher) {
             h.u8(10);
             h.u64(settlement);
         }
+        OrderSpec::Demand { settlement } => {
+            h.u8(11);
+            h.u64(settlement);
+        }
+        OrderSpec::Subvert { settlement } => {
+            h.u8(12);
+            h.u64(settlement);
+        }
     }
 }
 
@@ -97,6 +105,8 @@ pub fn describe(spec: &OrderSpec) -> String {
         OrderSpec::Garrison { .. } => "garrison".into(),
         OrderSpec::Forage { radius } => format!("forage within {radius}"),
         OrderSpec::Give { .. } => "give food".into(),
+        OrderSpec::Demand { .. } => "demand submission".into(),
+        OrderSpec::Subvert { .. } => "send an agent".into(),
     }
 }
 
@@ -285,6 +295,24 @@ impl StateHash for Raider {
             }
             None => h.u8(0),
         }
+    }
+}
+
+/// A band of broken men from a town the player took by force (GP-33, M4a
+/// step 6): on a RAIDERS captain beside its [`Raider`], passed to the heir
+/// with it. Hashed and saved.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Bandits {
+    /// The town (SpawnId) they came from.
+    pub home: u64,
+    /// Towns they have raided.
+    pub raids: u32,
+}
+
+impl StateHash for Bandits {
+    fn hash_state(&self, h: &mut StateHasher) {
+        h.u64(self.home);
+        h.u32(self.raids);
     }
 }
 

@@ -236,6 +236,11 @@ Runs: GP-21, GP-27 and SIM-34 (M4, see [M4_PLAN.md](../M4_PLAN.md)). The start, 
 | `goodwill_deeds.provoke` | The settlement is provoked into arms by the faction (once per provocation, not per tick) |
 | `goodwill_deeds.killing` | Each of the settlement's militia killed, toward the faction they fought |
 | `goodwill_deeds.request` | A request of the settlement answered (`requests`): toward the player, at the settlement that asked |
+| `goodwill_deeds.defended` | M4a (step 5, run only): an army fought near the town for it, at most once a town a day (`Deed::Defended`). Optional, like every M4a row: text without it reads the shipped value |
+| `goodwill_deeds.festival` | M4a (step 4): a feast its lord gave (`Deed::Festival`; word of it spreads) |
+| `goodwill_deeds.forsaken` | M4a (step 5): a sworn (invited) town's drive-off request left to lapse (`Deed::Forsaken`; spreads) |
+| `goodwill_deeds.threat` | M4a (step 5): a demand the town refused (`Deed::Threat`) |
+| `goodwill_deeds.plot` | M4a (step 7): an agent caught plotting there (`Deed::Plot`; spreads). `Gift`, `Influence` and `Whisper` deeds are computed where they happen (`court`, `influence`, `subvert`), and `Influence` and `Whisper` never spread (`Deed::spreads`) |
 | `forage` | Wild food (SIM-38, `sim_military::wild`). The map is cut into 16-tile patches (`WildFood`); a `Forage { radius }` order makes the band stand where it is and gather from the patches with any tile within the radius, in patch order, until its baggage holds army.ron `gather_target_days` of food or no wild food is left there. The food is the least nourishing food good (grain). Checked by `patches_deplete_and_regrow` (wild.rs) and `a_foraging_band_lives_off_the_land` (orders.rs) |
 | `forage.per_tile` | Food value a full patch holds per grass or forest tile (a 16 x 16 patch of grass: 2.56) |
 | `forage.regrow_per_day` | Fraction (0..1) of a patch's capacity that grows back each day (the progress driver, once the patches exist: built at run setup, elsewhere by the first `Forage` order) |
@@ -312,6 +317,11 @@ Runs: GP-21, GP-27 and SIM-34 (M4, see [M4_PLAN.md](../M4_PLAN.md)). The start, 
 | `rival[].raid_from_day` | The first raid leaves on this day (about day 10, minute 40 at 1x, on steady) |
 | `rival[].raid_every_days` | Days between raids after the first. Greater than 0 |
 | `rival[].raid_size` | People in a raiding band, its captain included (at least 2), but at most half the garrison's followers: the band is split off the garrison (`orders::split_army`, its share of the baggage by head count), so raids weaken the seat. A garrison of fewer than four followers sends nobody. The band (`RivalBand`, aggressive) goes for the nearest of the player's settlements (`Attack`) and monuments (stands at it), else hunts the player's nearest army, else goes home; it reports `RivalRaid` |
+| `rival[].reprisal_from_day` | M4a (GP-33, step 6): reprisals (`RivalState.reprisal`, vowed by `fallout::step`) launch from this day on. Optional, like every M4a field (text without it reads steady's value). Steady 6, chaotic 5, harsh 5 |
+| `rival[].reprisal_size` | M4a (step 6): people in a reprisal band, its captain included (at least 2), at most half the garrison; split off like a raid and counted in `RivalState.raids`. Steady 8, chaotic 10, harsh 12 |
+| `rival[].reprisal_min_garrison` | M4a (step 6): no reprisal leaves while the garrison has fewer followers than this |
+| `rival[].turned_mult` | M4a (step 7): a reprisal against a town turned by an agent (fragile) is this much larger |
+| `rival[].realm_floor` | M4a (GP-31, step 6): the seat's defence bonus is `defence_on(day) x strength x (realm_floor + (1 - realm_floor) x realm share)`, the realm share being the starting people (`RivalState.realm`, recorded at setup) of the settlements the rival still owns; exactly today's bonus at a full realm. In 0..1. Steady 0.4, chaotic 0.4, harsh 0.5 |
 | `chronicle` | How the chronicle words its entries (UI-09, [ADR 0017](../adr/0017-events-and-chronicle.md)): read only by `sim_military::chronicle::describe`, never by the simulation, so changing a phrase changes no outcome (only the hashed RON text). Guarded by `chronicle` ([tests/tests/chronicle.rs](../../tests/tests/chronicle.rs)), the chronicle.rs unit tests and `rejects_bad_data` |
 | `chronicle.causes` | One phrase per `Cause`, added after the sentence and a comma ("Day 3: Your warband took Saltholt Stones, by holding the ground."). Each must be non-empty, and may use only the placeholders `{faction}` (the event's faction), `{settlement}` (the settlement concerned: the asking village for a request), `{captain}` (who led a conquest or raid), `{boon}` (the boon's name) and `{foe}` (the killer's faction, or every faction a battle fought) |
 | `chronicle.causes.player` | The player chose it (a trait picked, the run abandoned) |
@@ -328,6 +338,122 @@ Runs: GP-21, GP-27 and SIM-34 (M4, see [M4_PLAN.md](../M4_PLAN.md)). The start, 
 | `chronicle.causes.lapsed` | A request nobody answered in time (`RequestFailed`) |
 | `chronicle.causes.neglect` | A monument left unwatched until it drifted back to nobody (`MonumentLost`) |
 | `chronicle.causes.fight` | A battle (`Battle`), against every faction it fought |
+| `chronicle.causes.sack` | M4a: a town sacked (`Conquest` with `Cause::Sack`); `{captain}` led it |
+| `chronicle.causes.submission` | M4a: a town that knelt to a demand (`Submitted`); `{captain}` led the army at the gate |
+| `chronicle.causes.subversion` | M4a: a town an agent turned (`Subverted`) |
+| `chronicle.causes.defiance` | M4a: a submitted town that defied its lord (`Defied`) |
+| `chronicle.causes.fallout` | M4a: broken men who took to the woods (`BanditsRose`); `{settlement}` is the town taken |
+| `chronicle.causes.reprisal` | M4a: the rival's reprisal band (`RivalReprisal`); `{settlement}` is the town it wants back |
+| `chronicle.causes.edict` | M4a: by edict or the steward's order (`EdictSet`, `Tribute`; feed only) |
+| `chronicle.causes.caught` | M4a: an agent caught (`AgentCaught`) |
+| `chronicle.causes.deposed` | M4a: a steward deposed when the town changed hands (`StewardNamed`) |
+
+### Lordship (M4a, lane A step 1)
+
+M4a "Lordship" ([LORDSHIP_DESIGN.md](../LORDSHIP_DESIGN.md) section 10, [ADR 0020](../adr/0020-lordship.md)). Every block is run-only and optional (`#[serde(default)]`: progression text without it reads the shipped values, checked by `lordship_defaults_match_the_shipped_data`), validated by `rejects_bad_lordship_data` (progression unit tests), and has a switch or a default that makes it a no-op, so scenario tests that guard M4 behaviour can opt out. Step 1 lands the data; the step named in each row brings it to life (until then the field is read by nothing but validation).
+
+| Field | Meaning |
+| --- | --- |
+| `influence` | GP-31 (step 3, `sim_military::influence`): held towns radiate influence by people and loyalty, falling off with distance; `influence::step` (progress slot 13) keeps each town's `Influence` (power, the player's and the rival's shares) |
+| `influence.enabled` | `false`: influence does nothing (scenario tests opt out) |
+| `influence.reach` | A held town's pull falls linearly to 0 at this many tiles (centre to centre). Above 0 |
+| `influence.people_unit` | Power is `sqrt(people / people_unit) x (loyalty_floor + (1 - loyalty_floor) x mean loyalty) x (1 - scar)`. Above 0 |
+| `influence.loyalty_floor` | See `people_unit` (0..1) |
+| `influence.seat_power` | The rival's seat projects this times its power |
+| `influence.independence` | A town's own independence in the shares: `player = I_P / (I_P + I_R + independence)`. Above 0 |
+| `influence.warm_above` | A town you don't own (not the seat) with a net (your share minus the rival's) above this warms toward you daily ... |
+| `influence.goodwill_per_day` | ... by this times the excess (`Deed::Influence`, no spread) ... |
+| `influence.goodwill_cap` | ... until its goodwill toward you reaches this (0..1) |
+| `influence.envoy_net` | An independent town at this net and liking you enough to invite sends envoys: an invitation with no captain near |
+| `influence.max_envoys_per_day` | Captain-free invitations a day, across the island |
+| `influence.contest` | The Contest loyalty term at an owned town: `-contest x (other side's share - owner's share)` where the other side leads |
+| `influence.heartland` | The Contest term deep in its owner's sphere |
+| `influence.warming`, `influence.sphere`, `influence.front` | The overlay's lines (nets): warming, the sphere's edge, the front where the shares meet (0..1) |
+| `influence.rank_people`, `influence.rank_points` | The champion gains `rank_points` per `rank_people` people held, once a day (open question 16; `rank_people` above 0) |
+| `influence.drifter_ease` | Drifters' goodwill line drops by this at towns inside your sphere (0..1) |
+| `tenure` | SIM-60 (step 1, `sim_military::tenure`): how a town was taken leaves its `Tenure`, written by `conquest::transfer_seeded` from the cause; its scar is the Resentment loyalty term (`tenure::step`, slot 14, rebuilds `LoyaltyTerms` hourly). Checked by `transfer_writes_tenure` and `scars_fade_and_write_the_resentment_term` (tenure.rs) |
+| `tenure.conquest_scar` | A conquest's scar before blood (0..1, at most `max_conquest_scar`) |
+| `tenure.sack_scar` | A sack's scar before blood (at most `max_sack_scar`) |
+| `tenure.scar_per_kill` | Scar per militiaman of the town killed since it last changed hands (`Tenure.blood`, counted in `combat::casualties`) |
+| `tenure.max_conquest_scar`, `tenure.max_sack_scar` | The caps of a conquest's and a sack's scar |
+| `tenure.subverted_scar` | A turned town's scar |
+| `tenure.scar_fade_per_day` | Scars fade this much at each day tick |
+| `tenure.bond`, `tenure.kept_bond`, `tenure.max_bond` | Step 5: an invited town's Bond term, plus `kept_bond` per defence kept, at most `max_bond` (-1..1) |
+| `tenure.forsaken_bond`, `tenure.forsaken_after` | Step 5: once forsaken `forsaken_after` times, the Bond term is `forsaken_bond` for good |
+| `demand` | GP-32 (step 5): `OrderSpec::Demand`, an hour's parley at the gate, then a kneeling or a refusal; a submitted town is watched by the hour and defies its lord after weak days (LORDSHIP_DESIGN section 5.2). Refused ("not yet") until step 5 |
+| `demand.radius` | Your strength counts your unrouted soldiers within this many tiles |
+| `demand.parley_hours` | The parley lasts this many game hours |
+| `demand.ratio` | It submits when your strength is at least this times its defence |
+| `demand.militia_weight`, `demand.garrison_weight` | Its defence: `militia_weight` per able adult plus `garrison_weight` per soldier of its owner's garrison |
+| `demand.armed_weight` | An armed soldier's strength (an unarmed one counts 1) |
+| `demand.seed` | Residents' loyalty after kneeling (0..1) |
+| `demand.awe` | The Awe loyalty term while the town is watched |
+| `demand.watch_radius`, `demand.hold_ratio` | Watched for the hour when your strength within `watch_radius` is at least `hold_ratio` times its defence ... |
+| `demand.watch_garrison` | ... or a town of yours within `watch_radius` has a garrison of at least this many ... |
+| `demand.watch_share` | ... or your other towns' influence share there is at least this (0..1) |
+| `demand.watch_hours` | A day with fewer watched hours than this is a weak day (at most 24) |
+| `demand.weak_days` | Weak days in a row before it defies you (`Cause::Defiance`) |
+| `demand.settle_days` | After this many days without defying it settles: no more watch, tribute lock or awe |
+| `demand.refuse_cooldown_days` | Days a refusal keeps the town from another demand (`Tenure.cool_until`) |
+| `court` | GP-32 (step 5): `Give` at a town you don't hold posts `Deed::Gift` |
+| `court.gift_per_day_of_need`, `court.max_gift` | A gift's goodwill: this per day of the town's need given, at most `max_gift` (0..1), at most once a town a day |
+| `court.hungry_mult` | ... times this when the town is hungry |
+| `subvert` | GP-32 (step 7): `OrderSpec::Subvert`, an agent (`sim_agents::Agent`) in a rival town (LORDSHIP_DESIGN section 5.4). Refused ("not yet") until step 7 |
+| `subvert.bribe_food`, `subvert.bribe_goods` | The bribe: this much food value, or this many weapons or tools |
+| `subvert.max_agents` | Agents alive at most |
+| `subvert.whisper_rival`, `subvert.whisper_you` | An agent's daily `Deed::Whisper` toward the rival and toward you (no spread) |
+| `subvert.hungry_mult` | Whispers toward the rival times this in a hungry or levied town |
+| `subvert.stir_per_day`, `subvert.max_stir` | `Tenure.stir` grows this much a day, at most `max_stir` (the Stirred term) |
+| `subvert.suspicion_base`, `subvert.suspicion_loyalty`, `subvert.suspicion_per_10_guards`, `subvert.guard_radius` | Suspicion a day: `suspicion_base + suspicion_loyalty x loyalty + suspicion_per_10_guards` per 10 rival soldiers within `guard_radius`; caught at 1.0 |
+| `subvert.purse_relief` | A second purse (a `Give` at the town) takes this much suspicion off, once a day |
+| `subvert.turn_loyalty`, `subvert.turn_goodwill` | The town opens its gates below this mean loyalty with at least this goodwill toward you |
+| `subvert.seed` | Residents' loyalty after turning (0..1) |
+| `subvert.fragile_days` | Days a turned town stays the reprisal's favourite |
+| `fallout` | GP-33 (step 6, `sim_military::fallout`): bands of a taken town's own villagers (`Fallout`, `Bandits`, slot 16) and the rival's vows |
+| `fallout.enabled` | `false`: no bandits and no vows (scenario tests opt out) |
+| `fallout.min_people` | Towns smaller than this raise no band |
+| `fallout.per_people`, `fallout.per_kill` | Men: `per_people x people + per_kill x blood` ... |
+| `fallout.sack_mult` | ... times this for a sack ... |
+| `fallout.haste_days`, `fallout.haste_mult` | ... times `haste_mult` if your previous violent take was under `haste_days` ago |
+| `fallout.min_band`, `fallout.max_men` | Under `min_band` men, no band; at most `max_men` (`min_band` <= `max_men`) |
+| `fallout.max_bands` | Bandit bands alive at most; a waiting band's town broods |
+| `fallout.brood_scar` | A brooding town's scar deepens by this |
+| `fallout.delay_hours` | Game hours between the taking and the rising |
+| `fallout.food_days` | Days of food a band rises with |
+| `fallout.weights` (`rival`, `player`, `independent`) | Bandits' target weights by owner |
+| `fallout.turn_after_raids` | After this many raids the rival's weight drops to the player's |
+| `fallout.distance_scale`, `fallout.garrison_scale` | A target's score: `weight / ((1 + d / distance_scale) x (1 + garrison / garrison_scale) x (1 + your share))`. Both above 0 |
+| `fallout.shadow` | Taking a town where the rival's share is at least this brings a vow (0..1) |
+| `fallout.vow_delay_hours` | A vow comes due this many game hours after it is made |
+| `fallout.vow_cooldown_days` | No new vow within this many days of the last (`RivalState.last_reprisal`) |
+| `edicts` | GP-34 (step 4): the three dials of `sim_agents::Edicts` (Work, Dues, Table), set with `CommandKind::Govern` (refused "not yet" until step 4) or a steward's habit; every default is an exact no-op |
+| `edicts.lock_days` | A dial locks for this many days from the hour it starts |
+| `edicts.reach` | Tithes and levies go to owner captains within this many tiles |
+| `edicts.moves_share`, `edicts.min_moves` | A wave moves this share of the workers, at least `min_moves` |
+| `edicts.carter_floor` | Fields keeps carters above this share of the workers |
+| `edicts.fields_cap`, `edicts.forge_cap` | Fields moves workers to food up to this share; Forge to the forge up to this share |
+| `edicts.walls_carters` | Walls adds up to this many carters |
+| `edicts.walls_build`, `edicts.walls_defence`, `edicts.walls_threat` | Walls: sites build this many times as fast, the militia's defence gains this, the threat radius is multiplied by this |
+| `edicts.tithe` (`keep_days`, `term`) | Tithe: the town keeps `keep_days` of its need; its Dues term |
+| `edicts.levy` (`per_day`, `cap`, `term`, `harsh_term`) | Levy: musters `per_day` of the people a wave, up to `cap`; its Dues term (`harsh_term` at a conquered or sacked town) |
+| `edicts.ration` (`hunger`, `work`, `term`) | Ration: hunger and the daily need times `hunger`, work cycles times `work`; its Table term |
+| `edicts.feast` (`min_food_days`, `food_days`, `gather_hours`, `work`, `term`, `term_days`, `cooldown_days`) | Feast: needs `min_food_days` of food, eats `food_days` of the town's need, gathers on the green for `gather_hours` (work scores times `work`); then, if fed, a `Deed::Festival` (`goodwill_deeds.festival`), a Table term of `term` for `term_days`, and `cooldown_days` before the next |
+| `stewards` | GP-34 (step 9): every owned town's steward (`sim_military::Steward`), a person with habits |
+| `stewards.habits` | `false`: stewards set no dial (scenario tests opt out) |
+| `stewards.traits[].name` | The trait's name (distinct) |
+| `stewards.traits[].from` | Who has it: `Veteran` (a Veteran or Elite soldier), `Trades([..])` (was one of these trades: `Veteran.trade` for a follower), `Resident` |
+| `stewards.traits[].habits` | `(dial, setting, condition)` rows applied in table order at dawn to the dials the player hasn't set; the setting must belong to the dial; conditions `Always`, `PeopleAtLeast(n)`, `FoodDaysUnder(d)`, `FoodDaysAtLeast(d)`, `SiteOpenOrVow` |
+| `stewards.traits[].never` | `(dial, setting)` he never chooses on his own (Native's veto beats any habit) |
+| `stewards.traits[].lock_days` | Optional: his dials lock this many days instead of `edicts.lock_days` |
+| `stewards.traits[].term` | Optional: the Steward loyalty term he brings (-1..1) |
+| `market` | SIM-62 (step 9): a Market town you own posts a `Hire` offer |
+| `market.hire_days` | Every this many days (above 0) |
+| `market.min_men`, `market.max_men`, `market.people_per_man` | A band of `people / people_per_man` men, at least `min_men`, at most `max_men` |
+| `buildings` | SIM-63 (step 8): ordered buildings (`GovernAct::Build`, `sim_economy::Construction`) |
+| `buildings.max_per_town` | Buildings a town may be ordered to build per run |
+| `buildings.granary_keep_days` | A granary keeps this many days of the town's need from plunder, seizure and the tithe |
+| `buildings.palisade_defence`, `buildings.palisade_hold`, `buildings.palisade_demand` | A palisade: the militia's defence gains this, an Attack's hold and a Demand's defence are multiplied by these |
+| `buildings.watchtower_threat` | A watchtower multiplies the town's threat radius by this |
 
 ## director.ron (`sim_military::DirectorData`)
 The pacing director (GP-16, `sim_military::director`, run only). Once a game hour (100 ticks; slot 12 of the progress driver) it measures the player's tension: `threat x weights.threat + hunger x weights.hunger + fights x weights.fights - quiet x weights.quiet`, where threat is 1 with an army at war with the player within army.ron `threat.radius` of one of the player's armies (else the highest `Threat` level of the player's settlements), hunger is 1 with no food in the player's baggage and 0 at two days or more, fights is 1 while one of the player's armies is in battle, and quiet is the time since the last notable event (`Chronicle::last_notable`: every chronicled event and a posted request) as a share of `quiet_limit_hours`, each 0..1. It brings a band of raiders (faction `RAIDERS`, a `Raider` with `target`, aggressive) when the next hourly check would pass `quiet_limit_hours` without a notable event, when no request, raid or fight has come by `first_event_within_hours`, or when tension is below 0, `spacing_hours` have passed since its last band and fewer than `max_bands` raider bands roam. The band appears `spawn_distance` tiles from the populated settlement nearest the champion that the player or nobody owns (the player's first; outside the rival's region; stream `sim_military::director` at the tick), raids it first (on arrival the village asks the player to drive it off), then hunts only the player's armies no bigger than itself and raids only the player's settlements; with neither to go for after its first raid, it lingers `band_linger_hours` by that village, then withdraws beyond army.ron `threat.radius` of every settlement (`raiders::think`, ADR 0018). Each band reports `RaidersArrived`. The run's `RunConfig.difficulty` picks the personality. Guarded by `director` ([tests/tests/director.rs](../../tests/tests/director.rs)) and the director.rs unit tests.

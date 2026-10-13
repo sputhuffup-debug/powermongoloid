@@ -1,0 +1,42 @@
+day 0 Work    | idle=2370 eat=166 fetch=338 work=1485 haul=284 flee=86 hide=230 fight=1 | asleep@home 0 | work 1769/1978 | hunger 0.17 (max 0.57) rest 0.68 | food days [2.4 0.6 0.9 0.7 0.6 0.7 0.7 0.8 0.7 0.9]
+    Your warband captain 6584 (neutral) at (564,480) goal None order none | 50 men, 0 fighting, 0 routed, max spread 10 | morale 1.00/0.90 hunger 0.28 | food 2.4 days
+    Raiders captain 6635 (aggressive) at (301,1047) goal Some((546, 497)) order move to (546, 497) | 30 men, 0 fighting, 0 routed, max spread 16 | morale 1.00/0.90 hunger 0.15 | food 3.7 days
+    Your warband captain 6666 (neutral) at (542,529) goal Some((432, 785)) order move to (432, 785) | 1000 men, 0 fighting, 0 routed, max spread 55 | morale 1.00/0.85 hunger 0.24 | food 4.8 days
+    Raiders captain 7667 (neutral) at (310,1012) goal Some((432, 785)) order move to (432, 785) | 1000 men, 0 fighting, 0 routed, max spread 58 | morale 1.00/0.86 hunger 0.25 | food 4.8 days
+    Raiders: FactionStats { recruited: 0, deserted: 0, lost: 0, kills: 40, villagers_killed: 39, seized: 83.6, bought: 0.0, given: 0.0, provocations: 1, starvation_damage: 0.0, first_desertion: None, first_starvation: None, rejected_commands: 0, conquests: 0, supplied: 0.0, donated: 0.0, foraged: 0.0 }
+day 0 Work    | idle=2158 eat=486 fetch=126 work=1417 haul=284 hide=447 fight=40 | asleep@home 0 | work 1701/1977 | hunger 0.16 (max 0.76) rest 0.45 | food days [0.8 1.9 2.0 1.9 2.1 1.8 1.7 1.9 2.1 1.7]
+    Your warband captain 6584 (neutral) at (564,480) goal None order none | 50 men, 0 fighting, 0 routed, max spread 10 | morale 1.00/0.90 hunger 0.26 | food 2.1 days
+    Raiders captain 6635 (aggressive) at (301,946) goal Some((518, 553)) order move to (518, 553) | 30 men, 0 fighting, 0 routed, max spread 15 | morale 1.00/0.90 hunger 0.26 | food 3.6 days
+    Your warband captain 6666 (neutral) at (488,568) goal Some((432, 785)) order move to (432, 785) | 1000 men, 0 fighting, 0 routed, max spread 61 | morale 1.00/0.86 hunger 0.28 | food 4.6 days
+    Raiders captain 7667 (neutral) at (357,965) goal Some((432, 785)) order move to (432, 785) | 1000 men, 0 fighting, 0 routed, max spread 46 | morale 1.00/0.88 hunger 0.28 | food 4.6 days
+    Raiders: FactionStats { recruited: 0, deserted: 0, lost: 0, kills: 42, villagers_killed: 41, seized: 83.6, bought: 0.0, given: 0.0, provocations: 1, starvation_damage: 0.0, first_desertion: None, first_starvation: None, rejected_commands: 0, conquests: 0, supplied: 0.0, donated: 0.0, foraged: 0.0 }
+day 0 Night   | idle=398 eat=121 fetch=29 sleep=3650 home=408 hide=352 | asleep@home 3628 | work 0/1977 | hunger 0.12 (max 0.57) rest 0.55 | food days [0.2 1.2 1.6 1.2 0.8 1.4 1.2 1.2 1.6 1.4]
+    Your warband captain 6584 (neutral) at (564,480) goal None order none | 50 men, 0 fighting, 0 routed, max spread 10 | morale 1.00/0.90 hunger 0.25 | food 1.8 days
+    Raiders captain 6635 (aggressive) at (297,877) goal Some((467, 588)) order move to (467, 588) | 30 men, 0 fighting, 0 routed, max spread 10 | morale 1.00/0.90 hunger 0.12 | food 3.2 days
+    Your warband captain 6666 (neutral) at (448,622) goal Some((432, 785)) order move to (432, 785) | 1000 men, 0 fighting, 0 routed, max spread 71 | morale 1.00/0.86 hunger 0.28 | food 4.3 days
+    Raiders captain 7667 (neutral) at (424,934) goal Some((432, 785)) order move to (432, 785) | 1000 men, 0 fighting, 0 routed, max spread 43 | morale 1.00/0.88 hunger 0.27 | food 4.3 days
+    Raiders: FactionStats { recruited: 0, deserted: 0, lost: 0, kills: 42, villagers_killed: 41, seized: 83.6, bought: 0.0, given: 0.0, provocations: 1, starvation_damage: 0.0, first_desertion: None, first_starvation: None, rejected_commands: 0, conquests: 0, supplied: 0.0, donated: 0.0, foraged: 0.0 }
+day 1 Morning | eat=61 sleep=4897 | asleep@home 4897 | work 0/1977 | hunger 0.29 (max 0.78) rest 0.99 | food days [0.2 1.2 1.5 1.2 0.7 1.3 1.1 1.1 1.5 1.2]
+    Your warband captain 6584 (neutral) at (564,480) goal None order none | 50 men, 0 fighting, 0 routed, max spread 10 | morale 1.00/0.90 hunger 0.18 | food 1.5 days
+    Raiders captain 6635 (aggressive) at (297,811) goal Some((441, 663)) order move to (441, 663) | 30 men, 0 fighting, 0 routed, max spread 12 | morale 1.00/0.90 hunger 0.31 | food 3.1 days
+    Your warband captain 6666 (neutral) at (427,696) goal Some((432, 785)) order move to (432, 785) | 1000 men, 0 fighting, 0 routed, max spread 61 | morale 1.00/0.87 hunger 0.20 | food 4.0 days
+    Raiders captain 7667 (neutral) at (447,882) goal Some((432, 785)) order move to (432, 785) | 1000 men, 0 fighting, 0 routed, max spread 48 | morale 1.00/0.89 hunger 0.20 | food 4.0 days
+    Raiders: FactionStats { recruited: 0, deserted: 0, lost: 0, kills: 42, villagers_killed: 41, seized: 83.6, bought: 0.0, given: 0.0, provocations: 1, starvation_damage: 0.0, first_desertion: None, first_starvation: None, rejected_commands: 0, conquests: 0, supplied: 0.0, donated: 0.0, foraged: 0.0 }
+day 1 Work    | idle=2345 eat=442 fetch=168 work=1614 haul=318 hide=71 | asleep@home 0 | work 1932/1977 | hunger 0.18 (max 0.84) rest 0.76 | food days [0.2 1.1 1.4 1.3 0.9 1.2 1.1 0.9 1.6 1.1]
+    Your warband captain 6584 (neutral) at (564,480) goal None order none | 50 men, 0 fighting, 0 routed, max spread 10 | morale 1.00/0.90 hunger 0.28 | food 1.4 days
+    Raiders captain 6635 (aggressive) at (334,771) goal Some((402, 717)) order move to (402, 717) | 30 men, 0 fighting, 0 routed, max spread 14 | morale 1.00/0.90 hunger 0.13 | food 2.7 days
+    Your warband captain 6666 (neutral) at (404,742) goal Some((432, 785)) order move to (432, 785) | 1000 men, 0 fighting, 0 routed, max spread 40 | morale 1.00/0.89 hunger 0.24 | food 3.8 days
+    Raiders captain 7667 (neutral) at (452,810) goal Some((432, 785)) order move to (432, 785) | 1000 men, 0 fighting, 0 routed, max spread 63 | morale 1.00/0.89 hunger 0.25 | food 3.8 days
+    Raiders: FactionStats { recruited: 0, deserted: 0, lost: 0, kills: 42, villagers_killed: 41, seized: 83.6, bought: 0.0, given: 0.0, provocations: 1, starvation_damage: 0.0, first_desertion: None, first_starvation: None, rejected_commands: 0, conquests: 0, supplied: 0.0, donated: 0.0, foraged: 0.0 }
+cycles by occupation: {Farmer: 3090, Fisher: 317, Shepherd: 401, Woodcutter: 309, Miner: 8, Smith: 136, Baker: 663, Carter: 2233, Idle: 0}
+ever ate: 4958/4958
+  Dunworth       pop  315 food  0.15 days hunger 0.21 store {"ore": 139} waiting {"bread": 15, "fish": 18, "grain": 453, "mutton": 14, "ore": 195}
+  Daleworth      pop  606 food  1.05 days hunger 0.18 store {"bread": 7, "ore": 256, "wood": 507} waiting {"bread": 88, "grain": 548, "mutton": 66, "ore": 334, "wood": 172}
+  Oakworth       pop  357 food  1.44 days hunger 0.17 store {"bread": 54, "grain": 29, "ore": 125, "wood": 323} waiting {"bread": 37, "grain": 257, "mutton": 10, "ore": 235, "wood": 118}
+  Sedgestow      pop  747 food  1.31 days hunger 0.17 store {"bread": 92, "grain": 480, "ore": 328, "wood": 576} waiting {"bread": 131, "grain": 520, "mutton": 106, "ore": 395, "wood": 256}
+  Millfield      pop  419 food  0.94 days hunger 0.19 store {"bread": 1, "grain": 369, "ore": 158, "wood": 343} waiting {"bread": 45, "grain": 324, "mutton": 6, "ore": 257, "wood": 124}
+  Woldmoor       pop  668 food  1.24 days hunger 0.19 store {"grain": 309, "ore": 412, "wood": 516} waiting {"bread": 174, "grain": 234, "mutton": 104, "ore": 224, "wood": 287}
+  Gorsecross     pop  620 food  1.12 days hunger 0.18 store {"fish": 34, "grain": 228, "ore": 447, "wood": 361} waiting {"bread": 190, "fish": 52, "grain": 412, "mutton": 87, "ore": 154, "wood": 225}
+  Bramfield      pop  327 food  0.92 days hunger 0.18 store {"ore": 226, "wood": 332} waiting {"bread": 83, "fish": 24, "grain": 407, "mutton": 21, "ore": 91, "wood": 56}
+  Emberwick      pop  278 food  1.62 days hunger 0.19 store {"bread": 64, "ore": 86, "wood": 270} waiting {"bread": 36, "fish": 12, "grain": 180, "mutton": 19, "ore": 191, "wood": 67}
+  Millham        pop  621 food  1.11 days hunger 0.17 store {"grain": 29, "ore": 262, "wood": 565} waiting {"bread": 143, "fish": 91, "grain": 419, "mutton": 64, "ore": 328, "wood": 146}

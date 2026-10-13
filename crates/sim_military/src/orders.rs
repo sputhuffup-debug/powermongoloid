@@ -149,6 +149,8 @@ fn validate_spec(
         OrderSpec::Give { settlement } => find_settlement(world, settlement)
             .map(|_| ())
             .ok_or("no such settlement"),
+        // GP-32 (M4a): the parley lands in step 5, the agent in step 7.
+        OrderSpec::Demand { .. } | OrderSpec::Subvert { .. } => Err("not yet"),
     }
 }
 
@@ -214,6 +216,9 @@ fn apply(world: &mut World, cmd: &SimCommand) -> Result<(), &'static str> {
         }
         // GP-21: the player gives up the run.
         CommandKind::AbandonRun => crate::progression::abandon(world, cmd.issuer),
+        // GP-34 (M4a): dials land in step 4, building orders in step 8 and
+        // stewards in step 9 (lane B writes this arm).
+        CommandKind::Govern { .. } => Err("not yet"),
     }
 }
 
@@ -1103,8 +1108,13 @@ pub fn enlist_into(world: &mut World, villager: Entity, captain: Entity) -> bool
 }
 
 /// Turns a villager into a follower. It keeps its identity and home, so its
-/// village notices the loss; it drops its job.
+/// village notices the loss; it drops its job. Its [`Veteran`] remembers
+/// the trade it had (M4a, `Veteran::trade`, in every preset; read only for
+/// stewards).
+///
+/// [`Veteran`]: crate::veterans::Veteran
 pub fn enlist(world: &mut World, e: Entity, captain: Entity, faction: FactionId, army: &Army) {
+    let trade = world.get::<Occupation>(e).copied();
     if let Some(mut job) = world.get_mut::<Employment>(e)
         && let Some(wp) = job.workplace.take()
         && let Some(mut w) = world.get_mut::<Workplace>(wp)
@@ -1145,8 +1155,11 @@ pub fn enlist(world: &mut World, e: Entity, captain: Entity, faction: FactionId,
             deserting: false,
         },
         Equipment::default(),
-        // SIM-36: a recruit's service starts now.
-        crate::veterans::Veteran::default(),
+        // SIM-36: a recruit's service starts now; M4a: with its trade.
+        crate::veterans::Veteran {
+            trade,
+            ..Default::default()
+        },
     ));
 }
 
@@ -1283,6 +1296,9 @@ fn step_order(world: &mut World, e: Entity, tick: u64) {
                 None => done = true,
             }
         }
+        // GP-32 (M4a): refused by `validate_spec` until steps 5 and 7, so
+        // never queued; dropped if one ever is.
+        OrderSpec::Demand { .. } | OrderSpec::Subvert { .. } => done = true,
         OrderSpec::Recruit { settlement, .. }
         | OrderSpec::GatherFood { settlement }
         | OrderSpec::Equip { settlement }

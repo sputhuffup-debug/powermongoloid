@@ -46,7 +46,11 @@ pub const SAVE_MAGIC: [u8; 4] = *b"WLSV";
 
 /// Bump when the payload layout or the meaning of a saved field changes.
 /// Saves of another format are refused (no migration in M4).
-pub const SAVE_FORMAT: u32 = 1;
+/// 2 (M4a, ADR 0020): Lordship's skeleton (tenure, loyalty terms, the deed
+/// log, edicts, influence, fallout, stewards, agents, sites, the rival's
+/// realm and vows, `Veteran.trade`). Bumped once for all of M4a: a later
+/// M4a change to one of these layouts amends it in place.
+pub const SAVE_FORMAT: u32 = 2;
 
 /// zstd level: fast, and saves are small anyway.
 const ZSTD_LEVEL: i32 = 3;
@@ -1189,6 +1193,34 @@ mod tests {
             load_world(fewer.world_mut(), &bytes),
             Err(SaveError::Mismatch(_))
         ));
+    }
+
+    /// M4a: a save of format 1 (the M4 build) is refused with the
+    /// existing message, before anything changes.
+    #[test]
+    fn a_format_1_save_is_refused() {
+        assert_eq!(SAVE_FORMAT, 2, "M4a bumps the format once, to 2");
+        let mut a = app();
+        a.step(1);
+        let mut bytes = save_world(a.world_mut());
+        // The header is postcard right after the magic: `[magic; 4]` as four
+        // bytes, then the format as a varint (1 and 2 are one byte each).
+        assert_eq!(bytes[4], SAVE_FORMAT as u8);
+        bytes[4] = 1;
+        let hash = compute_state_hash(a.world_mut());
+        let err = load_world(a.world_mut(), &bytes).unwrap_err();
+        assert_eq!(
+            err,
+            SaveError::Format {
+                found: 1,
+                expected: 2
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "save format 1 is not supported (expected 2)"
+        );
+        assert_eq!(compute_state_hash(a.world_mut()), hash, "nothing changed");
     }
 
     #[test]

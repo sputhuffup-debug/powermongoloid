@@ -8,7 +8,9 @@ use crate::run::RunConfig;
 
 /// Bump when the replay format or the meaning of a command changes.
 /// 5 (M4): the `run` header field, and the run gate and new commands.
-pub const REPLAY_FORMAT: u32 = 5;
+/// 6 (M4a, ADR 0020): `CommandKind::Govern` and the `Demand` and `Subvert`
+/// orders. Bumped once for all of M4a.
+pub const REPLAY_FORMAT: u32 = 6;
 
 /// The state hash at a given tick (after `tick` ticks have run).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -246,6 +246,11 @@ pub(crate) fn casualties(world: &mut World) {
             // GP-22: the village remembers who its dead fought.
             if let Some(home) = world.get::<Villager>(e).map(|v| v.settlement) {
                 crate::orders::goodwill_deed(world, home, against, Deed::Killing);
+                // SIM-60 (M4a, run only: `Tenure` exists only in a run): the
+                // blood spilt there, which the next taking's scar reads.
+                if let Some(mut t) = world.get_mut::<crate::tenure::Tenure>(home) {
+                    t.blood = t.blood.saturating_add(1);
+                }
             }
         }
         let enlisted = world.get::<Enlisted>(e).is_some();

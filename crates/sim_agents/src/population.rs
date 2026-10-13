@@ -46,6 +46,56 @@ pub struct PopulationReport {
     pub reassigned: u32,
 }
 
+/// What a run settlement's site makes it (SIM-62, M4a; LORDSHIP_DESIGN
+/// section 8.4): read from its site at populate in a run (M4a step 9) and
+/// shown on its label and panel. Append only: saves store the position.
+#[derive(
+    Component,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub enum Specialty {
+    /// Upland ore: miners and smiths; arms.
+    Mining,
+    /// A crossroads: carters and bakers; hired men.
+    Market,
+    /// Forest edge: woodcutters; cheap works.
+    Timber,
+    /// Coast: fishers; a larder.
+    Fishing,
+    /// Everything else: farmers and bakers; a larder.
+    Farming,
+}
+
+impl Specialty {
+    /// Display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Specialty::Mining => "Mining",
+            Specialty::Market => "Market",
+            Specialty::Timber => "Timber",
+            Specialty::Fishing => "Fishing",
+            Specialty::Farming => "Farming",
+        }
+    }
+}
+
+impl sim_core::StateHash for Specialty {
+    fn hash_state(&self, h: &mut sim_core::StateHasher) {
+        h.u8(*self as u8);
+    }
+}
+
+sim_core::save_serde!(Specialty);
+
 struct Member {
     age_days: u16,
     working: bool,

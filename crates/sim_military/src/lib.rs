@@ -72,6 +72,14 @@
 //! title to a captain when it falls ([`progression::champion`], SIM-34,
 //! SIM-35).
 //!
+//! Lordship (M4a, ADR 0020), run only: every town keeps a [`tenure`] (how
+//! it was taken, its scar; `transfer_seeded` writes it from the cause) and
+//! itemised loyalty terms; [`influence`] radiates from held towns;
+//! [`govern`] runs edicts, stewards and building orders; [`fallout`] raises
+//! bandits and the rival's reprisals. Four progress slots (13
+//! `influence::step`, 14 `tenure::step`, 15 `govern::step`, 16
+//! `fallout::step`) follow the director.
+//!
 //! Systems go in [`sim_core::SimSet`]s. This crate never depends on
 //! rendering, windowing, audio or asset crates.
 
@@ -82,7 +90,10 @@ pub mod conquest;
 pub mod data;
 pub mod director;
 pub mod drifters;
+pub mod fallout;
+pub mod govern;
 pub mod index;
+pub mod influence;
 pub mod invitations;
 pub mod monuments;
 pub mod orders;
@@ -94,6 +105,7 @@ mod save;
 pub mod sellswords;
 pub mod soldiers;
 pub mod spawn;
+pub mod tenure;
 pub mod threat;
 pub mod upkeep;
 pub mod veterans;
@@ -109,13 +121,16 @@ pub use combat::Casualties;
 // `chronicle::describe` stays in its module: the root's `describe` words orders.
 pub use chronicle::{CausePhrases, ChronicleData, RunSummary, describe_entries, run_summary};
 pub use components::{
-    ArmyStats, Captain, Equipment, FactionStats, Factions, Follower, MilitaryLog, Order, Raider,
-    Soldier, describe,
+    ArmyStats, Bandits, Captain, Equipment, FactionStats, Factions, Follower, MilitaryLog, Order,
+    Raider, Soldier, describe,
 };
-pub use conquest::{militia_or_foes_near, owner_of, transfer, transfer_seeded};
+pub use conquest::{militia_or_foes_near, owner_of, taking_kind, transfer, transfer_seeded};
 pub use data::{Army, RankGain, VeteranData};
 pub use director::{Director, DirectorData, Personality, RaiderBandData, TensionWeights};
+pub use fallout::{Fallout, FalloutData, PendingBand};
+pub use govern::{EdictsData, Steward, StewardsData};
 pub use index::{ArmyIndex, ArmyInfo, FighterGrid, Side};
+pub use influence::{Influence, InfluenceData};
 pub use monuments::{Guard, Holder, NoUpkeep};
 pub use orders::{
     CommandInbox, arm_followers, enlist, enlist_into, find_settlement, forages_below, provoke,
@@ -128,9 +143,10 @@ pub use progression::{
     rebuild_modifiers, report_start, setup_run,
 };
 pub use requests::{Request, RequestBoard, RequestKind, Reward};
-pub use rival::{RivalBand, RivalData, RivalState};
+pub use rival::{RivalBand, RivalData, RivalState, Vow};
 pub use soldiers::slot_offset;
 pub use spawn::{ArmySpec, Skirmish, nearest_passable, setup_battle, setup_skirmish, spawn_army};
+pub use tenure::{TakenBy, Taking, Tenure, TenureData};
 pub use veterans::Veteran;
 pub use wild::WildFood;
 
@@ -154,8 +170,9 @@ pub enum MilitarySet {
     /// Hunger, morale, desertion (Needs).
     Upkeep,
     /// The hourly progress driver: battles, monuments, revolts and the
-    /// run's settlement-level steps, the rival's clock and the pacing
-    /// director (Needs, after `Upkeep` and `AgentSet::Standing`).
+    /// run's settlement-level steps, the rival's clock, the pacing
+    /// director and Lordship's slots 13-16 (influence, tenure, govern,
+    /// fallout) (Needs, after `Upkeep` and `AgentSet::Standing`).
     Progress,
 }
 
@@ -182,6 +199,7 @@ impl Plugin for MilitaryPlugin {
             .init_resource::<Director>()
             .init_resource::<WildFood>()
             .init_resource::<RequestBoard>()
+            .init_resource::<Fallout>()
             .init_resource::<Factions>()
             .init_resource::<ArmyStats>()
             .init_resource::<MilitaryLog>()
@@ -290,6 +308,13 @@ impl Plugin for MilitaryPlugin {
             .register_hashed::<RivalBand>()
             .register_hashed_resource::<DirectorData>()
             .register_hashed_resource::<Director>()
+            // M4a (ADR 0020): Lordship's state (run only, but `Fallout` is
+            // always present, empty outside a run).
+            .register_hashed::<Tenure>()
+            .register_hashed::<Influence>()
+            .register_hashed_resource::<Fallout>()
+            .register_hashed::<Bandits>()
+            .register_hashed::<Steward>()
             .exempt_from_hash::<MilitaryLog>("UI history; its effects are in the hashed state")
             .exempt_from_hash::<CommandInbox>("always empty between ticks")
             .exempt_from_hash::<ArmyIndex>("rebuilt from hashed state every tick")

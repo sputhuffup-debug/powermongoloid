@@ -34,7 +34,9 @@ use sim_core::{
 use sim_economy::{SettlementEconomy, Stockpile};
 use sim_headless::{HeadlessConfig, Threading, headless_app};
 use sim_military::progression::Effect;
-use sim_military::{Army, ArmySpec, ArmyStats, Captain, Progression, RunProgress, spawn_army};
+use sim_military::{
+    Army, ArmySpec, ArmyStats, Captain, Progression, RunProgress, TakenBy, Tenure, spawn_army,
+};
 use sim_world::{Settlement, SettlementSize, SizeTier};
 
 /// The run whose start (seed 42: the "Outlaws" band of ten, a hamlet of
@@ -321,6 +323,29 @@ fn conquest_tick_and_seed(app: &mut App, s: Entity) -> (u64, f32) {
 fn a_fed_village_under_a_passive_garrison_grows_loyal() {
     let (mut app, s) = conquered(SEED);
     let (_, seed) = conquest_tick_and_seed(&mut app, s);
+    // M4a (SIM-60): the taking left its tenure: conquered by the player,
+    // scarred by the militia it killed (before any day tick fades it), and
+    // the Resentment term will carry the scar from the next hourly step.
+    let killed = app
+        .world()
+        .resource::<ArmyStats>()
+        .get(FactionId::PLAYER)
+        .villagers_killed;
+    let tenure = app
+        .world()
+        .get::<Tenure>(s)
+        .expect("a run's tenure")
+        .clone();
+    assert_eq!(
+        (tenure.how, tenure.by, tenure.blood),
+        (TakenBy::Conquered, FactionId::PLAYER, 0)
+    );
+    let scar = (0.12 + 0.01 * killed as f32).min(0.3);
+    assert!(
+        killed > 0 && (tenure.scar - scar).abs() < 1e-6,
+        "scar {} after {killed} killed",
+        tenure.scar
+    );
     let champion = champion(&mut app);
     let (id, cid) = (spawn_id(&app, s), spawn_id(&app, champion));
     let passive = CommandKind::SetPosture {
@@ -385,14 +410,52 @@ fn a_fed_village_under_a_passive_garrison_grows_loyal() {
     assert!(last > seed + 0.1, "loyalty only rose to {last}");
 }
 
+/// Puts food worth `days` of `s`'s daily need into its homes, one unit of
+/// the least nourishing food at a time round the homes in order: a larder
+/// a raid can't plunder (plunder is storehouse-only, ADR 0018).
+fn stock_homes(app: &mut App, s: Entity, days: f32) {
+    let world = app.world_mut();
+    let econ = world.resource::<sim_economy::Economy>().clone();
+    let se = world.get::<SettlementEconomy>(s).unwrap().clone();
+    let need = world
+        .resource::<sim_agents::Villagers>()
+        .data
+        .needs
+        .hunger_per_day
+        * se.population as f32;
+    let food = *econ.foods_by_value().last().expect("a food");
+    let units = (days * need / econ.food_value(food)).ceil() as u32;
+    let mut placed = 0;
+    'fill: while placed < units {
+        let before = placed;
+        for &home in &se.homes {
+            if placed == units {
+                break 'fill;
+            }
+            if let Some(mut stock) = world.get_mut::<Stockpile>(home) {
+                placed += stock.add(food, 1);
+            }
+        }
+        assert!(placed > before, "the homes are full");
+    }
+}
+
 /// GP-06, SIM-24: a raiding band plunders the undefended village and moves
 /// on. The raid provokes the militia and costs the village its reserve and
 /// half a day's work; it can't feed itself back, so mean loyalty falls day
 /// on day and ends the three days below its seed.
+///
+/// M4a (SIM-60): the conquest's scar (resentment, about -0.16 here, fading
+/// 0.02 a day) lowers the hamlet's loyalty target, and without more food it
+/// would sink below the revolt line on the second day and go free on the
+/// third (the starved branch covers a revolt). So the scenario's food
+/// changes, never the data (M4A_PLAN): the hamlet's homes hold a small
+/// larder of 0.3 days, which the raid can't plunder.
 #[test]
 fn a_plundered_village_loses_faith() {
     let (mut app, s) = conquered(SEED);
     let (_, seed) = conquest_tick_and_seed(&mut app, s);
+    stock_homes(&mut app, s, 0.3);
     let champion = champion(&mut app);
     let id = spawn_id(&app, s);
     let at = center(&app, s);

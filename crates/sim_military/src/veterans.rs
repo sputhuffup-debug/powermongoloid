@@ -31,6 +31,7 @@ use sim_core::{
     BattleReport, Calendar, Cause, Chronicle, FactionId, FactionModifiers, NameId, Position,
     Promotion, RunState, SimEvent, SimEventKind, SimTick, SpawnId, Stat, StateHash, StateHasher,
 };
+use sim_economy::Occupation;
 
 use crate::components::{Captain, Follower};
 use crate::data::Army;
@@ -48,6 +49,11 @@ pub struct Veteran {
     pub rank: u8,
     /// Struck or was struck in the army's current battle.
     pub fought: bool,
+    /// M4a (GP-34): the villager's trade before enlisting, captured by
+    /// `orders::enlist` in every preset; `None` for a soldier who was never
+    /// a villager. Read only for stewards' traits (and M4c's service
+    /// records), so behaviour never depends on it.
+    pub trade: Option<Occupation>,
 }
 
 impl StateHash for Veteran {
@@ -55,6 +61,7 @@ impl StateHash for Veteran {
         h.u16(self.battles);
         h.u8(self.rank);
         h.bool(self.fought);
+        h.u8(self.trade.map_or(u8::MAX, |o| o as u8));
     }
 }
 
@@ -239,6 +246,33 @@ pub(crate) fn rank_gain(army: &Army, v: Option<&Veteran>) -> Option<crate::data:
 mod tests {
     use super::*;
     use crate::combat::{Casualties, resolve_strikes};
+
+    /// M4a (GP-34): a recruit's `Veteran` remembers the trade it had, in
+    /// every preset (the developed world's recruits too: `enlist` is
+    /// shared); a soldier who was never a villager has none.
+    #[test]
+    fn enlisting_remembers_the_trade() {
+        let (mut app, start) = run_app(42);
+        let world = app.world_mut();
+        assert_eq!(
+            world.get::<Veteran>(start.champion).unwrap().trade,
+            None,
+            "a band's own soldier was never a villager"
+        );
+        let mut q = world.query::<(Entity, &SpawnId, &Occupation)>();
+        let mut workers: Vec<(SpawnId, Entity, Occupation)> = q
+            .iter(world)
+            .filter(|(_, _, o)| **o != Occupation::Idle)
+            .map(|(e, id, o)| (*id, e, *o))
+            .collect();
+        workers.sort_unstable_by_key(|w| w.0);
+        let (_, v, trade) = workers[0];
+        assert!(crate::orders::enlist_into(world, v, start.champion));
+        assert_eq!(world.get::<Veteran>(v).unwrap().trade, Some(trade));
+        assert_eq!(*world.get::<Occupation>(v).unwrap(), Occupation::Idle);
+        let vet = *world.get::<Veteran>(v).unwrap();
+        assert_eq!((vet.battles, vet.rank, vet.fought), (0, 0, false));
+    }
     use crate::index::FighterGrid;
     use crate::progression::champion::ChampionRank;
     use crate::progression::tests::run_app;
@@ -356,6 +390,7 @@ mod tests {
                 battles: data.thresholds[1] - 1,
                 rank: 1,
                 fought: true,
+                trade: None,
             };
             world.get_mut::<Veteran>(once).unwrap().fought = true;
             let points = world.get::<ChampionRank>(champion).unwrap().points;
@@ -378,6 +413,7 @@ mod tests {
                 battles,
                 rank: if run { rank } else { 0 },
                 fought: false,
+                trade: None,
             };
             assert_eq!(v(world, once), want(1, 1));
             assert_eq!(v(world, champion), want(1, 1));
@@ -387,7 +423,8 @@ mod tests {
                 Veteran {
                     battles: data.thresholds[1],
                     rank: twice_rank,
-                    fought: false
+                    fought: false,
+                    trade: None,
                 }
             );
             assert_eq!(v(world, idle), Veteran::default(), "never fought");

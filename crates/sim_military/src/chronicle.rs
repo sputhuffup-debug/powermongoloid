@@ -21,8 +21,8 @@ use bevy_ecs::prelude::*;
 use bevy_math::IVec2;
 use serde::{Deserialize, Serialize};
 use sim_core::{
-    BattleReport, Calendar, Cause, Chronicle, ChronicleEntry, FactionId, NameId, NameTable,
-    OfferKind, RunOutcome, RunState, SimEventKind, SimTick, SpawnId,
+    BattleReport, BuildKind, Calendar, Cause, Chronicle, ChronicleEntry, Dial, FactionId, NameId,
+    NameTable, OfferKind, RunOutcome, RunState, SimEventKind, SimTick, SpawnId,
 };
 use sim_world::{Monument, Settlement};
 
@@ -64,6 +64,24 @@ pub struct CausePhrases {
     pub neglect: String,
     /// `Cause::Fight`: `{foe}` is every faction fought.
     pub fight: String,
+    /// `Cause::Sack` (M4a): `{captain}` led the sack.
+    pub sack: String,
+    /// `Cause::Submission` (M4a): `{captain}` led the army at the gate.
+    pub submission: String,
+    /// `Cause::Subversion` (M4a).
+    pub subversion: String,
+    /// `Cause::Defiance` (M4a).
+    pub defiance: String,
+    /// `Cause::Fallout` (M4a): `{settlement}` is the town taken.
+    pub fallout: String,
+    /// `Cause::Reprisal` (M4a): `{settlement}` is the town to retake.
+    pub reprisal: String,
+    /// `Cause::Edict` (M4a).
+    pub edict: String,
+    /// `Cause::Caught` (M4a).
+    pub caught: String,
+    /// `Cause::Deposed` (M4a).
+    pub deposed: String,
 }
 
 impl CausePhrases {
@@ -85,10 +103,19 @@ impl CausePhrases {
             Cause::Lapsed => &self.lapsed,
             Cause::Neglect => &self.neglect,
             Cause::Fight { .. } => &self.fight,
+            Cause::Sack { .. } => &self.sack,
+            Cause::Submission { .. } => &self.submission,
+            Cause::Subversion => &self.subversion,
+            Cause::Defiance => &self.defiance,
+            Cause::Fallout { .. } => &self.fallout,
+            Cause::Reprisal { .. } => &self.reprisal,
+            Cause::Edict => &self.edict,
+            Cause::Caught => &self.caught,
+            Cause::Deposed => &self.deposed,
         }
     }
 
-    fn all(&self) -> [&str; 14] {
+    fn all(&self) -> [&str; 23] {
         [
             &self.player,
             &self.request,
@@ -104,6 +131,15 @@ impl CausePhrases {
             &self.lapsed,
             &self.neglect,
             &self.fight,
+            &self.sack,
+            &self.submission,
+            &self.subversion,
+            &self.defiance,
+            &self.fallout,
+            &self.reprisal,
+            &self.edict,
+            &self.caught,
+            &self.deposed,
         ]
     }
 }
@@ -439,6 +475,84 @@ impl<'w> Teller<'w> {
                 1 => "The run was lost".to_string(),
                 _ => "The run was abandoned".to_string(),
             },
+            SimEventKind::Submitted => format!(
+                "{} knelt to {who} ({} people)",
+                self.name(ev.subject, "a settlement"),
+                ev.amount
+            ),
+            SimEventKind::Defied => format!(
+                "{} defied {who} and is free again",
+                self.name(ev.subject, "a settlement")
+            ),
+            SimEventKind::Subverted => format!(
+                "{} opened its gates to {who} ({} people)",
+                self.name(ev.subject, "a settlement"),
+                ev.amount
+            ),
+            SimEventKind::BanditsRose => format!(
+                "{} men of {} took to the woods",
+                ev.amount,
+                self.name(ev.other, "a village")
+            ),
+            SimEventKind::ReprisalVowed => format!(
+                "{who} vowed to retake {} within {} hours",
+                self.name(ev.subject, "a settlement"),
+                ev.amount
+            ),
+            SimEventKind::RivalReprisal => format!(
+                "{who} sent {} men to retake {}",
+                ev.amount,
+                self.name(ev.other, "a settlement")
+            ),
+            SimEventKind::AgentCaught => format!(
+                "{who}'s agent {} was found out in {}",
+                self.names.get(NameId(ev.amount.max(0) as u32)),
+                self.name(ev.other, "a settlement")
+            ),
+            SimEventKind::Forsaken => {
+                let times = match ev.amount {
+                    n if n > 1 => format!(" ({n} times now)"),
+                    _ => String::new(),
+                };
+                format!(
+                    "{} called on {who} in vain{times}",
+                    self.name(ev.subject, "a settlement")
+                )
+            }
+            SimEventKind::Built => format!(
+                "{who} built a {} at {}",
+                BuildKind::ALL
+                    .get(ev.amount.max(0) as usize)
+                    .map_or("building", |b| b.name()),
+                self.name(ev.other, "a settlement")
+            ),
+            SimEventKind::StewardNamed => {
+                let (person, town) = (
+                    self.name(ev.subject, "someone"),
+                    self.name(ev.other, "a settlement"),
+                );
+                match ev.amount {
+                    0 => format!("{person} became steward of {town} for {who}"),
+                    1 => format!("{who} made {person} steward of {town}"),
+                    _ => format!("{person}, steward of {town}, was deposed"),
+                }
+            }
+            SimEventKind::EdictSet => {
+                let dial = Dial::ALL.get(ev.other as usize).copied();
+                format!(
+                    "{who} set {}'s {} to {}",
+                    self.name(ev.subject, "a settlement"),
+                    dial.map_or("?", |d| d.name()),
+                    dial.map_or("?", |d| d.setting_name(ev.amount.max(0) as u8))
+                )
+            }
+            SimEventKind::Tribute => format!(
+                "{who}'s lands sent the band of {} {} food, {} arms and {} men",
+                self.name(ev.subject, "a captain"),
+                ev.other & 0xffff_ffff,
+                ev.other >> 32,
+                ev.amount
+            ),
         };
         // An answered offer names its chooser already.
         let why = if ev.kind == SimEventKind::OfferChosen {
@@ -476,10 +590,17 @@ impl<'w> Teller<'w> {
             | SimEventKind::RequestPosted => self.name(ev.other, "a village"),
             _ => self.name(ev.subject, "a village"),
         };
-        let captain = match ev.cause {
-            Cause::Conquest { captain } | Cause::Raid { captain } => {
-                self.name(captain, "their captain")
+        let settlement = match ev.cause {
+            Cause::Fallout { settlement } | Cause::Reprisal { settlement } => {
+                self.name(settlement, "a village")
             }
+            _ => settlement,
+        };
+        let captain = match ev.cause {
+            Cause::Conquest { captain }
+            | Cause::Raid { captain }
+            | Cause::Sack { captain }
+            | Cause::Submission { captain } => self.name(captain, "their captain"),
             _ => "their captain".into(),
         };
         let boon = match ev.cause {
@@ -575,9 +696,10 @@ pub struct RunSummary {
     pub cause: Cause,
     /// Days played: to the end, or so far.
     pub days: f32,
-    /// Settlements the player took by force or was invited into.
+    /// Settlements the player took: by force (conquests and sacks), by
+    /// invitation, submission or an agent's work (M4a).
     pub settlements_taken: u32,
-    /// Settlements the player lost (revolts, conquests by others).
+    /// Settlements the player lost (revolts, defiances, takes by others).
     pub settlements_lost: u32,
     /// Settlements the player holds at the end (`taken - lost`).
     pub settlements_held: u32,
@@ -633,12 +755,17 @@ impl RunSummary {
             let ev = e.event;
             let mine = ev.faction == player;
             let from_me = ev.other == player.0 as u64;
+            let take = matches!(
+                ev.kind,
+                SimEventKind::Conquest
+                    | SimEventKind::Invited
+                    | SimEventKind::Submitted
+                    | SimEventKind::Subverted
+            );
             match ev.kind {
-                SimEventKind::Conquest | SimEventKind::Invited if mine => s.settlements_taken += 1,
-                SimEventKind::Conquest | SimEventKind::Invited if from_me => {
-                    s.settlements_lost += 1
-                }
-                SimEventKind::Revolt if mine => s.settlements_lost += 1,
+                _ if take && mine => s.settlements_taken += 1,
+                _ if take && from_me => s.settlements_lost += 1,
+                SimEventKind::Revolt | SimEventKind::Defied if mine => s.settlements_lost += 1,
                 SimEventKind::MonumentTaken if mine => s.monuments_taken += 1,
                 SimEventKind::MonumentLost if mine => monuments_lost += 1,
                 SimEventKind::Battle if mine => s.battles += 1,
@@ -834,6 +961,140 @@ mod tests {
         assert_eq!(text, "Day 1: Your warband sent the sellswords away.");
     }
 
+    /// M4a (ADR 0020): every new kind reads as a sentence with its names,
+    /// and every new cause adds its own words; a sack and a submission
+    /// name their captain, fallout and a reprisal their town.
+    #[test]
+    fn lordship_entries_have_words() {
+        let (mut app, start) = run_app(42);
+        let world = app.world_mut();
+        let mut q = world.query::<(&SpawnId, &Settlement)>();
+        let (sid, sname) = q
+            .iter(world)
+            .map(|(id, s)| (id.0, s.name))
+            .min()
+            .expect("a settlement");
+        let champion = world.get::<SpawnId>(start.champion).unwrap().0;
+        let names = world.resource::<NameTable>();
+        let sname = names.get(sname).to_string();
+        let champ_name = names
+            .get(world.get::<Soldier>(start.champion).unwrap().name)
+            .to_string();
+        let me = FactionId::PLAYER;
+        let rival = FactionId::RIVAL;
+        let tell = |e: SimEvent| describe(world, &entry(5, e));
+        let cases: Vec<(SimEvent, Vec<&str>)> = vec![
+            (
+                SimEvent::new(SimEventKind::Conquest, me)
+                    .subject(sid)
+                    .amount(40)
+                    .cause(Cause::Sack { captain: champion }),
+                vec!["took", &sname, "sacked", &champ_name],
+            ),
+            (
+                SimEvent::new(SimEventKind::Submitted, me)
+                    .subject(sid)
+                    .amount(40)
+                    .cause(Cause::Submission { captain: champion }),
+                vec!["knelt to your warband", &sname, &champ_name],
+            ),
+            (
+                SimEvent::new(SimEventKind::Defied, me)
+                    .subject(sid)
+                    .cause(Cause::Defiance),
+                vec!["defied your warband", &sname],
+            ),
+            (
+                SimEvent::new(SimEventKind::Subverted, me)
+                    .subject(sid)
+                    .amount(40)
+                    .cause(Cause::Subversion),
+                vec!["opened its gates", &sname],
+            ),
+            (
+                SimEvent::new(SimEventKind::BanditsRose, me)
+                    .subject(champion)
+                    .other(sid)
+                    .amount(11)
+                    .cause(Cause::Fallout { settlement: sid }),
+                vec!["11 men of", "took to the woods", &sname],
+            ),
+            (
+                SimEvent::new(SimEventKind::ReprisalVowed, rival)
+                    .subject(sid)
+                    .amount(18)
+                    .cause(Cause::Conquest { captain: champion }),
+                vec!["vowed to retake", &sname, "18 hours"],
+            ),
+            (
+                SimEvent::new(SimEventKind::RivalReprisal, rival)
+                    .subject(champion)
+                    .other(sid)
+                    .amount(9)
+                    .cause(Cause::Reprisal { settlement: sid }),
+                vec!["sent 9 men to retake", &sname],
+            ),
+            (
+                SimEvent::new(SimEventKind::AgentCaught, me)
+                    .subject(99_999)
+                    .other(sid)
+                    .cause(Cause::Caught),
+                vec!["agent", "found out", &sname],
+            ),
+            (
+                SimEvent::new(SimEventKind::Forsaken, me)
+                    .subject(sid)
+                    .amount(2)
+                    .cause(Cause::Lapsed),
+                vec!["called on your warband in vain", "2 times"],
+            ),
+            (
+                SimEvent::new(SimEventKind::Built, me)
+                    .subject(1)
+                    .other(sid)
+                    .amount(BuildKind::Palisade.tag() as i32),
+                vec!["built a palisade at", &sname],
+            ),
+            (
+                SimEvent::new(SimEventKind::StewardNamed, me)
+                    .subject(champion)
+                    .other(sid)
+                    .amount(2)
+                    .cause(Cause::Deposed),
+                vec!["was deposed", &champ_name],
+            ),
+            (
+                SimEvent::new(SimEventKind::EdictSet, me)
+                    .subject(sid)
+                    .other(Dial::Work.tag() as u64)
+                    .amount(sim_core::WorkFocus::Forge.tag() as i32)
+                    .cause(Cause::Edict),
+                vec!["Work to Forge", &sname],
+            ),
+            (
+                SimEvent::new(SimEventKind::Tribute, me)
+                    .subject(champion)
+                    .other((6u64 << 32) | 24)
+                    .amount(3)
+                    .cause(Cause::Edict),
+                vec!["24 food, 6 arms and 3 men", &champ_name],
+            ),
+        ];
+        for (event, words) in cases {
+            let text = tell(event);
+            println!("{text}");
+            for w in words {
+                assert!(text.contains(w), "{w:?} not in {text:?}");
+            }
+            assert!(!text.contains(['{', '}']), "{text}");
+        }
+        let phrases = &world.resource::<Progression>().data.chronicle.causes;
+        let mut all = phrases.all().to_vec();
+        all.sort_unstable();
+        all.dedup();
+        assert_eq!(all.len(), 23, "every cause has its own phrase");
+    }
+
     /// UI-05: the military log numbers its lines, so the feed can read
     /// new ones by cursor after the oldest have dropped off.
     #[test]
@@ -883,6 +1144,17 @@ mod tests {
             SimEvent::new(SimEventKind::Battle, FactionId::RAIDERS).subject(4),
         );
         push(95, SimEvent::new(SimEventKind::RequestDone, me).subject(0));
+        // M4a: a submission and a turned town are takes; a defiance is a
+        // loss; a submission to someone else from me is a loss.
+        push(96, SimEvent::new(SimEventKind::Submitted, me).subject(6));
+        push(97, SimEvent::new(SimEventKind::Subverted, me).subject(7));
+        push(98, SimEvent::new(SimEventKind::Defied, me).subject(6));
+        push(
+            99,
+            SimEvent::new(SimEventKind::Subverted, FactionId::RIVAL)
+                .subject(7)
+                .other(me.0 as u64),
+        );
         let promo = |soldier, rank| Promotion {
             soldier,
             rank,
@@ -925,7 +1197,7 @@ mod tests {
         assert_eq!(s.days, 2.0);
         assert_eq!(
             (s.settlements_taken, s.settlements_lost, s.settlements_held),
-            (2, 1, 1)
+            (4, 3, 1)
         );
         assert_eq!((s.monuments_taken, s.monuments_held), (2, 1));
         assert_eq!((s.battles, s.kills, s.lost), (1, 6, 1));

@@ -220,11 +220,46 @@ pub struct GoodwillDeeds {
     pub killing: f32,
     /// A request answered (M4 step 3b).
     pub request: f32,
+    /// M4a: an army fought near the town for it (at most once a day).
+    #[serde(default = "deeds::defended")]
+    pub defended: f32,
+    /// M4a: a feast its lord gave (spreads: word travels).
+    #[serde(default = "deeds::festival")]
+    pub festival: f32,
+    /// M4a: a sworn town's call left unanswered (spreads).
+    #[serde(default = "deeds::forsaken")]
+    pub forsaken: f32,
+    /// M4a: a demand the town refused.
+    #[serde(default = "deeds::threat")]
+    pub threat: f32,
+    /// M4a: an agent caught plotting there (spreads).
+    #[serde(default = "deeds::plot")]
+    pub plot: f32,
+}
+
+/// The shipped values of `goodwill_deeds`' M4a rows, for text without them.
+mod deeds {
+    pub(super) fn defended() -> f32 {
+        0.1
+    }
+    pub(super) fn festival() -> f32 {
+        0.08
+    }
+    pub(super) fn forsaken() -> f32 {
+        -0.15
+    }
+    pub(super) fn threat() -> f32 {
+        -0.05
+    }
+    pub(super) fn plot() -> f32 {
+        -0.15
+    }
 }
 
 impl GoodwillDeeds {
     /// The delta for `deed`. [`Deed::Boon`] carries its own amount (the
-    /// boon's `Goodwill` effect), so it is 0 here.
+    /// boon's `Goodwill` effect), and `Gift`, `Influence` and `Whisper`
+    /// are computed where they happen (M4a), so they are 0 here.
     pub fn delta(&self, deed: Deed) -> f32 {
         match deed {
             Deed::Trade => self.trade,
@@ -234,7 +269,12 @@ impl GoodwillDeeds {
             Deed::Provoke => self.provoke,
             Deed::Killing => self.killing,
             Deed::Request => self.request,
-            Deed::Boon => 0.0,
+            Deed::Defended => self.defended,
+            Deed::Festival => self.festival,
+            Deed::Forsaken => self.forsaken,
+            Deed::Threat => self.threat,
+            Deed::Plot => self.plot,
+            Deed::Boon | Deed::Gift | Deed::Influence | Deed::Whisper => 0.0,
         }
     }
 }
@@ -531,6 +571,37 @@ pub struct ProgressionData {
     pub rival: Vec<RivalData>,
     /// How the chronicle words causes (UI-09).
     pub chronicle: crate::chronicle::ChronicleData,
+    /// M4a (GP-31): influence. Optional, like every Lordship block: text
+    /// without it reads the shipped values.
+    #[serde(default)]
+    pub influence: crate::influence::InfluenceData,
+    /// M4a (SIM-60): tenure's scars and the bond.
+    #[serde(default)]
+    pub tenure: crate::tenure::TenureData,
+    /// M4a (GP-32): demanding submission.
+    #[serde(default)]
+    pub demand: crate::tenure::DemandData,
+    /// M4a (GP-32): courting with gifts.
+    #[serde(default)]
+    pub court: crate::tenure::CourtData,
+    /// M4a (GP-32): agents.
+    #[serde(default)]
+    pub subvert: crate::tenure::SubvertData,
+    /// M4a (GP-33): bandits and reprisals.
+    #[serde(default)]
+    pub fallout: crate::fallout::FalloutData,
+    /// M4a (GP-34): edicts.
+    #[serde(default)]
+    pub edicts: crate::govern::EdictsData,
+    /// M4a (GP-34): stewards and their habits.
+    #[serde(default)]
+    pub stewards: crate::govern::StewardsData,
+    /// M4a (SIM-62): Market towns' hired men.
+    #[serde(default)]
+    pub market: crate::govern::MarketData,
+    /// M4a (SIM-63): ordered buildings.
+    #[serde(default)]
+    pub buildings: crate::govern::BuildingsData,
 }
 
 /// Progression data (GP-21, GP-27, SIM-34). Hashed as its RON text.
@@ -649,13 +720,25 @@ impl Progression {
         }
         let g = &d.goodwill_deeds;
         if [
-            g.trade, g.equip, g.seize, g.plunder, g.provoke, g.killing, g.request,
+            g.trade, g.equip, g.seize, g.plunder, g.provoke, g.killing, g.request, g.defended,
+            g.festival, g.forsaken, g.threat, g.plot,
         ]
         .iter()
         .any(|v| !(-1.0..=1.0).contains(v))
         {
             return Err("progression: goodwill_deeds must be in -1..1".into());
         }
+        // M4a (ADR 0020): Lordship's blocks.
+        d.influence.validate()?;
+        d.tenure.validate()?;
+        d.demand.validate()?;
+        d.court.validate()?;
+        d.subvert.validate()?;
+        d.fallout.validate()?;
+        d.edicts.validate()?;
+        d.stewards.validate()?;
+        d.market.validate()?;
+        d.buildings.validate()?;
         let f = &d.forage;
         if !non_negative(f.per_tile) || !non_negative(f.per_member) {
             return Err("progression: forage per_tile and per_member must be >= 0".into());
@@ -1061,6 +1144,9 @@ pub fn setup_run(world: &mut World) -> Option<RunStart> {
     crate::monuments::setup(world, draws.start);
     // SIM-38: the island's wild food, full at the start.
     crate::wild::ensure_built(world);
+    // M4a (ADR 0020): every town's Lordship state, before the rival's
+    // grant marks its lands `Granted`.
+    setup_lordship(world);
     // GP-28: the rival's lands, its seat's garrison and its clock.
     crate::rival::setup(world, draws.seat, draws.seat_center, draws.rival_region);
     // GP-16: the pacing director's first low-tension band waits its spacing.
@@ -1123,6 +1209,31 @@ pub fn report_start(
     }
     for offer in &offers.pending {
         events.write(offer.posted_event());
+    }
+}
+
+/// M4a (ADR 0020): inserts Lordship's per-town state on every populated
+/// settlement of the run, in SpawnId order: a [`crate::tenure::Tenure`]
+/// (`Native`, held by its owner since the start), an
+/// [`crate::influence::Influence`], `sim_agents::LoyaltyTerms` and
+/// `sim_agents::DeedLog` (empty) and `sim_agents::Edicts` (every dial at its
+/// no-op default). Inert until something writes them; spawns nothing and
+/// draws nothing, so no SpawnId or stream moves.
+fn setup_lordship(world: &mut World) {
+    let mut q = world.query::<(Entity, &SpawnId, &sim_agents::Owner)>();
+    let mut towns: Vec<(SpawnId, Entity, FactionId)> = q
+        .iter(world)
+        .map(|(e, id, o)| (*id, e, o.faction))
+        .collect();
+    towns.sort_unstable_by_key(|t| t.0);
+    for (_, s, owner) in towns {
+        world.entity_mut(s).insert((
+            crate::tenure::Tenure::new(crate::tenure::TakenBy::Native, owner, 0, 0),
+            crate::influence::Influence::default(),
+            sim_agents::LoyaltyTerms::default(),
+            sim_agents::DeedLog::default(),
+            sim_agents::Edicts::default(),
+        ));
     }
 }
 
@@ -1212,6 +1323,18 @@ fn spoil_stores(world: &mut World, fraction: f32) {
 ///     reads the rebuilt modifiers
 /// 11. [`crate::rival::clock`] (run)
 /// 12. [`crate::director::step`] (run)
+///
+/// M4a (Lordship, ADR 0020) appends four run-only slots:
+/// 13. [`crate::influence::step`]: the influence field; on the day tick,
+///     influence deeds and envoys (M4a step 3)
+/// 14. [`crate::tenure::step`]: the loyalty terms; on the day tick, scars
+///     fade (and from step 5 the watch, from step 7 agents)
+/// 15. [`crate::govern::step`]: edicts, sites and hire offers; at dawn,
+///     stewards (M4a steps 4, 8, 9)
+/// 16. [`crate::fallout::step`]: bandits rise and reprisals are vowed (M4a
+///     step 6)
+///
+/// M4c's `saga::settle` will be slot 17.
 pub fn progress(world: &mut World) {
     let _span = tracing::info_span!("sim_military::progress").entered();
     crate::veterans::end_battles(world);
@@ -1227,6 +1350,10 @@ pub fn progress(world: &mut World) {
     dominion::refresh_slots(world);
     crate::rival::clock(world);
     crate::director::step(world);
+    crate::influence::step(world);
+    crate::tenure::step(world);
+    crate::govern::step(world);
+    crate::fallout::step(world);
 }
 
 /// GP-23, GP-24, SIM-34: rebuilds [`FactionModifiers`] from scratch, once a
@@ -1558,6 +1685,203 @@ pub(crate) mod tests {
         assert!(!without.contains("gather:"), "{without}");
         let back = Progression::from_ron(&without).expect("parses without gather");
         assert_eq!(back.data.gather, GatherData::default());
+    }
+
+    /// M4a (ADR 0020): every Lordship block's `Default` is the shipped
+    /// data, so progression text without one reads the same values; text
+    /// without any of them (an M4 progression.ron) parses; and the new
+    /// deed rows have their shipped deltas (Gift, Influence and Whisper
+    /// are computed, so 0 here).
+    #[test]
+    fn lordship_defaults_match_the_shipped_data() {
+        let p = Progression::default_data();
+        let d = &p.data;
+        assert_eq!(d.influence, crate::influence::InfluenceData::default());
+        assert_eq!(d.tenure, crate::tenure::TenureData::default());
+        assert_eq!(d.demand, crate::tenure::DemandData::default());
+        assert_eq!(d.court, crate::tenure::CourtData::default());
+        assert_eq!(d.subvert, crate::tenure::SubvertData::default());
+        assert_eq!(d.fallout, crate::fallout::FalloutData::default());
+        assert_eq!(d.edicts, crate::govern::EdictsData::default());
+        assert_eq!(d.stewards, crate::govern::StewardsData::default());
+        assert_eq!(d.market, crate::govern::MarketData::default());
+        assert_eq!(d.buildings, crate::govern::BuildingsData::default());
+        let g = &d.goodwill_deeds;
+        assert_eq!(
+            (g.defended, g.festival, g.forsaken, g.threat, g.plot),
+            (0.1, 0.08, -0.15, -0.05, -0.15)
+        );
+        for deed in [Deed::Gift, Deed::Influence, Deed::Whisper, Deed::Boon] {
+            assert_eq!(g.delta(deed), 0.0, "{deed:?} is computed");
+        }
+        assert_eq!(g.delta(Deed::Plot), g.plot);
+        for difficulty in Difficulty::ALL {
+            let r = p.rival(difficulty).unwrap();
+            assert!(r.reprisal_size >= 2 && (0.0..=1.0).contains(&r.realm_floor));
+        }
+        // An M4 progression text: none of the M4a blocks or rows.
+        let mut text = ron::to_string(d).unwrap();
+        for key in [
+            "influence:",
+            "tenure:",
+            "demand:",
+            "court:",
+            "subvert:",
+            "fallout:",
+            "edicts:",
+            "stewards:",
+            "market:",
+            "buildings:",
+        ] {
+            // `key(`: a block, not a cause phrase of the same name.
+            let start = text
+                .find(&format!("{key}("))
+                .unwrap_or_else(|| panic!("{key} written: {text}"));
+            let mut depth = 0;
+            let mut end = start;
+            for (i, c) in text[start..].char_indices() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = start + i + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if text[end..].starts_with(',') {
+                end += 1;
+            }
+            text = format!("{}{}", &text[..start], &text[end..]);
+        }
+        for row in [
+            "defended:",
+            "festival:",
+            "forsaken:",
+            "threat:",
+            "plot:",
+            "reprisal_from_day:",
+            "reprisal_size:",
+            "reprisal_min_garrison:",
+            "turned_mult:",
+            "realm_floor:",
+        ] {
+            // Numbers only: a cause phrase of the same name stays.
+            while let Some(start) = text.match_indices(row).map(|(i, _)| i).find(|&i| {
+                text[i + row.len()..].starts_with(|c: char| c == '-' || c.is_ascii_digit())
+            }) {
+                // None of these rows is a struct's first field: drop it with
+                // the comma before it, up to the next comma or parenthesis.
+                assert_eq!(&text[start - 1..start], ",");
+                let end = start + text[start..].find([',', ')']).unwrap();
+                text = format!("{}{}", &text[..start - 1], &text[end..]);
+            }
+        }
+        assert!(!text.contains("realm_floor") && !text.contains("stewards"));
+        let back = Progression::from_ron(&text).expect("an M4 text parses");
+        assert_eq!(back.data.influence, d.influence);
+        assert_eq!(back.data.stewards, d.stewards);
+        assert_eq!(back.data.goodwill_deeds, d.goodwill_deeds);
+        assert_eq!(
+            back.data.rival[0].realm_floor,
+            p.rival(Difficulty::Steady).unwrap().realm_floor
+        );
+    }
+
+    /// M4a: the Lordship blocks are checked like the rest.
+    #[test]
+    fn rejects_bad_lordship_data() {
+        use crate::govern::{Condition, Setting};
+        let ok = Progression::default_data();
+        let check = |edit: &dyn Fn(&mut ProgressionData)| {
+            let mut d = ok.data.clone();
+            edit(&mut d);
+            Progression { data: d }.validate()
+        };
+        assert!(check(&|_| {}).is_ok());
+        assert!(check(&|d| d.influence.reach = 0.0).is_err());
+        assert!(check(&|d| d.influence.goodwill_cap = 1.5).is_err());
+        assert!(
+            check(&|d| d.tenure.conquest_scar = 0.5).is_err(),
+            "above its max"
+        );
+        assert!(check(&|d| d.tenure.scar_fade_per_day = -0.1).is_err());
+        assert!(check(&|d| d.demand.seed = 1.5).is_err());
+        assert!(check(&|d| d.demand.watch_hours = 25).is_err());
+        assert!(check(&|d| d.court.max_gift = 2.0).is_err());
+        assert!(check(&|d| d.subvert.turn_loyalty = -0.1).is_err());
+        assert!(check(&|d| d.fallout.min_band = d.fallout.max_men + 1).is_err());
+        assert!(check(&|d| d.fallout.distance_scale = 0.0).is_err());
+        assert!(check(&|d| d.edicts.forge_cap = 1.5).is_err());
+        assert!(check(&|d| d.edicts.levy.term = -2.0).is_err());
+        assert!(
+            check(&|d| d.stewards.traits[0].habits[0] =
+                (sim_core::Dial::Work, Setting::Levy, Condition::Always))
+            .is_err(),
+            "a Dues setting on the Work dial"
+        );
+        assert!(
+            check(&|d| {
+                let t = d.stewards.traits[0].clone();
+                d.stewards.traits.push(t);
+            })
+            .is_err(),
+            "names are distinct"
+        );
+        assert!(check(&|d| d.market.min_men = d.market.max_men + 1).is_err());
+        assert!(check(&|d| d.buildings.palisade_hold = -1.0).is_err());
+        assert!(check(&|d| d.goodwill_deeds.plot = -1.5).is_err());
+        assert!(check(&|d| d.rival[0].realm_floor = 1.5).is_err());
+        assert!(check(&|d| d.rival[0].reprisal_size = 1).is_err());
+        assert!(check(&|d| d.chronicle.causes.sack = " ".into()).is_err());
+    }
+
+    /// M4a (ADR 0020): run setup gives every populated settlement its
+    /// Lordship state, inert: `Native` tenure (the rival's lands
+    /// `Granted`), zero terms, an empty log, default edicts; the rival's
+    /// realm records its lands' starting people; nothing is spawned.
+    #[test]
+    fn setup_gives_every_town_its_lordship_state() {
+        use crate::tenure::{TakenBy, Tenure};
+        let (mut app, _) = run_app(42);
+        let world = app.world_mut();
+        let mut q = world.query::<(
+            &SpawnId,
+            &sim_agents::Owner,
+            Option<&Tenure>,
+            Option<&crate::influence::Influence>,
+            Option<&sim_agents::LoyaltyTerms>,
+            Option<&sim_agents::DeedLog>,
+            Option<&sim_agents::Edicts>,
+            &SettlementEconomy,
+        )>();
+        let mut rival_lands = Vec::new();
+        let mut n = 0;
+        for (id, owner, t, i, terms, log, edicts, se) in q.iter(world) {
+            n += 1;
+            let t = t.expect("tenure");
+            assert_eq!(t.by, owner.faction);
+            let expect = if owner.faction == FactionId::RIVAL {
+                rival_lands.push((id.0, se.population));
+                TakenBy::Granted
+            } else {
+                TakenBy::Native
+            };
+            assert_eq!((t.how, t.since, t.scar, t.blood), (expect, 0, 0.0, 0));
+            assert_eq!(*i.expect("influence"), Default::default());
+            assert_eq!(terms.expect("terms").bias(), 0.0);
+            assert!(log.expect("log").entries.is_empty());
+            assert_eq!(*edicts.expect("edicts"), sim_agents::Edicts::default());
+        }
+        assert!(n >= 20, "every populated settlement: {n}");
+        rival_lands.sort_unstable();
+        assert!(!rival_lands.is_empty());
+        let state = world.resource::<crate::rival::RivalState>();
+        assert_eq!(state.realm, rival_lands);
+        assert_eq!((state.reprisal, state.last_reprisal), (None, None));
     }
 
     /// GP-23: the shipped monument data lists every kind once, and a

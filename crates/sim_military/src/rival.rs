@@ -78,6 +78,39 @@ pub struct RivalData {
     /// People in a raiding band (its captain included), at most half the
     /// garrison.
     pub raid_size: u32,
+    /// M4a (GP-33): reprisals launch from this day on.
+    #[serde(default = "default_reprisal_from_day")]
+    pub reprisal_from_day: f32,
+    /// M4a: people in a reprisal band (its captain included), at most half
+    /// the garrison.
+    #[serde(default = "default_reprisal_size")]
+    pub reprisal_size: u32,
+    /// M4a: no reprisal leaves a garrison smaller than this.
+    #[serde(default = "default_reprisal_min_garrison")]
+    pub reprisal_min_garrison: u32,
+    /// M4a: a reprisal against a turned (fragile) town is this much larger.
+    #[serde(default = "default_turned_mult")]
+    pub turned_mult: f32,
+    /// M4a (GP-31): the seat's defence at an empty realm, as a share of
+    /// its clock (1.0 at a full realm).
+    #[serde(default = "default_realm_floor")]
+    pub realm_floor: f32,
+}
+
+fn default_reprisal_from_day() -> f32 {
+    6.0
+}
+fn default_reprisal_size() -> u32 {
+    8
+}
+fn default_reprisal_min_garrison() -> u32 {
+    8
+}
+fn default_turned_mult() -> f32 {
+    1.5
+}
+fn default_realm_floor() -> f32 {
+    0.4
 }
 
 impl RivalData {
@@ -93,10 +126,15 @@ impl RivalData {
             || !non_negative(self.raid_from_day)
             || !positive(self.raid_every_days)
             || self.raid_size < 2
+            || !non_negative(self.reprisal_from_day)
+            || self.reprisal_size < 2
+            || !non_negative(self.turned_mult)
+            || !(0.0..=1.0).contains(&self.realm_floor)
         {
             return Err(format!(
-                "progression: rival {name} needs start_loyalty in 0..1, levy_every_days and \
-                 raid_every_days > 0, other days and radii >= 0, raid_size >= 2"
+                "progression: rival {name} needs start_loyalty and realm_floor in 0..1, \
+                 levy_every_days and raid_every_days > 0, other days, radii and turned_mult >= 0, \
+                 raid_size and reprisal_size >= 2"
             ));
         }
         let mut last = f32::NEG_INFINITY;
@@ -139,10 +177,31 @@ pub struct RivalState {
     pub next_levy: u64,
     /// The tick of the next raid.
     pub next_raid: u64,
-    /// Raiding bands sent so far.
+    /// Raiding bands sent so far (reprisals included, M4a).
     pub raids: u32,
     /// Villagers levied so far.
     pub levied: u32,
+    /// M4a (GP-31): the realm at the start, `(settlement SpawnId, people)`
+    /// for each settlement the rival was granted, in SpawnId order; the
+    /// share of it the rival still owns scales the seat's defence (step 6).
+    pub realm: Vec<(u64, u32)>,
+    /// M4a (GP-33): the pending vow, if any (the newest replaces an older
+    /// one); `clock` launches it when due (step 6).
+    pub reprisal: Option<Vow>,
+    /// M4a: the tick of the last vow (no new vow within
+    /// `fallout.vow_cooldown_days`).
+    pub last_reprisal: Option<u64>,
+}
+
+/// A vow of reprisal (GP-33, M4a): the rival will try to retake
+/// `settlement` (a SpawnId) from `due` on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Vow {
+    /// The town it names when vowed (the band is pinned to the newest
+    /// holding when it launches).
+    pub settlement: u64,
+    /// The tick it comes due.
+    pub due: u64,
 }
 
 impl RivalState {
@@ -178,6 +237,20 @@ impl StateHash for RivalState {
         h.u64(self.next_raid);
         h.u32(self.raids);
         h.u32(self.levied);
+        h.u32(self.realm.len() as u32);
+        for &(s, people) in &self.realm {
+            h.u64(s);
+            h.u32(people);
+        }
+        match self.reprisal {
+            Some(v) => {
+                h.u8(1);
+                h.u64(v.settlement);
+                h.u64(v.due);
+            }
+            None => h.u8(0),
+        }
+        h.u64(self.last_reprisal.map_or(u64::MAX, |t| t));
     }
 }
 
@@ -190,6 +263,10 @@ pub struct RivalBand {
     pub target: Option<u64>,
     /// The tick of its next decision.
     pub next_think: u64,
+    /// M4a (GP-33): a reprisal band's target, the player's newest holding
+    /// when it launched (a settlement SpawnId), honoured before anything
+    /// else; `None` for an ordinary raid.
+    pub pinned: Option<u64>,
 }
 
 impl StateHash for RivalBand {
@@ -202,6 +279,7 @@ impl StateHash for RivalBand {
             None => h.u8(0),
         }
         h.u64(self.next_think);
+        h.u64(self.pinned.map_or(u64::MAX, |t| t));
     }
 }
 
@@ -251,8 +329,19 @@ pub fn setup(world: &mut World, seat: u64, seat_center: IVec2, region: sim_world
         .map(|(e, id, _)| (*id, e))
         .collect();
     lands.sort_unstable();
-    for (_, s) in lands {
+    let mut realm = Vec::with_capacity(lands.len());
+    for &(id, s) in &lands {
         sim_agents::set_owner(world, s, FactionId::RIVAL, Some(data.start_loyalty));
+        // M4a (SIM-60): granted at the start, with no scar.
+        if let Some(mut t) = world.get_mut::<crate::tenure::Tenure>(s) {
+            *t =
+                crate::tenure::Tenure::new(crate::tenure::TakenBy::Granted, FactionId::RIVAL, 0, 0);
+        }
+        // M4a (GP-31): the realm's starting people.
+        let people = world
+            .get::<SettlementEconomy>(s)
+            .map_or(0, |se| se.population);
+        realm.push((id.0, people));
     }
     let followers = (data.garrison as f32 * strength).round() as u32;
     spawn_garrison(world, seat, seat_center, followers, data.garrison_food_days);
@@ -266,6 +355,9 @@ pub fn setup(world: &mut World, seat: u64, seat_center: IVec2, region: sim_world
         next_raid: cal.days(data.raid_from_day),
         raids: 0,
         levied: 0,
+        realm,
+        reprisal: None,
+        last_reprisal: None,
     };
 }
 
@@ -451,6 +543,7 @@ fn raid(world: &mut World, size: u32) {
     world.entity_mut(lead).insert(RivalBand {
         target: None,
         next_think: tick,
+        pinned: None,
     });
     world.resource_mut::<RivalState>().raids += 1;
     let at = world.resource::<RivalState>().seat_center;
@@ -465,7 +558,8 @@ fn raid(world: &mut World, size: u32) {
 }
 
 /// GP-28: when the player takes the seat, every other settlement the rival
-/// holds becomes independent, in SpawnId order (quietly: the run has ended).
+/// holds becomes independent, in SpawnId order (quietly: the run has ended),
+/// its tenure `Freed` (M4a, SIM-60).
 pub fn free_lands(world: &mut World) {
     let mut q = world.query::<(Entity, &SpawnId, &Owner)>();
     let mut lands: Vec<(SpawnId, Entity)> = q
@@ -476,6 +570,12 @@ pub fn free_lands(world: &mut World) {
     lands.sort_unstable();
     for (_, s) in lands {
         sim_agents::set_owner(world, s, FactionId::INDEPENDENT, None);
+        crate::tenure::retake(
+            world,
+            s,
+            crate::tenure::TakenBy::Freed,
+            FactionId::INDEPENDENT,
+        );
     }
 }
 
