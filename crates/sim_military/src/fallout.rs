@@ -9,7 +9,7 @@
 //!   [`crate::components::Bandits`] marker), and the rival vows reprisals
 //!   (`RivalState::reprisal`) that its clock launches.
 //!
-//! The queue: [`queue_taking`] (from `transfer_seeded`, the only writer
+//! The queue: `queue_taking` (from `transfer_seeded`, the only writer
 //! besides this module) queues a band for a player's conquest or sack of a
 //! town of at least `fallout.min_people` ([`band_size`]), and a vow for a
 //! player's take (any way) of a town that was the rival's or where the
@@ -50,7 +50,7 @@ pub struct PendingBand {
 }
 
 /// A take that calls for a vow of reprisal (GP-33), queued by
-/// [`queue_taking`] (step 7's caught agent pushes one too) and judged by
+/// `queue_taking` (step 7's caught agent pushes one too) and judged by
 /// [`step`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PendingVow {
@@ -361,7 +361,7 @@ pub fn bandit_score(
 /// `sim_military::fallout::step`): due bandit bands rise, and reprisal
 /// vows are made, which slot 11 (`rival::clock`) reads the next hour.
 ///
-/// - **Bands.** Each due band (queue order) rises ([`raise`]) while fewer
+/// - **Bands.** Each due band (queue order) rises (`raise`) while fewer
 ///   than `max_bands` bandit bands are alive; at the cap it waits, and
 ///   its town broods once (its scar deepens by `brood_scar`, at most
 ///   `tenure.max_sack_scar`). A band whose town is no longer the player's

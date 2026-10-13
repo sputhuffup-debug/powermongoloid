@@ -118,11 +118,32 @@ Every cargo command with `-j 2` and `CARGO_INCREMENTAL=0`, tests with `--test-th
 
 | Check | Result |
 |---|---|
-CHECKS
+| `cargo fmt --all --check` | clean |
+| `cargo clippy -j 2 --workspace --all-targets -- -D warnings` | clean |
+| `RUSTDOCFLAGS="-D warnings" cargo doc -j 2 --workspace --no-deps` | clean (after unlinking two private items) |
+| Unit tests: sim_military, sim_core, sim_agents, sim_headless, game_ui | all pass (sim_military 100 + 1 ignored; game_ui 65; sim_core 39; sim_agents 30; sim_headless 8) |
+| `fallout` (new), `rival` | 7/7, 6/6 |
+| Re-run: `champion`, `chronicle`, `conquest`, `director`, `docs`, `dominion`, `edicts`, `gather`, `influence`, `invitation`, `monuments`, `orders`, `run_start`, `save_load`, `sellswords`, `take_modes`, `tenure`, `wanderers`, `village_day`, `famine`, `posture`, `army_march`, `starving_army` | all pass (`edicts::a_levy_musters_and_joins` with fallout off, deviation 7; step 5's three base failures now pass) |
+| Determinism (`tests/determinism.rs`) | 13/13, including `a_bot_run_replays` |
+| Run replay | `--run --seed 42 --ticks 3000 --commands 50 --record`, then `--replay` and `--replay --single-threaded`: both `replay ok: seed=42 ticks=3000 commands=51 checkpoints=3` |
+| Stdout invariance (release, `cmp` against `docs/m4a/baseline/*.out`) | developed, skirmish, battle: **byte-identical** (after the calibration) |
+| `bot_run` (release, `--ignored`) | **5 of 5 won**, quiet limit held (999 of 1,000), 357 s; earliest day 20.4, median **21.7** (floor 14, band 14.4..22.4): passes |
+| Cost (NFR-11) | not run: a merge-point check (LANE_RULES). A botless run takes nothing, so fallout adds one realm sum an hour and an empty queue check |
 
 **`bot_run` per seed** (release, `--ignored`, steady; takes are Attack / Sack / Submitted / Invited):
 
-BOTRUN
+| Seed | Won on day | Taken / lost / held | Attack / Sack / Submitted / Invited | Defied | Bandit bands | Raids on rival / player / other | Vows | Reprisals | Retaken | Revolts |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 22.6 | 9 / 1 / 8 | 2 / 0 / 6 / 1 | 1 | 1 | 1 / 0 / 0 | 0 | 0 | 0 | 0 |
+| 2 | 24.9 | 9 / 6 / 3 | 1 / 0 / 8 / 0 | 1 | 0 | 0 / 0 / 0 | 4 | 1 | 0 | 0 |
+| 3 | 21.7 | 11 / 5 / 6 | 1 / 0 / 8 / 2 | 3 | 0 | 0 / 0 / 0 | 0 | 0 | 0 | 0 |
+| 4 | 20.4 | 8 / 1 / 7 | 2 / 0 / 6 / 0 | 1 | 1 | 5 / 0 / 0 | 2 | 1 | 0 | 0 |
+| 5 | 20.5 | 9 / 2 / 7 | 1 / 0 / 7 / 1 | 0 | 0 | 0 / 0 / 0 | 0 | 0 | 0 | 0 |
+
+Median 21.7 against M4's 18.4 (MP2: 8.2). Raids are the bot's hourly sample of `Bandits.raids` by the
+owner of the band's target (approximate). Seed 2's four vows launched once: the others were replaced
+within the cooldown rules or still pending at the win. Its losses beyond the one defiance are not
+retakes or revolts in the bot's counts (not investigated further; recorded for MP3).
 
 ## 5. Names later steps must use
 
