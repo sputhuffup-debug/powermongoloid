@@ -77,9 +77,12 @@ All commands used `-j 2` and `CARGO_INCREMENTAL=0`, and tests ran with `--test-t
 | `cargo fmt --all --check`; `cargo clippy -j 2 --workspace --all-targets -- -D warnings`; `RUSTDOCFLAGS="-D warnings" cargo doc -j 2 --workspace --no-deps` | clean |
 | Unit tests: game_ui 60, sim_agents 32, sim_economy 13, sim_headless 8, sim_military 97 (+1 ignored) | all pass |
 | The whole integration suite (`-p integration_tests --no-fail-fast`, every run-preset test, `determinism`, `docs`, `village_day`, `famine`, `save_load`, `take_modes`, `smithy_chain`, ...) | all pass, after `conquest` and `edicts` opted out (deviation 7) |
+| `bot_run` (release, `--ignored`) | **5 of 5 won**, but under the win-day floor, as the MP2 base already is. This branch: seed 1 day 7.9, seed 2 6.2, seed 3 7.5, seed 4 8.1, seed 5 14.2 (median 7.9). Base `8182929`, run the same way: 8.2, 17.2, 7.1, 11.1, 7.3 (median 8.2). The takes are mostly Demands (submitted 1 to 3 a seed, one Attack each, one defiance each). The floor is step 6's (ADR 0020 "Merge point 2": the seat follows its realm), so it is not chased here. Seed 2 moved most (17.2 to 6.2): its island's layout changed with the specialties |
 | Run replay: `--run --seed 42 --ticks 3000 --commands 50 --record`, then `--replay` and `--replay --single-threaded` | 51 commands; the same hash `0x75f31a853372a4bf` all three |
 
 ## Open issues
+
+- **The win-day floor is broken on the base, and stays broken here** (median 8.2 on MP2, 7.9 here; the floor wants no seed before day 14). Step 6's realm share is where the plan puts the fix. The Forge census (CENSUS.md proposal 1) is a second lever if it is still short after step 6.
 
 - **Seed 7's #22** (280 people, Farming) starves in every census variant, with or without specialties: a site too poor for its size (CENSUS.md).
 - **Weapons may be too plentiful** for step 10's target (12 to 25 a day per smithy on Forge): CENSUS.md proposal 1.
