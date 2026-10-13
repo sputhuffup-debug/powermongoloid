@@ -146,7 +146,10 @@ pub use requests::{Request, RequestBoard, RequestKind, Reward};
 pub use rival::{RivalBand, RivalData, RivalState, Vow};
 pub use soldiers::slot_offset;
 pub use spawn::{ArmySpec, Skirmish, nearest_passable, setup_battle, setup_skirmish, spawn_army};
-pub use tenure::{TakenBy, Taking, Tenure, TenureData};
+pub use tenure::{
+    Parley, TakenBy, Taking, Tenure, TenureData, WatchView, bond_term, parley, paying_tribute,
+    settles_at, strength_near, watch,
+};
 pub use veterans::Veteran;
 pub use wild::WildFood;
 

@@ -4,7 +4,7 @@
 //!
 //! Mouse: right-click ground = move there (Shift queues); right-click a
 //! village = attack, recruit, gather food, trade, equip, give food,
-//! garrison or move.
+//! garrison, move or (towns not yours, in a run) demand submission.
 //! Keys (army selected): R return to camp, F forage where the army stands,
 //! Backspace cancel orders, P cycle posture.
 
@@ -22,6 +22,7 @@ use sim_military::{
 };
 use sim_world::{Settlement, WorldMap};
 
+use crate::panels::take::{self, TakeView};
 use crate::selection::{Selection, ground_hit};
 use crate::style;
 
@@ -36,6 +37,7 @@ impl Plugin for ArmyUiPlugin {
                 (
                     right_click.run_if(crate::playing),
                     menu_buttons,
+                    menu_labels,
                     panel_buttons,
                     hotkeys.run_if(crate::playing),
                     draw_menu,
@@ -77,9 +79,16 @@ enum PanelButton {
 
 /// The open settlement order menu, if any.
 #[derive(Resource, Default)]
-struct OrderMenu {
+pub(crate) struct OrderMenu {
     open: Option<MenuTarget>,
     root: Option<Entity>,
+}
+
+impl OrderMenu {
+    /// The open menu's (captain, settlement) SpawnIds, if one is open.
+    pub(crate) fn target(&self) -> Option<(u64, u64)> {
+        self.open.map(|t| (t.captain, t.settlement))
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -104,10 +113,12 @@ enum MenuAction {
     Give,
     Garrison,
     Move,
+    /// GP-32 (M4a): ask a town to kneel.
+    Demand,
 }
 
 impl MenuAction {
-    const ALL: [MenuAction; 8] = [
+    const ALL: [MenuAction; 9] = [
         MenuAction::GatherFood,
         MenuAction::Recruit,
         MenuAction::Trade,
@@ -116,6 +127,7 @@ impl MenuAction {
         MenuAction::Attack,
         MenuAction::Garrison,
         MenuAction::Move,
+        MenuAction::Demand,
     ];
 
     fn label(self) -> &'static str {
@@ -130,9 +142,24 @@ impl MenuAction {
             // GP-05: refused unless you hold the settlement.
             MenuAction::Garrison => "Garrison",
             MenuAction::Move => "Move here",
+            MenuAction::Demand => "Demand submission",
+        }
+    }
+
+    /// The label with a town's facts in hand (M4a step 5): "Gift food" and
+    /// "Demand submission" carry their forecasts; `None` hides the button.
+    fn text(self, facts: Option<&take::Facts>) -> Option<String> {
+        match self {
+            MenuAction::Give => Some(take::gift_label(facts)),
+            MenuAction::Demand => take::demand_label(facts),
+            other => Some(other.label().to_string()),
         }
     }
 }
+
+/// The text of a menu button (so [`menu_labels`] can find it).
+#[derive(Component)]
+struct MenuLabel(MenuAction);
 
 fn spawn_army_panel(mut commands: Commands) {
     commands
@@ -301,7 +328,7 @@ fn right_click(
     }
 }
 
-fn draw_menu(mut commands: Commands, mut menu: ResMut<OrderMenu>) {
+fn draw_menu(mut commands: Commands, mut menu: ResMut<OrderMenu>, take: Res<TakeView>) {
     if !menu.is_changed() {
         return;
     }
@@ -327,19 +354,28 @@ fn draw_menu(mut commands: Commands, mut menu: ResMut<OrderMenu>) {
             GlobalZIndex(10),
         ))
         .with_children(|m| {
+            let facts = take.get(target.settlement);
             for action in MenuAction::ALL {
+                // Hidden until its facts say it applies (`menu_labels`).
+                let text = action.text(facts);
                 m.spawn((
                     Button,
                     MenuButton(action),
                     Node {
                         padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+                        display: if text.is_some() {
+                            Display::Flex
+                        } else {
+                            Display::None
+                        },
                         ..default()
                     },
                     BackgroundColor(style::BUTTON),
                 ))
                 .with_children(|b| {
                     b.spawn((
-                        Text::new(action.label()),
+                        MenuLabel(action),
+                        Text::new(text.unwrap_or_default()),
                         style::font(13.0),
                         TextColor(style::TEXT),
                     ));
@@ -350,8 +386,56 @@ fn draw_menu(mut commands: Commands, mut menu: ResMut<OrderMenu>) {
     menu.root = Some(root);
 }
 
+/// Keeps the open menu's labels current (M4a step 5): "Gift food (+0.08
+/// goodwill)", "Demand submission (need 11 within 40, have 8)", greyed with
+/// its reason when refused, hidden where it doesn't apply.
+fn menu_labels(
+    menu: Res<OrderMenu>,
+    take: Res<TakeView>,
+    mut buttons: Query<(&MenuButton, &mut Node, &mut BackgroundColor)>,
+    mut texts: Query<(&MenuLabel, &mut Text, &mut TextColor)>,
+) {
+    let _span = info_span!("game_ui::army::menu_labels").entered();
+    let Some(t) = menu.open else {
+        return;
+    };
+    let facts = take.get(t.settlement);
+    for (button, mut node, mut bg) in &mut buttons {
+        let shown = if button.0.text(facts).is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        node.set_if_neq(Node {
+            display: shown,
+            ..node.clone()
+        });
+        let off = button.0 == MenuAction::Demand && !take.demand_open(t.settlement);
+        let colour = if off {
+            style::BUTTON_OFF
+        } else {
+            style::BUTTON
+        };
+        if bg.0 != colour {
+            bg.0 = colour;
+        }
+    }
+    for (label, mut text, mut colour) in &mut texts {
+        let new = label.0.text(facts).unwrap_or_default();
+        if text.0 != new {
+            text.0 = new;
+        }
+        let off = label.0 == MenuAction::Demand && !take.demand_open(t.settlement);
+        let c = if off { style::DIM } else { style::TEXT };
+        if colour.0 != c {
+            colour.0 = c;
+        }
+    }
+}
+
 fn menu_buttons(
     mouse: Res<ButtonInput<MouseButton>>,
+    take: Res<TakeView>,
     buttons: Query<(&Interaction, &MenuButton), Changed<Interaction>>,
     mut menu: ResMut<OrderMenu>,
     mut out: MessageWriter<SimCommand>,
@@ -364,6 +448,10 @@ fn menu_buttons(
             continue;
         }
         let s = t.settlement;
+        // A greyed demand does nothing (the sim would refuse it too).
+        if button.0 == MenuAction::Demand && !take.demand_open(s) {
+            return;
+        }
         let order = match button.0 {
             MenuAction::Attack => OrderSpec::Attack { settlement: s },
             MenuAction::Recruit => OrderSpec::Recruit {
@@ -379,6 +467,7 @@ fn menu_buttons(
                 x: t.tile.x,
                 y: t.tile.y,
             },
+            MenuAction::Demand => OrderSpec::Demand { settlement: s },
         };
         send(
             &mut out,

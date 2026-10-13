@@ -3,8 +3,12 @@
 
 use bevy::prelude::*;
 use game_render::{CameraRig, surface_point};
-use sim_core::NameTable;
+use sim_agents::Owner;
+use sim_core::{FactionId, NameTable, SpawnId};
+use sim_military::Tenure;
 use sim_world::{Settlement, WorldMap};
+
+use crate::panels::take::{self, TakeView};
 
 /// Labels hide beyond this camera distance (world units).
 const MAX_LABEL_DISTANCE: f32 = 1800.0;
@@ -20,6 +24,7 @@ impl Plugin for SettlementLabelsPlugin {
             (
                 clear_labels.run_if(game_render::epoch_changed),
                 spawn_labels,
+                mark_labels,
                 place_labels,
                 click_labels,
             )
@@ -92,6 +97,45 @@ fn spawn_labels(
     }
 }
 
+/// A label's text: the town's name and, in a run, its tenure mark (GP-32,
+/// M4a step 5) and whether a submitted town is watched.
+fn label_text(name: &str, mark: Option<String>) -> String {
+    match mark {
+        Some(m) => format!("{name} {m}"),
+        None => name.to_string(),
+    }
+}
+
+/// Appends each run town's tenure mark to its label: sword, broken sword,
+/// bent knee, ribbon or eye as ASCII tags, and "watched" on a submitted
+/// town of yours paying tribute. Reads only; the watch comes from the
+/// [`TakeView`].
+fn mark_labels(
+    names: Option<Res<NameTable>>,
+    take: Res<TakeView>,
+    towns: Query<(&SpawnId, &Settlement, Option<&Tenure>, Option<&Owner>)>,
+    mut labels: Query<(&SettlementLabel, &mut Text)>,
+) {
+    let _span = info_span!("game_ui::labels::mark_labels").entered();
+    let Some(names) = names else {
+        return;
+    };
+    for (label, mut text) in &mut labels {
+        let Ok((id, settlement, tenure, owner)) = towns.get(label.settlement) else {
+            continue;
+        };
+        let owner = owner.map_or(FactionId::INDEPENDENT, |o| o.faction);
+        let mark = tenure.and_then(|t| {
+            let watched = take.tribute(id.0).map(|t| t.watched_now);
+            take::tenure_mark(owner, t.how, watched)
+        });
+        let new = label_text(names.get(settlement.name), mark);
+        if text.0 != new {
+            text.0 = new;
+        }
+    }
+}
+
 fn click_labels(
     labels: Query<(&Interaction, &SettlementLabel), Changed<Interaction>>,
     mut selection: ResMut<crate::selection::Selection>,
@@ -129,5 +173,19 @@ fn place_labels(
             }
             _ => *visibility = Visibility::Hidden,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_label_is_the_name_then_the_mark() {
+        assert_eq!(label_text("Gorsefield", None), "Gorsefield");
+        assert_eq!(
+            label_text("Gorsefield", Some("[bent knee, watched]".into())),
+            "Gorsefield [bent knee, watched]"
+        );
     }
 }

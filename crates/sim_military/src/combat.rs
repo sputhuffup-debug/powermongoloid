@@ -256,6 +256,21 @@ pub(crate) fn casualties(world: &mut World) {
                 }
             }
         }
+        // GP-32 (M4a step 5, run only): one of a town's broken men fell;
+        // a fight against them is never its defence (`tenure::step`).
+        let band = if world.get::<Captain>(e).is_some() {
+            Some(e)
+        } else {
+            world.get::<Follower>(e).map(|f| f.captain)
+        };
+        if let Some(home) = band
+            .and_then(|a| world.get::<crate::components::Bandits>(a))
+            .map(|b| b.home)
+            && let Some(town) = crate::orders::find_settlement(world, home)
+            && let Some(mut t) = world.get_mut::<crate::tenure::Tenure>(town)
+        {
+            t.kin_fell = tick + 1;
+        }
         let enlisted = world.get::<Enlisted>(e).is_some();
         if enlisted {
             world.resource_mut::<ArmyStats>().of(faction).lost += 1;

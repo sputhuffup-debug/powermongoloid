@@ -173,6 +173,27 @@ pub fn step(world: &mut World) {
     }
 }
 
+/// What accepting town `s`'s invitation would make it (GP-32, M4a step 5:
+/// the card's "Sworn" words come from the tenure-to-be): residents' loyalty
+/// seeded from their goodwill toward the player (`sim_agents::default_seed`)
+/// and the Bond term it starts with (`tenure.bond`). `None` outside a run.
+pub fn sworn_terms(world: &World, s: Entity) -> Option<SwornTerms> {
+    world.get::<crate::tenure::Tenure>(s)?;
+    Some(SwornTerms {
+        seed: sim_agents::standing::default_seed(world, s, FactionId::PLAYER).clamp(0.0, 1.0),
+        bond: world.resource::<Progression>().data.tenure.bond,
+    })
+}
+
+/// The tenure an accepted invitation starts ([`sworn_terms`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SwornTerms {
+    /// Residents' loyalty at the start.
+    pub seed: f32,
+    /// The Bond term at the start.
+    pub bond: f32,
+}
+
 /// A settlement as [`step`] weighs it.
 struct Place {
     id: u64,

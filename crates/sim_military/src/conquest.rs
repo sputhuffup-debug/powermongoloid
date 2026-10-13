@@ -218,14 +218,19 @@ pub(crate) fn garrison_and_rebels(world: &World, at: IVec2, owner: FactionId) ->
 
 /// Residents of `s` who could take up arms (the villager AI's own test for
 /// fighting, SIM-13): adult, alive, not starving, civilian, with morale at
-/// least `fight.break_morale`.
-fn would_be_militia(world: &mut World, s: Entity) -> u32 {
+/// least `fight.break_morale`. A demand's defence and a submitted town's
+/// watch weigh them too (GP-32, `tenure::parley`, `tenure::watch`).
+pub(crate) fn would_be_militia(world: &World, s: Entity) -> u32 {
     let villagers = world.resource::<Villagers>();
     let starving = villagers.data.needs.starving;
     let break_morale = villagers.data.ai.fight.break_morale;
     let adult = villagers.data.households.working_age.min;
     let days_per_year = world.resource::<Calendar>().days_per_year().max(1);
-    let mut q = world.query_filtered::<(&Villager, &CombatStats, &Needs), Without<Enlisted>>();
+    let Some(mut q) =
+        world.try_query_filtered::<(&Villager, &CombatStats, &Needs), Without<Enlisted>>()
+    else {
+        return 0;
+    };
     q.iter(world)
         .filter(|(v, cs, needs)| {
             v.settlement == s

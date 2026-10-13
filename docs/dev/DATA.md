@@ -240,7 +240,7 @@ Runs: GP-21, GP-27 and SIM-34 (M4, see [M4_PLAN.md](../M4_PLAN.md)). The start, 
 | `goodwill_deeds.provoke` | The settlement is provoked into arms by the faction (once per provocation, not per tick) |
 | `goodwill_deeds.killing` | Each of the settlement's militia killed, toward the faction they fought |
 | `goodwill_deeds.request` | A request of the settlement answered (`requests`): toward the player, at the settlement that asked |
-| `goodwill_deeds.defended` | M4a (step 5, run only): an army fought near the town for it, at most once a town a day (`Deed::Defended`). Optional, like every M4a row: text without it reads the shipped value |
+| `goodwill_deeds.defended` | M4a (step 5, run only, `tenure::step`): a player army ended a battle against raiders or the rival with at least one kill, its captain within army.ron `threat.radius` of an independent or player town: that town saw you fight for it (`Deed::Defended`), at most once a town a day, not on a day a drive-off there was answered, and never against bandits whose home is that town. Optional, like every M4a row: text without it reads the shipped value |
 | `goodwill_deeds.festival` | M4a (step 4): a feast its lord gave (`Deed::Festival`; word of it spreads) |
 | `goodwill_deeds.forsaken` | M4a (step 5): a sworn (invited) town's drive-off request left to lapse (`Deed::Forsaken`; spreads) |
 | `goodwill_deeds.threat` | M4a (step 5): a demand the town refused (`Deed::Threat`) |
@@ -382,9 +382,9 @@ M4a "Lordship" ([LORDSHIP_DESIGN.md](../LORDSHIP_DESIGN.md) section 10, [ADR 002
 | `tenure.max_conquest_scar`, `tenure.max_sack_scar` | The caps of a conquest's and a sack's scar |
 | `tenure.subverted_scar` | A turned town's scar |
 | `tenure.scar_fade_per_day` | Scars fade this much at each day tick |
-| `tenure.bond`, `tenure.kept_bond`, `tenure.max_bond` | Step 5: an invited town's Bond term, plus `kept_bond` per defence kept, at most `max_bond` (-1..1) |
-| `tenure.forsaken_bond`, `tenure.forsaken_after` | Step 5: once forsaken `forsaken_after` times, the Bond term is `forsaken_bond` for good |
-| `demand` | GP-32 (step 5): `OrderSpec::Demand`, an hour's parley at the gate, then a kneeling or a refusal; a submitted town is watched by the hour and defies its lord after weak days (LORDSHIP_DESIGN section 5.2). Refused ("not yet") until step 5 |
+| `tenure.bond`, `tenure.kept_bond`, `tenure.max_bond` | Step 5: an invited town's Bond term, plus `kept_bond` per defence kept (`Tenure.kept`: an answered drive-off there, or a `Defended` deed), at most `max_bond` (-1..1) |
+| `tenure.forsaken_bond`, `tenure.forsaken_after` | Step 5: once forsaken `forsaken_after` times (a drive-off request at an invited town of yours lapsed: `Deed::Forsaken`, a `Forsaken` event, `Tenure.broken`), the Bond term is `forsaken_bond` for good |
+| `demand` | GP-32 (step 5, `orders::demand`, `tenure::parley`, `tenure::watch`): `OrderSpec::Demand` (the player's, at an independent or rival town other than the seat, not during a refusal's cooldown), an hour's parley at the gate within army.ron `recruit.radius` (a hostile army within `threat.radius`, never a monument's guard camp, breaks it off), then a kneeling (`Cause::Submission`, its Dues dial held at Tithe and locked until it settles, no Dues term) or a refusal; a submitted town is watched by the hour in `tenure::step` (slot 14) and defies its lord after weak days (LORDSHIP_DESIGN section 5.2). Checked by `tests/tests/take_modes.rs` |
 | `demand.radius` | Your strength counts your unrouted soldiers within this many tiles |
 | `demand.parley_hours` | The parley lasts this many game hours |
 | `demand.ratio` | It submits when your strength is at least this times its defence |
@@ -392,16 +392,16 @@ M4a "Lordship" ([LORDSHIP_DESIGN.md](../LORDSHIP_DESIGN.md) section 10, [ADR 002
 | `demand.armed_weight` | An armed soldier's strength (an unarmed one counts 1) |
 | `demand.seed` | Residents' loyalty after kneeling (0..1) |
 | `demand.awe` | The Awe loyalty term while the town is watched |
-| `demand.watch_radius`, `demand.hold_ratio` | Watched for the hour when your strength within `watch_radius` is at least `hold_ratio` times its defence ... |
+| `demand.watch_radius`, `demand.hold_ratio` | Watched for the hour when your strength within `watch_radius` is at least `hold_ratio` times its defence (its able adults times `militia_weight`: you are its garrison now) ... |
 | `demand.watch_garrison` | ... or a town of yours within `watch_radius` has a garrison of at least this many ... |
 | `demand.watch_share` | ... or your other towns' influence share there is at least this (0..1) |
-| `demand.watch_hours` | A day with fewer watched hours than this is a weak day (at most 24) |
+| `demand.watch_hours` | A day with fewer watched hours than this is a weak day (at most 24). The day it knelt in is not judged |
 | `demand.weak_days` | Weak days in a row before it defies you (`Cause::Defiance`) |
 | `demand.settle_days` | After this many days without defying it settles: no more watch, tribute lock or awe |
 | `demand.refuse_cooldown_days` | Days a refusal keeps the town from another demand (`Tenure.cool_until`) |
-| `court` | GP-32 (step 5): `Give` at a town you don't hold posts `Deed::Gift` |
-| `court.gift_per_day_of_need`, `court.max_gift` | A gift's goodwill: this per day of the town's need given, at most `max_gift` (0..1), at most once a town a day |
-| `court.hungry_mult` | ... times this when the town is hungry |
+| `court` | GP-32 (step 5, `tenure::gift`): in a run, `Give` at a town posts `Deed::Gift` toward the giver (no spread rule of its own: it spreads as deeds do). Checked by `gifts_and_defence_court_a_town` |
+| `court.gift_per_day_of_need`, `court.max_gift` | A gift's goodwill: this per day of the town's need given, at most `max_gift` (0..1), at most once a town a day (`Tenure.gift_day`) |
+| `court.hungry_mult` | ... then times this when the town is hungry (its food security under `requests.food_days`), so a hungry town's gift can reach `max_gift x hungry_mult` |
 | `subvert` | GP-32 (step 7): `OrderSpec::Subvert`, an agent (`sim_agents::Agent`) in a rival town (LORDSHIP_DESIGN section 5.4). Refused ("not yet") until step 7 |
 | `subvert.bribe_food`, `subvert.bribe_goods` | The bribe: this much food value, or this many weapons or tools |
 | `subvert.max_agents` | Agents alive at most |

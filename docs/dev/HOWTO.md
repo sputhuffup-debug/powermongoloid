@@ -68,6 +68,17 @@ Example: `Hide` (SIM-13).
 4. **Make it reachable from the UI** in `crates/game_ui/src/army.rs` (menu entry or hotkey). The UI only writes `SimCommand`s.
 5. **Add it to the random orders** in `sample_orders` in `crates/sim_headless/src/lib.rs`, so the determinism test exercises it. Add a scenario test in `tests/tests/orders.rs`, or in a file of its own for an order that plays out over days (Garrison's is `tests/tests/conquest.rs`).
 
+## Add a way to take a town
+
+M4a (GP-32, [ADR 0020](../adr/0020-lordship.md)) has a town change hands in exactly one place, `conquest::transfer_seeded` in `crates/sim_military/src/conquest.rs`, and every way of taking it leaves its own `Tenure` (`crates/sim_military/src/tenure.rs`). Example: the Demand (step 5).
+1. **Name it:** append a `Cause` (in `crates/sim_core/src/events.rs`, with its tag, `name` and a phrase in `assets/data/progression.ron` `chronicle.causes`), a `TakenBy` if the tenure is new (`TakenBy::of` maps the cause), and, if it is reported as its own kind, a `SimEventKind` with its words in `sim_military::chronicle::describe`. Map it in `conquest::taking_kind` and decide its counters there (`conquests`, champion credit, the run summary in `chronicle.rs`); `tests/tests/tenure.rs` `every_cause_maps_to_its_kind_and_counters` pins the table.
+2. **The verb:** an order (see "Add a captain order": `validate_spec` and `step_order` in `crates/sim_military/src/orders.rs`; `demand` is a two-step example: march, then a clocked parley) or a progress step. Show its preconditions with a pure function the UI can call with `&World` (`tenure::parley`), so the menu says what the sim will weigh.
+3. **Hand it over** with `transfer_seeded(world, s, to, cause, seed)` from a serial step; never `set_owner` directly. Its scar comes from `TenureData::scar`; what the town remembers lives in `Tenure` (amend the type, its hash, `save_fields!` and `Tenure::new`/`retake` together).
+4. **What it leaves:** a loyalty term (see "Add a loyalty term": Awe and Bond are written in `tenure::rebuild_terms`) and any hourly rule in `tenure::step` (progress slot 14: the submitted town's watch, defiance and settling). A rule that touches another lane's state writes it through that lane's type (the tribute holds `sim_agents::Edicts`' Dues dial) and does not reimplement its effects.
+5. **Run only:** gate it on a `Tenure` or `RunState::in_run`, and check the three guarded stdout outputs stay byte-identical.
+6. **Data and docs:** its block in progression.ron with [DATA.md](DATA.md) rows; the glossary term; the slot or system in [ARCHITECTURE.md](ARCHITECTURE.md).
+7. **Test it** in `tests/tests/take_modes.rs`: the take and its tenure, its refusal or failure, and what it leaves over the following days; teach the bot (`crates/sim_headless/src/bot.rs`) and re-run `bot_run`.
+
 ## Make a deed move goodwill
 
 Goodwill (GP-22) changes only through the ledger in `crates/sim_agents/src/standing.rs`, so the spread to nearby settlements and the order of application stay deterministic.

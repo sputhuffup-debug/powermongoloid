@@ -40,6 +40,8 @@ struct Played {
     /// The longest time without a notable event, and the limit (ticks).
     quiet: (u64, u64),
     summary: sim_military::RunSummary,
+    /// Takes by way (M4a step 5): the bot's own count.
+    takes: String,
 }
 
 fn play(seed: u64) -> Played {
@@ -79,6 +81,7 @@ fn play(seed: u64) -> Played {
         commands: run.log.len(),
         quiet: (worst, limit),
         summary: sim_military::run_summary(app.world_mut()),
+        takes: run.takes.describe(),
     }
 }
 
@@ -98,7 +101,7 @@ fn the_bot_wins_three_of_five_runs_within_forty_days() {
     for r in &runs {
         let s = &r.summary;
         println!(
-            "seed {}: {:?} ({:?}) on day {:.1} | {} commands | settlements taken {} lost {} held {} ({} people) | monuments taken {} | battles {} kills {} lost {} | veterans {} | requests {} | longest quiet {} of {} ticks",
+            "seed {}: {:?} ({:?}) on day {:.1} | {} commands | settlements taken {} lost {} held {} ({} people) | monuments taken {} | battles {} kills {} lost {} | veterans {} | requests {} | longest quiet {} of {} ticks | {}",
             r.seed,
             r.outcome,
             r.cause,
@@ -116,6 +119,7 @@ fn the_bot_wins_three_of_five_runs_within_forty_days() {
             s.requests_done,
             r.quiet.0,
             r.quiet.1,
+            r.takes,
         );
     }
     // GP-16: never quiet for longer than the limit.
