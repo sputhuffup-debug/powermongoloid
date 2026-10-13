@@ -401,7 +401,10 @@ fn every_lordship_type_round_trips() {
     let world = app.world_mut();
     world.entity_mut(folk[0].0).insert(agent);
     world.entity_mut(folk[1].0).insert(steward.clone());
-    world.entity_mut(folk[2].0).insert(Rationed);
+    world.entity_mut(folk[2].0).insert(Rationed {
+        hunger: 0.75,
+        work: 1.1,
+    });
     world.entity_mut(folk[3].0).insert(Mustered { since: 1 });
     world.entity_mut(folk[4].0).insert(assignment);
     world.entity_mut(towns[2].0).insert(Specialty::Mining);
