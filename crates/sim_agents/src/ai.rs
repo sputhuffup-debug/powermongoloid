@@ -1,6 +1,12 @@
 //! Utility AI (SIM-12): every option is scored from needs, the phase of the
 //! day, what's available and how far away it is. No scripted schedules: a
 //! villager goes to work in the morning because Work scores highest then.
+//!
+//! In a run, economy.ron `haul.run_fixes` turns on the smithy-chain fixes
+//! (SIM-64, ADR 0020): [`RunFixes`]. Outside a run the M2 rules apply
+//! unchanged.
+
+use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
@@ -20,8 +26,54 @@ use crate::components::{
 };
 use crate::data::Villagers;
 
-/// Goods a carter won't bother collecting below.
+/// Goods a carter won't bother collecting below (in a run with the fixes,
+/// economy.ron `haul.min_load` lowers it per good).
 pub const MIN_LOAD: u32 = 8;
+
+/// The smithy-chain fixes in force for this tick (SIM-64, ADR 0020): `Some`
+/// in [`Me::fixes`] only in a run with economy.ron `haul.run_fixes`.
+///
+/// - `work_state` counts only a workplace's outputs as fullness, so a
+///   workplace full of inputs is Ready.
+/// - An input delivery brings at most `haul.input_target` cycles' worth
+///   minus the stock (capped where it is picked up, `act::perform`), and
+///   a carter takes no (workplace, good) delivery that a carter, or a
+///   worker fetching its own, is already on.
+/// - A worker at a workshop (a recipe with inputs) whose hands are too
+///   full for a cycle (units or slots) puts surplus inputs into the
+///   workplace and carries anything else to the storehouse first, and someone
+///   fetching food leaves other goods there rather than taking them home.
+/// - Carters collect piles of `haul.min_load` goods from that size, and a
+///   worker carries in half a load of them itself.
+/// - A work cycle under way stays Work (the M2 rules let a worker switch
+///   to a haul mid-cycle, throwing away its inputs and time), and one that
+///   has used inputs scores `haul.cycle_hold` times as high, so a meal
+///   usually waits for its end.
+#[derive(Debug, Default)]
+pub struct RunFixes {
+    /// Input deliveries under way, by carters or a workplace's own
+    /// workers: (workplace, good) to the hauler (lowest SpawnId) on it, as
+    /// of the start of this tick. A carter takes no delivery someone is
+    /// already on; workers fetching their own inputs (a load each, at the
+    /// same cap) don't wait for each other.
+    pub claims: BTreeMap<(Entity, GoodId), SpawnId>,
+}
+
+impl RunFixes {
+    /// Whether someone other than `me` is already on this delivery.
+    fn taken(&self, workplace: Entity, good: GoodId, me: &Me) -> bool {
+        me.hauling != Some((workplace, good))
+            && self
+                .claims
+                .get(&(workplace, good))
+                .is_some_and(|id| *id != me.id)
+    }
+}
+
+/// Whether the smithy-chain fixes apply: a run, and `haul.run_fixes`.
+pub fn run_fixes_on(run: Option<&sim_core::RunState>, econ: &Economy) -> bool {
+    run.is_some_and(|r| r.in_run()) && econ.data.haul.run_fixes
+}
 
 /// Read-only world state the AI looks at.
 #[derive(SystemParam)]
@@ -47,6 +99,8 @@ pub struct AiWorld<'w, 's> {
     pub map: Res<'w, WorldMap>,
     pub owners: Query<'w, 's, &'static crate::standing::Owner>,
     pub mods: Res<'w, sim_core::FactionModifiers>,
+    /// Whether this is a run (SIM-64's fixes apply only in one).
+    pub run: Option<Res<'w, sim_core::RunState>>,
 }
 
 /// Whether a worker can produce right now.
@@ -57,6 +111,10 @@ enum WorkState {
     Full(GoodId),
     /// This input is missing.
     NeedsInput(GoodId),
+    /// Run fixes: the worker's hands are too full for a cycle and hold this
+    /// good, which isn't an input (or more of one than a cycle takes);
+    /// carry it to the storehouse first.
+    Drop(GoodId),
     Impossible,
 }
 
@@ -91,9 +149,35 @@ pub struct Me<'a> {
     pub tile: IVec2,
     pub adult: bool,
     pub morale: f32,
+    /// The smithy-chain fixes, in a run (SIM-64); `None` keeps the M2 rules.
+    pub fixes: Option<&'a RunFixes>,
+    /// Whether a work cycle is under way (its inputs already used).
+    pub mid_cycle: bool,
+    /// The (drop-off, good) of the haul under way, if any: a hauler keeps
+    /// its own delivery even if someone else has since claimed it.
+    pub hauling: Option<(Entity, GoodId)>,
 }
 
 impl AiWorld<'_, '_> {
+    /// Whether hauling `good` to `dropoff` is an input delivery: `dropoff`
+    /// is a workplace whose recipe takes it (SIM-64).
+    fn is_delivery(&self, dropoff: Entity, good: GoodId) -> bool {
+        self.buildings
+            .get(dropoff)
+            .ok()
+            .and_then(|(_, _, wp, _)| wp?.recipe)
+            .is_some_and(|r| self.econ.recipe(r).inputs.iter().any(|(g, _)| *g == good))
+    }
+
+    /// Whether `workplace`'s recipe takes inputs (SIM-64).
+    fn uses_inputs(&self, workplace: Entity) -> bool {
+        self.buildings
+            .get(workplace)
+            .ok()
+            .and_then(|(_, _, wp, _)| wp?.recipe)
+            .is_some_and(|r| !self.econ.recipe(r).inputs.is_empty())
+    }
+
     fn tile_of(&self, e: Entity) -> Option<IVec2> {
         self.buildings.get(e).ok().map(|(b, ..)| b.tile)
     }
@@ -259,6 +343,16 @@ impl AiWorld<'_, '_> {
             let (kind, target, dropoff, good, possible) = match self.work_state(me, workplace) {
                 WorkState::Ready => (ActionKind::Work, Some(workplace), None, None, 1.0),
                 WorkState::Full(g) => (ActionKind::Haul, Some(workplace), store, Some(g), 1.0),
+                // Surplus inputs go into the workplace; anything else to
+                // the storehouse.
+                WorkState::Drop(g) => {
+                    let dropoff = if self.is_delivery(workplace, g) {
+                        Some(workplace)
+                    } else {
+                        store
+                    };
+                    (ActionKind::Haul, Some(workplace), dropoff, Some(g), 1.0)
+                }
                 WorkState::NeedsInput(g) => {
                     let in_store = store.and_then(|s| self.stock(s)).map_or(0, |s| s.get(g));
                     let ok = if in_store > 0 { 1.0 } else { 0.0 };
@@ -268,14 +362,27 @@ impl AiWorld<'_, '_> {
             };
             let goal = target.and_then(|t| self.tile_of(t)).or(wp_tile);
             let dist = self.distance_factor(me.tile, goal);
+            // Run fixes: a cycle that has used its inputs holds on harder
+            // (`haul.cycle_hold`), so a meal waits for its end.
+            let hold = match me.fixes {
+                Some(_) if me.mid_cycle && self.uses_inputs(workplace) => {
+                    self.econ.data.haul.cycle_hold
+                }
+                _ => 1.0,
+            };
+            let possible_factor = if hold != 1.0 {
+                ("cycle under way", hold)
+            } else {
+                ("work possible", possible)
+            };
             out.push(Candidate {
                 option: ScoredOption {
                     kind,
-                    score: w.weight * time * fit * possible * dist,
+                    score: w.weight * time * fit * possible * hold * dist,
                     factors: Factors::new(&[
                         ("time of day", time),
                         ("fit to work", fit),
-                        ("work possible", possible),
+                        possible_factor,
                         ("distance", dist),
                     ]),
                 },
@@ -411,6 +518,14 @@ impl AiWorld<'_, '_> {
             .iter()
             .map(|(_, q)| (*q as f32 * mult).max(0.0).ceil() as u32)
             .sum();
+        if me.fixes.is_some() {
+            // A cycle under way carries on: switching to a haul would
+            // throw away its inputs and its time.
+            if me.mid_cycle {
+                return WorkState::Ready;
+            }
+            return self.work_state_fixed(me, stock, recipe, out_units);
+        }
         // Haul once the workplace is well stocked, before it fills up.
         let well_stocked = stock.total() * 10 >= stock.capacity * 6;
         if (well_stocked || stock.room() < out_units) && me.inventory.room() >= MIN_LOAD as u16 / 2
@@ -427,6 +542,57 @@ impl AiWorld<'_, '_> {
                 None => WorkState::Impossible,
             };
         }
+        for (g, q) in &recipe.inputs {
+            if stock.get(*g) + (me.inventory.get(*g) as u32) < *q as u32 {
+                return WorkState::NeedsInput(*g);
+            }
+        }
+        WorkState::Ready
+    }
+
+    /// `work_state` with the run fixes (SIM-64): only outputs count as
+    /// fullness, and hands too full for a cycle are emptied first. A pile
+    /// of half a load of an output with a `haul.min_load` (weapons, tools)
+    /// is carried in by the worker, as a full workplace's is: the workshop
+    /// stands by the storehouse, and carters favour food.
+    fn work_state_fixed(
+        &self,
+        me: &Me,
+        stock: &Stockpile,
+        recipe: &sim_economy::data::Recipe,
+        out_units: u32,
+    ) -> WorkState {
+        let is_output = |g: GoodId| recipe.outputs.iter().any(|(o, _)| *o == g);
+        // Hands too full for a cycle: carry off what's in the way first
+        // (workshops only: a farmer's full hands stay the M2 rule).
+        if !recipe.inputs.is_empty()
+            && let Some(g) =
+                crate::act::blocking_good(me.inventory, &recipe.inputs, &recipe.outputs, out_units)
+        {
+            return WorkState::Drop(g);
+        }
+        // Haul once the outputs fill the workplace, or crowd out a cycle's.
+        let outputs: u32 = stock
+            .goods
+            .iter()
+            .filter(|(g, _)| is_output(**g))
+            .map(|(_, q)| *q)
+            .sum();
+        let full = outputs * 10 >= stock.capacity * 6 || stock.room() < out_units;
+        let half_load = MIN_LOAD / 2;
+        if me.inventory.room() >= half_load as u16
+            && let Some((g, _)) = stock
+                .goods
+                .iter()
+                .filter(|(g, q)| {
+                    is_output(**g)
+                        && (full || self.econ.min_load(**g).is_some() && **q >= half_load)
+                })
+                .max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0)))
+        {
+            return WorkState::Full(*g);
+        }
+        // A workplace full of inputs is Ready: a cycle makes room.
         for (g, q) in &recipe.inputs {
             if stock.get(*g) + (me.inventory.get(*g) as u32) < *q as u32 {
                 return WorkState::NeedsInput(*g);
@@ -461,17 +627,28 @@ impl AiWorld<'_, '_> {
                 % 9) as f32;
             let dist = (building.tile - me.tile).as_vec2().length()
                 + (building.tile - store_tile).as_vec2().length();
-            // Collect outputs.
+            // Collect outputs. With the run fixes, a pile counts from its
+            // good's `haul.min_load`, and as at least a full load.
+            let min_load = |g: GoodId| match me.fixes {
+                Some(_) => self.econ.min_load(g).unwrap_or(MIN_LOAD),
+                None => MIN_LOAD,
+            };
             if let Some((good, qty)) = stock
                 .goods
                 .iter()
-                .filter(|(g, _)| !inputs.contains(g))
+                .filter(|(g, q)| {
+                    !inputs.contains(g) && (me.fixes.is_none() || **q >= min_load(**g))
+                })
                 .max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0)))
-                && *qty >= MIN_LOAD
+                && *qty >= min_load(*good)
             {
+                let load = match me.fixes {
+                    Some(_) => (*qty).max(MIN_LOAD),
+                    None => *qty,
+                };
                 // Food first: a village can live without ore, not without grain.
                 let urgency = if self.econ.is_food(*good) { 3.0 } else { 1.0 };
-                let value = *qty as f32 * urgency - 0.3 * dist + jitter;
+                let value = load as f32 * urgency - 0.3 * dist + jitter;
                 if best.as_ref().is_none_or(|(v, _)| value > *v) {
                     best = Some((value, (wp_entity, store, *good)));
                 }
@@ -481,6 +658,10 @@ impl AiWorld<'_, '_> {
                 for (good, q) in &recipe.inputs {
                     let have = stock.get(*good);
                     let in_store = store_stock.map_or(0, |s| s.get(*good));
+                    // Run fixes: one carter per delivery.
+                    if me.fixes.is_some_and(|f| f.taken(wp_entity, *good, me)) {
+                        continue;
+                    }
                     if have < 4 * *q as u32 && in_store >= *q as u32 {
                         let value = 60.0 - 0.3 * dist + jitter;
                         if best.as_ref().is_none_or(|(v, _)| value > *v) {
@@ -582,6 +763,24 @@ pub(crate) fn decide(
     let inertia = world.villagers.data.ai.inertia;
     let days_per_year = world.calendar.days_per_year();
     let working = world.villagers.data.households.working_age;
+    // SIM-64: in a run with the fixes, the input deliveries haulers are on
+    // as the tick starts (read before anyone decides, so the order agents
+    // decide in changes nothing).
+    let fixes = run_fixes_on(world.run.as_deref(), &world.econ).then(|| {
+        let mut f = RunFixes::default();
+        for (id, _, _, _, _, _, _, _, activity, ..) in agents.iter() {
+            if activity.kind == ActionKind::Haul
+                && activity.stage != Stage::Done
+                && let (Some(dropoff), Some(good)) = (activity.dropoff, activity.good)
+            {
+                f.claims
+                    .entry((dropoff, good))
+                    .and_modify(|c| *c = (*c).min(*id))
+                    .or_insert(*id);
+            }
+        }
+        f
+    });
     agents.par_iter_mut().for_each(
         |(
             id,
@@ -615,6 +814,21 @@ pub(crate) fn decide(
                 tile: pos.0,
                 adult: years >= working.min,
                 morale: combat.morale,
+                fixes: fixes.as_ref(),
+                mid_cycle: activity.kind == ActionKind::Work
+                    && activity.stage == Stage::Perform
+                    && activity.step == 2,
+                hauling: match (
+                    activity.kind,
+                    activity.stage,
+                    activity.dropoff,
+                    activity.good,
+                ) {
+                    (ActionKind::Haul, stage, Some(d), Some(g)) if stage != Stage::Done => {
+                        Some((d, g))
+                    }
+                    _ => None,
+                },
             };
             let candidates = world.candidates(&me);
             let current = (!done).then_some(activity.kind);
@@ -651,6 +865,45 @@ pub(crate) fn decide(
             }
         },
     );
+    // SIM-64: two carters who chose the same free input delivery in the
+    // same tick: the lowest SpawnId keeps it, the others decide again next
+    // tick (when its claim shows).
+    if let Some(fixes) = &fixes {
+        let mut fresh: Vec<(SpawnId, Entity, GoodId)> = agents
+            .iter()
+            .filter_map(|(id, _, occupation, .., activity, _, _, _)| {
+                let (Some(dropoff), Some(good)) = (activity.dropoff, activity.good) else {
+                    return None;
+                };
+                (*occupation == Occupation::Carter
+                    && activity.kind == ActionKind::Haul
+                    && activity.started_tick == tick
+                    && activity.stage == Stage::Travel
+                    && world.is_delivery(dropoff, good))
+                .then_some((*id, dropoff, good))
+            })
+            .collect();
+        if fresh.len() > 1 {
+            fresh.sort_unstable();
+            let mut kept: Vec<(Entity, GoodId)> = Vec::new();
+            let mut losers: Vec<SpawnId> = Vec::new();
+            for (id, dropoff, good) in fresh {
+                if fixes.taken(dropoff, good, id) || kept.contains(&(dropoff, good)) {
+                    losers.push(id);
+                } else {
+                    kept.push((dropoff, good));
+                }
+            }
+            if !losers.is_empty() {
+                for (id, .., mut activity, mut travel, _, _) in agents.iter_mut() {
+                    if losers.binary_search(id).is_ok() {
+                        activity.stage = Stage::Done;
+                        travel.state = TravelState::Idle;
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

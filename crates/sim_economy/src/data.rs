@@ -177,6 +177,57 @@ pub struct EconomyData {
     pub cart_carry: u16,
     pub initial_stock_per_villager: Vec<(String, u32)>,
     pub initial_home_food_per_resident: u32,
+    /// The run-only smithy-chain fixes (SIM-64, ADR 0020). Left out of the
+    /// data's RON text (its hash and save) while it holds the shipped
+    /// values, so adding it changed no developed-world hash.
+    #[serde(default, skip_serializing_if = "HaulData::is_shipped")]
+    pub haul: HaulData,
+}
+
+/// economy.ron `haul` (SIM-64, ADR 0020): how carters and workers move a
+/// workshop's goods, in a run only (`in_run`). Outside a run, and with
+/// `run_fixes: false`, the M2 rules apply unchanged.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HaulData {
+    /// Turns the fixes on in a run: output-only fullness, capped input
+    /// deliveries with one carter per job, a worker dropping goods that
+    /// aren't inputs before a cycle, the per-good haul minimums, and a
+    /// cycle under way held to its end (sim_agents `ai::RunFixes`).
+    pub run_fixes: bool,
+    /// An input delivery brings at most this many cycles' worth of the
+    /// input, minus what the workplace already holds.
+    pub input_target: u16,
+    /// Per-good haul minimums (good name, units): a carter collects a pile
+    /// of these from a workplace from this size, instead of the usual full
+    /// load of 8. Goods not listed keep 8.
+    pub min_load: Vec<(String, u16)>,
+    /// A worker in the middle of a cycle that has used its inputs scores
+    /// its work this many times as high (at least 1), so hunger seldom
+    /// makes it walk off and lose the inputs and the time.
+    pub cycle_hold: f32,
+}
+
+impl Default for HaulData {
+    /// The shipped values (economy.ron). Keep them equal to the file: at
+    /// these values the block is left out of `Economy`'s hash and save, so
+    /// retuning them (both here and in the file) changes run behaviour
+    /// without the hash noticing, and needs a `SAVE_FORMAT` bump.
+    fn default() -> Self {
+        Self {
+            run_fixes: true,
+            input_target: 10,
+            min_load: vec![("weapons".into(), 1), ("tools".into(), 2)],
+            cycle_hold: 2.0,
+        }
+    }
+}
+
+impl HaulData {
+    /// Whether this is exactly the shipped block (then it is left out of
+    /// the data's RON text).
+    pub fn is_shipped(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// A recipe with goods resolved to ids.
@@ -198,6 +249,8 @@ pub struct Economy {
     pub data: EconomyData,
     pub recipes: Vec<Recipe>,
     pub initial_stock: Vec<(GoodId, u32)>,
+    /// `haul.min_load` resolved to ids.
+    pub min_load: Vec<(GoodId, u32)>,
 }
 
 impl Economy {
@@ -277,10 +330,24 @@ impl Economy {
             .iter()
             .map(|(n, q)| Ok((good(n)?, *q)))
             .collect::<Result<_, String>>()?;
+        if data.haul.input_target == 0 {
+            return Err("economy: haul.input_target must be at least 1".into());
+        }
+        if !(data.haul.cycle_hold >= 1.0 && data.haul.cycle_hold.is_finite()) {
+            return Err("economy: haul.cycle_hold must be at least 1".into());
+        }
+        let mut min_load = Vec::new();
+        for (n, q) in &data.haul.min_load {
+            if *q == 0 {
+                return Err(format!("economy: haul.min_load for {n} must be at least 1"));
+            }
+            min_load.push((good(n)?, *q as u32));
+        }
         Ok(Self {
             data,
             recipes,
             initial_stock,
+            min_load,
         })
     }
 
@@ -343,6 +410,16 @@ impl Economy {
     /// A resolved recipe by id.
     pub fn recipe(&self, id: RecipeId) -> &Recipe {
         &self.recipes[id.0 as usize]
+    }
+
+    /// `haul.min_load` for `g`, if listed (SIM-64; read only in a run).
+    pub fn min_load(&self, g: GoodId) -> Option<u32> {
+        self.min_load.iter().find(|(m, _)| *m == g).map(|(_, q)| *q)
+    }
+
+    /// `haul.input_target` (SIM-64; read only in a run).
+    pub fn input_target(&self) -> u32 {
+        self.data.haul.input_target as u32
     }
 }
 
@@ -410,6 +487,32 @@ mod tests {
         assert_eq!(of("baking"), None);
         let text = DEFAULT_ECONOMY_RON.replace("Some(SmithSpeed)", "Some(Morale)");
         assert!(Economy::from_ron(&text).unwrap_err().contains("modifier"));
+    }
+
+    /// SIM-64: the shipped haul block resolves; it is left out of the RON
+    /// text (so the hash and save of the data didn't change), and a changed
+    /// block is written out and read back.
+    #[test]
+    fn haul_block_resolves_and_round_trips() {
+        let e = Economy::default_data();
+        assert!(e.data.haul.run_fixes);
+        assert_eq!(e.input_target(), 10);
+        let weapons = GoodId(7);
+        assert_eq!(e.good_name(weapons), "weapons");
+        assert_eq!(e.min_load(weapons), Some(1));
+        assert_eq!(e.min_load(GoodId(6)), Some(2));
+        assert_eq!(e.min_load(GoodId(0)), None);
+        let text = ron::to_string(&e.data).unwrap();
+        assert!(!text.contains("haul"), "the shipped block is left out");
+        let mut changed = e.data.clone();
+        changed.haul.run_fixes = false;
+        let text = ron::to_string(&changed).unwrap();
+        assert!(text.contains("run_fixes:false"));
+        assert_eq!(Economy::from_ron(&text).unwrap().data, changed);
+        let bad = DEFAULT_ECONOMY_RON.replace("(\"weapons\", 1)", "(\"swords\", 1)");
+        assert!(Economy::from_ron(&bad).unwrap_err().contains("swords"));
+        let bad = DEFAULT_ECONOMY_RON.replace("input_target: 10", "input_target: 0");
+        assert!(Economy::from_ron(&bad).is_err());
     }
 
     #[test]

@@ -56,7 +56,11 @@ usage: sim_headless [options]
                             --replay, the rest of that replay (its commands
                             from the saved tick on), checking its hashes
   --chronicle               at the end, print the chronicle in words and the
-                            run summary (UI-09; a plain run, --bot or --load)";
+                            run summary (UI-09; a plain run, --bot or --load)
+  --workshops               at the end, print each smithy's and mine's
+                            recipe, stock, workers and cycles, and where the
+                            island's weapons and tools are (SIM-64; a plain
+                            run or --stats-every)";
 
 struct Args {
     seed: u64,
@@ -81,6 +85,7 @@ struct Args {
     save_at: Option<u64>,
     load: Option<String>,
     chronicle: bool,
+    workshops: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -104,6 +109,7 @@ fn parse_args() -> Result<Args, String> {
         save_at: None,
         load: None,
         chronicle: false,
+        workshops: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -141,6 +147,7 @@ fn parse_args() -> Result<Args, String> {
             "--save-at" => args.save_at = Some(num(&flag, value()?)?),
             "--load" => args.load = Some(value()?),
             "--chronicle" => args.chronicle = true,
+            "--workshops" => args.workshops = true,
             "-h" | "--help" => return Err(USAGE.to_string()),
             other => return Err(format!("unknown argument {other}\n{USAGE}")),
         }
@@ -171,6 +178,19 @@ fn parse_args() -> Result<Args, String> {
         return Err(
             "--chronicle goes with a plain run, --bot or --load (not --record, --replay, \
              --stats-every or --timings)"
+                .to_string(),
+        );
+    }
+    if args.workshops
+        && (args.bot
+            || args.replay.is_some()
+            || args.record.is_some()
+            || args.timings
+            || args.load.is_some())
+    {
+        return Err(
+            "--workshops goes with a plain run or --stats-every (not --bot, --replay, --record, \
+             --timings or --load)"
                 .to_string(),
         );
     }
@@ -717,6 +737,9 @@ fn main() -> ExitCode {
         for line in &stats.never_ate {
             println!("  never ate: {line}");
         }
+        if args.workshops {
+            print_workshops(&mut app);
+        }
         for v in &stats.villages {
             println!(
                 "  {:<14} pop {:>4} food {:>5.2} days hunger {:.2} store {:?} waiting {:?}",
@@ -772,7 +795,18 @@ fn main() -> ExitCode {
     if args.chronicle {
         print_chronicle(&app);
     }
+    if args.workshops {
+        print_workshops(&mut app);
+    }
     ExitCode::SUCCESS
+}
+
+/// `--workshops`: smithies and mines, and the island's weapons (SIM-64).
+fn print_workshops(app: &mut bevy_app::App) {
+    println!("workshops:");
+    for line in sim_headless::stats::workshops(app) {
+        println!("{line}");
+    }
 }
 
 /// `--chronicle`: the chronicle in words and the run summary (UI-09).

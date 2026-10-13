@@ -23,9 +23,11 @@ use bevy_app::{App, FixedUpdate, Plugin};
 use bevy_ecs::prelude::*;
 use sim_core::{AppHashExt, AppSaveExt, SimSet};
 
-pub use data::{Economy, GoodId, Occupation, RecipeId, WorkplaceKind};
+pub use data::{Economy, GoodId, HaulData, Occupation, RecipeId, WorkplaceKind};
 pub use goods::{Inventory, Stockpile, TransferOp, Transfers};
-pub use layout::{Building, BuildingKind, Home, Occupied, SettlementEconomy, Workplace};
+pub use layout::{
+    Building, BuildingKind, Home, Occupied, SettlementEconomy, Workplace, layout_recipe, set_recipe,
+};
 
 /// Ordering inside [`SimSet::Act`]: agents post transfer orders, then the
 /// resolver applies them.

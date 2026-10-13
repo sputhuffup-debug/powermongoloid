@@ -7,12 +7,19 @@
 //! tagged in economy.ron: `modifier: Some(FoodYield)` scales the outputs
 //! ([`yield_units`], stochastic rounding), `Some(SmithSpeed)` shortens the
 //! cycle ([`smith_ticks`]). Without modifiers both are exact no-ops.
+//!
+//! In a run with economy.ron `haul.run_fixes` (SIM-64, ADR 0020), an input
+//! delivery picks up at most `haul.input_target` cycles' worth minus what
+//! the workplace holds ([`input_cap`]), and a worker whose hands are too
+//! full for a cycle stops so the AI can send it to empty them.
 
 use bevy_ecs::prelude::*;
 use rand::RngExt;
 use sim_core::rng::rng_key;
 use sim_core::{Calendar, FactionId, FactionModifiers, Phase, SimSeed, SimTick, SpawnId, Stat};
-use sim_economy::{Building, Economy, GoodId, Inventory, TransferOp, Transfers, Workplace};
+use sim_economy::{
+    Building, Economy, GoodId, Inventory, Stockpile, TransferOp, Transfers, Workplace,
+};
 
 use crate::components::{
     ActionKind, Activity, CombatStats, Employment, Needs, Stage, Stance, Threat, Travel,
@@ -56,6 +63,58 @@ fn add_output(inv: &mut Inventory, g: GoodId, base: u16, out: u16) {
         inv.add_over_capacity(g, out - base);
     }
 }
+/// SIM-64: the most an input delivery of `good` to a workplace running
+/// `inputs` (its recipe's) may bring: `input_target` cycles' worth minus
+/// `held`, what the workplace already has. `None` if `good` isn't an input.
+pub fn input_cap(
+    inputs: &[(GoodId, u16)],
+    good: GoodId,
+    held: u32,
+    input_target: u32,
+) -> Option<u32> {
+    inputs
+        .iter()
+        .find(|(g, _)| *g == good)
+        .map(|(_, q)| (input_target * *q as u32).saturating_sub(held))
+}
+
+/// SIM-64: whether a worker's hands are too full for a work cycle of a
+/// recipe taking `inputs` and yielding `outputs` (`out_units` in all), and
+/// if so the good to carry off first: the largest pile that isn't an
+/// input, or holds more of one than a cycle takes. Too full is too few
+/// units of room, or too few of the four slots for the cycle's goods (an
+/// output with no slot would be lost). `None` if the hands have room, or
+/// nothing in them is in the way.
+pub fn blocking_good(
+    inv: &Inventory,
+    inputs: &[(GoodId, u16)],
+    outputs: &[(GoodId, u16)],
+    out_units: u32,
+) -> Option<GoodId> {
+    let missing: u32 = inputs
+        .iter()
+        .map(|(g, q)| q.saturating_sub(inv.get(*g)) as u32)
+        .sum();
+    let mut kinds: Vec<GoodId> = inv
+        .contents()
+        .map(|(g, _)| g)
+        .chain(inputs.iter().map(|(g, _)| *g))
+        .chain(outputs.iter().map(|(g, _)| *g))
+        .collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    if inv.room() as u32 >= missing + out_units
+        && kinds.len() <= sim_economy::goods::INVENTORY_SLOTS
+    {
+        return None;
+    }
+    let need = |g: GoodId| inputs.iter().find(|(i, _)| *i == g).map(|(_, q)| *q);
+    inv.contents()
+        .filter(|(g, n)| need(*g).is_none_or(|q| *n > q))
+        .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0)))
+        .map(|(g, _)| g)
+}
+
 /// Eats carried food, best first, until sated or out of food. Returns
 /// whether anything was eaten.
 pub fn eat_from(inv: &mut Inventory, needs: &mut Needs, econ: &Economy, sated: f32) -> bool {
@@ -85,6 +144,7 @@ pub(crate) fn perform(
     threats: Query<&Threat>,
     owners: Query<&Owner>,
     mods: Res<FactionModifiers>,
+    (run, stocks): (Option<Res<sim_core::RunState>>, Query<&Stockpile>),
     mut agents: Query<
         (
             &SpawnId,
@@ -105,6 +165,16 @@ pub(crate) fn perform(
     let phase = calendar.at(tick).phase;
     let needs_data = &villagers.data.needs;
     let idle = &villagers.data.idle;
+    // SIM-64: the smithy-chain fixes, in a run.
+    let fixes = crate::ai::run_fixes_on(run.as_deref(), &econ);
+    // The cap on an input delivery from `store` to `dropoff`, with the fixes.
+    let delivery_cap = |dropoff: Option<Entity>, good: GoodId| -> Option<u16> {
+        let d = dropoff.filter(|_| fixes)?;
+        let recipe = econ.recipe(workplaces.get(d).ok()?.recipe?);
+        let held = stocks.get(d).map_or(0, |s| s.get(good));
+        input_cap(&recipe.inputs, good, held, econ.input_target())
+            .map(|c| c.min(u16::MAX as u32) as u16)
+    };
     agents.par_iter_mut().for_each(
         |(
             id,
@@ -182,12 +252,49 @@ pub(crate) fn perform(
                         0 => {
                             if let Some(target) = act.target {
                                 let max = inv.room();
+                                let cap = match (act.kind, act.good) {
+                                    (ActionKind::Haul, Some(good)) => {
+                                        delivery_cap(act.dropoff, good)
+                                    }
+                                    _ => None,
+                                };
                                 let op = match (act.kind, act.good) {
                                     (ActionKind::Fetch, _) => TransferOp::TakeFood { max },
-                                    (_, Some(good)) => TransferOp::Take { good, max },
+                                    (_, Some(good)) => TransferOp::Take {
+                                        good,
+                                        max: cap.map_or(max, |cap| cap.min(max)),
+                                    },
                                     (_, None) => TransferOp::TakeAny { max },
                                 };
-                                transfers.post(target, vec![op]);
+                                // SIM-64: at the storehouse, hands are
+                                // emptied first: goods (not food) in the
+                                // hands of someone fetching food, so they
+                                // don't go home where nobody sees them, and
+                                // leftovers of an interrupted haul in the
+                                // hands of someone picking up an input
+                                // delivery, so only the capped input goes.
+                                let ops = if fixes
+                                    && act.kind == ActionKind::Fetch
+                                    && inv.contents().any(|(g, _)| !econ.is_food(g))
+                                {
+                                    vec![
+                                        TransferOp::PutAll,
+                                        TransferOp::TakeFood { max: inv.capacity },
+                                    ]
+                                } else if let (Some(cap), Some(good)) = (cap, act.good)
+                                    && !inv.is_empty()
+                                {
+                                    vec![
+                                        TransferOp::PutAll,
+                                        TransferOp::Take {
+                                            good,
+                                            max: cap.min(inv.capacity),
+                                        },
+                                    ]
+                                } else {
+                                    vec![op]
+                                };
+                                transfers.post(target, ops);
                                 act.step = 1;
                             } else {
                                 act.stage = Stage::Done;
@@ -238,7 +345,25 @@ pub(crate) fn perform(
                         match act.step {
                             // Ready to start a cycle.
                             0 | 1 => {
-                                if !can_work {
+                                // SIM-64: hands too full for a cycle stop
+                                // it; the AI sends the worker to empty them.
+                                // As `work_state` counts them: room for
+                                // a FoodYield bonus's best case.
+                                let food_mult = match recipe.modifier {
+                                    Some(Stat::FoodYield) if fixes => mult(Stat::FoodYield),
+                                    _ => 1.0,
+                                };
+                                let out: u32 = recipe
+                                    .outputs
+                                    .iter()
+                                    .map(|(_, q)| (*q as f32 * food_mult).max(0.0).ceil() as u32)
+                                    .sum();
+                                if !can_work
+                                    || fixes
+                                        && !recipe.inputs.is_empty()
+                                        && blocking_good(&inv, &recipe.inputs, &recipe.outputs, out)
+                                            .is_some()
+                                {
                                     act.stage = Stage::Done;
                                 } else if inv.has_all(&recipe.inputs) {
                                     for (g, q) in &recipe.inputs {
@@ -423,6 +548,48 @@ mod tests {
         let mut inv = Inventory::with_capacity(8);
         add_output(&mut inv, GoodId(0), 8, 7);
         assert_eq!(inv.get(GoodId(0)), 7);
+    }
+
+    /// SIM-64: an input delivery brings `input_target` cycles' worth minus
+    /// the stock, nothing once that is there, and isn't capped for a good
+    /// the recipe doesn't take.
+    #[test]
+    fn input_deliveries_are_capped() {
+        let (ore, wood, grain) = (GoodId(5), GoodId(4), GoodId(0));
+        let inputs = [(ore, 2), (wood, 1)];
+        assert_eq!(input_cap(&inputs, ore, 0, 10), Some(20));
+        assert_eq!(input_cap(&inputs, ore, 14, 10), Some(6));
+        assert_eq!(input_cap(&inputs, ore, 190, 10), Some(0));
+        assert_eq!(input_cap(&inputs, wood, 3, 10), Some(7));
+        assert_eq!(input_cap(&inputs, grain, 0, 10), None);
+    }
+
+    /// SIM-64: hands too full for a cycle (units or slots) name the pile
+    /// to carry off: never an input a cycle needs, the largest first.
+    #[test]
+    fn full_hands_name_what_is_in_the_way() {
+        let (grain, bread, wood, ore, weapons) =
+            (GoodId(0), GoodId(3), GoodId(4), GoodId(5), GoodId(7));
+        let inputs = [(ore, 2), (wood, 1)];
+        let outputs = [(weapons, 1)];
+        let mut inv = Inventory::with_capacity(8);
+        assert_eq!(blocking_good(&inv, &inputs, &outputs, 1), None);
+        inv.add(weapons, 5);
+        assert_eq!(blocking_good(&inv, &inputs, &outputs, 1), Some(weapons));
+        // Room for the cycle: 3 units of inputs and 1 of output.
+        inv.take(weapons, 1);
+        assert_eq!(blocking_good(&inv, &inputs, &outputs, 1), None);
+        // Inputs already in hand need no room; too much of one is in the way.
+        let mut inv = Inventory::with_capacity(8);
+        inv.add(ore, 7);
+        assert_eq!(blocking_good(&inv, &inputs, &outputs, 1), Some(ore));
+        inv.take(ore, 5);
+        assert_eq!(blocking_good(&inv, &inputs, &outputs, 1), None);
+        // Two kinds of leftovers leave no slot for the output.
+        let mut inv = Inventory::with_capacity(8);
+        inv.add(grain, 1);
+        inv.add(bread, 2);
+        assert_eq!(blocking_good(&inv, &inputs, &outputs, 1), Some(bread));
     }
 
     #[test]

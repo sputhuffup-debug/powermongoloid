@@ -9,7 +9,9 @@ use sim_agents::{
     Needs, Owner, SettlementLoyalty, Stage, Stance, Threat, Villager, Villagers,
 };
 use sim_core::{Calendar, FactionId, NameTable, SimTick, SpawnId};
-use sim_economy::{Building, Economy, Occupation, SettlementEconomy, Stockpile};
+use sim_economy::{
+    Building, Economy, Occupation, SettlementEconomy, Stockpile, Workplace, WorkplaceKind,
+};
 use sim_military::{
     Army, Captain, Equipment, Follower, Progression, RequestBoard, RequestKind, Soldier, Traits,
     Veteran,
@@ -395,6 +397,7 @@ fn settlement_panel(
         Option<Res<SimTick>>,
     ),
     stocks: Query<&Stockpile>,
+    workplaces: Query<&Workplace>,
     villagers: Query<(&Villager, &Occupation, &CombatStats, &Activity), Without<Enlisted>>,
     army: Option<Res<Army>>,
     mut panel: Query<&mut Visibility, With<SettlementPanel>>,
@@ -534,7 +537,44 @@ fn settlement_panel(
             s += &format!("  {:<8} {q}\n", econ.good_name(*g));
         }
     }
+    // SIM-64: what waits at the smithies and the mine, beside the
+    // storehouse: inputs on their way to a cycle, outputs on their way in.
+    let shops: Vec<String> = se
+        .workplaces
+        .iter()
+        .filter_map(|&e| Some((workplaces.get(e).ok()?, stocks.get(e).ok()?)))
+        .filter(|(wp, _)| matches!(wp.kind, WorkplaceKind::Smithy | WorkplaceKind::Mine))
+        .map(|(wp, stock)| workshop_line(&econ, wp, stock))
+        .collect();
+    if !shops.is_empty() {
+        s += "\nWorkshops:\n";
+        for line in shops {
+            s += &format!("  {line}\n");
+        }
+    }
     text.0 = s;
+}
+
+/// One workshop's line on the settlement panel (SIM-64): its kind, what it
+/// makes and its stock (no food: workers' leftover meals aren't news).
+fn workshop_line(econ: &Economy, wp: &Workplace, stock: &Stockpile) -> String {
+    let makes = wp
+        .recipe
+        .map(|r| econ.recipe(r))
+        .and_then(|r| r.outputs.first())
+        .map_or(String::new(), |(g, _)| format!(" ({})", econ.good_name(*g)));
+    let goods: Vec<String> = stock
+        .goods
+        .iter()
+        .filter(|(g, _)| !econ.is_food(**g))
+        .map(|(g, q)| format!("{} {q}", econ.good_name(*g)))
+        .collect();
+    let goods = if goods.is_empty() {
+        "empty".to_string()
+    } else {
+        goods.join(", ")
+    };
+    format!("{}{makes}: {goods}", capitalise(wp.kind.name()))
 }
 
 #[cfg(test)]
@@ -552,5 +592,33 @@ mod tests {
             "sleeping"
         );
         assert_eq!(capitalise("farmer"), "Farmer");
+    }
+
+    /// SIM-64: a workshop's line names what it makes and its stock,
+    /// leaving out food.
+    #[test]
+    fn workshop_lines_show_stock_without_food() {
+        let econ = Economy::default_data();
+        let weapons = econ.recipes_for(WorkplaceKind::Smithy)[1];
+        let wp = Workplace {
+            kind: WorkplaceKind::Smithy,
+            recipe: Some(weapons),
+            workers: Vec::new(),
+        };
+        let good = |n: &str| {
+            (0..econ.good_count() as u8)
+                .map(sim_economy::GoodId)
+                .find(|g| econ.good_name(*g) == n)
+                .unwrap()
+        };
+        let mut stock = Stockpile::with_capacity(200);
+        assert_eq!(workshop_line(&econ, &wp, &stock), "Smithy (weapons): empty");
+        stock.add(good("ore"), 12);
+        stock.add(good("grain"), 3);
+        stock.add(good("weapons"), 2);
+        assert_eq!(
+            workshop_line(&econ, &wp, &stock),
+            "Smithy (weapons): ore 12, weapons 2"
+        );
     }
 }
