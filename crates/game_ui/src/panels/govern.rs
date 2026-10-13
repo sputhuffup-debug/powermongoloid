@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 
 use bevy::prelude::*;
-use sim_agents::{Assignment, Edicts, Mustered, Owner, Rationed, Villager};
+use sim_agents::{Assignment, Edicts, Mustered, Owner, Villager};
 use sim_core::{
     Calendar, CommandKind, Dial, Dues, FactionId, GovernAct, NameTable, SimTick, SpawnId, Table,
     WorkFocus,

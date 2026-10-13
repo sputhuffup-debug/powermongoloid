@@ -305,7 +305,8 @@ fn read_feed(world: &mut World, mut cur: Local<Cursors>) {
         })
         .collect();
     let cal = world.resource::<Calendar>();
-    let mut days: Vec<(u64, u64, Vec<(u64, u64, i32)>, IVec2)> = Vec::new();
+    type Day = (u64, u64, Vec<(u64, u64, i32)>, IVec2);
+    let mut days: Vec<Day> = Vec::new();
     for t in &tributes {
         let day = cal.at(t.tick).day + 1;
         let band = (

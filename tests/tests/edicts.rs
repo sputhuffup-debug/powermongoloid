@@ -49,7 +49,6 @@ use sim_military::{
     ArmySpec, Army, Captain, Equipment, Follower, Progression, RunProgress, govern, spawn_army,
     transfer,
 };
-use sim_world::Settlement;
 
 const SEED: u64 = 42;
 
