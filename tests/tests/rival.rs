@@ -35,8 +35,8 @@ use sim_core::{
     SimTick, SpawnId, compute_state_hash,
 };
 use sim_military::{
-    ArmySpec, ArmyStats, Captain, Factions, Follower, Progression, RivalBand, RivalData,
-    RivalState, RunProgress, find_settlement, spawn_army,
+    ArmySpec, ArmyStats, Captain, Factions, Fallout, Follower, Progression, RivalBand, RivalData,
+    RivalState, RunProgress, TakenBy, Tenure, find_settlement, spawn_army, transfer_seeded,
 };
 use sim_world::Settlement;
 
@@ -336,4 +336,240 @@ fn taking_the_seat_wins_the_run() {
     app.step(50);
     assert_eq!(app.world().resource::<SimTick>().0, tick, "the clock stops");
     assert_eq!(compute_state_hash(app.world_mut()), hash);
+}
+
+/// Gives the run's clock row `f`'s edits (data, before the first tick).
+fn edit_row(app: &mut App, f: impl FnOnce(&mut RivalData)) {
+    let cfg = app.world().resource::<RunState>().config.expect("a run");
+    let mut p = app.world_mut().resource_mut::<Progression>();
+    let r = p
+        .data
+        .rival
+        .iter_mut()
+        .find(|r| r.difficulty == cfg.difficulty)
+        .unwrap();
+    f(r);
+}
+
+/// Player takes `s` by submission (no band; a rival town brings a vow).
+fn take(app: &mut App, s: Entity) {
+    transfer_seeded(
+        app.world_mut(),
+        s,
+        FactionId::PLAYER,
+        Cause::Submission { captain: 0 },
+        Some(0.45),
+    )
+    .expect("populated");
+}
+
+/// The rival's towns besides its seat, by SpawnId.
+fn outlying(app: &mut App) -> Vec<(u64, Entity)> {
+    let seat = app.world().resource::<RunProgress>().rival_seat;
+    rival_lands(app)
+        .into_iter()
+        .filter(|(id, _)| Some(*id) != seat)
+        .collect()
+}
+
+/// GP-33, GP-28: the garrison's books balance with reprisals: a band split
+/// off for a vow counts in `raids` and in the people out, like any raid.
+#[test]
+fn the_garrison_books_include_reprisals() {
+    let mut app = run_app(SEED);
+    quiet_director(&mut app);
+    let cal = app.world().resource::<Calendar>().clone();
+    edit_row(&mut app, |r| r.reprisal_from_day = 0.0);
+    let start_garrison = garrison_size(&mut app);
+    let towns = outlying(&mut app);
+    take(&mut app, towns[0].1);
+    app.step(1);
+    let mut launched = None;
+    for hour in 0..48u64 {
+        let state = app.world().resource::<RivalState>().clone();
+        let stats = app.world().resource::<ArmyStats>().get(FactionId::RIVAL);
+        let size = garrison_size(&mut app);
+        let world = app.world_mut();
+        let mut q = world.query_filtered::<Entity, With<RivalBand>>();
+        let bands: Vec<Entity> = q.iter(world).collect();
+        let mut q = world.query::<&Follower>();
+        let out: u32 = bands
+            .iter()
+            .map(|b| q.iter(world).filter(|f| f.captain == *b).count() as u32 + 1)
+            .sum();
+        assert_eq!(
+            size + out,
+            start_garrison + state.levied - stats.lost - stats.deserted,
+            "the books at hour {hour} ({} bands out, {} raids)",
+            bands.len(),
+            state.raids
+        );
+        let told = chronicle(&app)
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e.event.kind,
+                    SimEventKind::RivalRaid | SimEventKind::RivalReprisal
+                )
+            })
+            .count() as u32;
+        assert_eq!(state.raids, told, "every band sent is told and counted");
+        if launched.is_none()
+            && chronicle(&app)
+                .iter()
+                .any(|e| e.event.kind == SimEventKind::RivalReprisal)
+        {
+            launched = Some((hour, size, out, state.raids));
+        }
+        app.step(cal.ticks_per_hour());
+    }
+    let (hour, size, out, raids) = launched.expect("the reprisal left within two days");
+    println!("reprisal out at hour {hour}: garrison {size}, {out} out, raids {raids}");
+    assert!(out >= 2 && raids >= 1);
+}
+
+/// GP-31: with the realm intact the seat's defence is exactly its clock.
+#[test]
+fn a_full_realm_is_an_exact_no_op() {
+    let mut app = run_app(SEED);
+    quiet_director(&mut app);
+    let cal = app.world().resource::<Calendar>().clone();
+    // Awkward values, so a stray factor of 1.0000001 would show.
+    edit_row(&mut app, |r| {
+        r.defence_steps = vec![(0.0, 0.7), (0.5, 1.1), (1.0, 1.9), (1.5, 2.3)];
+    });
+    let clock = row(&app);
+    let strength = sim_military::rival::strength(app.world());
+    let realm = sim_military::rival::realm(app.world()).expect("a realm");
+    assert_eq!(realm.towns_held, realm.towns);
+    assert!(realm.towns >= 1);
+    assert_eq!(realm.share(), 1.0);
+    assert_eq!(
+        sim_military::rival::realm_factor(clock.realm_floor, 1.0),
+        1.0
+    );
+    assert_eq!(sim_military::rival::realm_factor(0.0, 1.0), 1.0);
+    app.step(1);
+    for hour in 0..60u64 {
+        let t = hour * cal.ticks_per_hour();
+        let day = t as f32 / cal.ticks_per_day as f32;
+        let bonus = app.world().resource::<RivalState>().defence_bonus;
+        assert_eq!(
+            bonus.to_bits(),
+            (clock.defence_on(day) * strength).to_bits(),
+            "bit-equal at day {day}"
+        );
+        app.step(cal.ticks_per_hour());
+    }
+    let realm = sim_military::rival::realm(app.world()).unwrap();
+    assert_eq!(realm.share(), 1.0, "its own levies never move the realm");
+}
+
+/// GP-31: each town of the realm the player takes lowers the seat's
+/// defence toward `realm_floor` of its clock.
+#[test]
+fn the_seat_weakens_with_its_realm() {
+    let mut app = run_app(SEED);
+    quiet_director(&mut app);
+    let cal = app.world().resource::<Calendar>().clone();
+    // A constant clock, so the realm alone moves the bonus.
+    edit_row(&mut app, |r| r.defence_steps = vec![(0.0, 2.0)]);
+    let clock = row(&app);
+    let strength = sim_military::rival::strength(app.world());
+    let floor = clock.realm_floor;
+    let full = 2.0 * strength;
+    let towns = outlying(&mut app);
+    assert!(towns.len() >= 2, "a realm of {} towns", towns.len());
+    app.step(cal.ticks_per_hour());
+    assert_eq!(app.world().resource::<RivalState>().defence_bonus, full);
+    let mut last = full;
+    for (k, &(id, s)) in towns.iter().enumerate() {
+        take(&mut app, s);
+        app.step(cal.ticks_per_hour());
+        let realm = sim_military::rival::realm(app.world()).unwrap();
+        let share = realm.share();
+        let bonus = app.world().resource::<RivalState>().defence_bonus;
+        let want = full * (floor + (1.0 - floor) * share);
+        println!(
+            "took #{id}: realm {}/{} towns, share {share:.3}, defence {bonus:.4} (want {want:.4})",
+            realm.towns_held, realm.towns
+        );
+        assert_eq!(realm.towns_held as usize, towns.len() - k - 1);
+        assert!(share < 1.0);
+        assert!((bonus - want).abs() < 1e-5);
+        assert!(bonus < last, "each town taken weakens the seat");
+        last = bonus;
+    }
+    let realm = sim_military::rival::realm(app.world()).unwrap();
+    assert_eq!((realm.towns_held, realm.share()), (0, 0.0));
+    assert!(
+        (app.world().resource::<RivalState>().defence_bonus - full * floor).abs() < 1e-5,
+        "the whole realm taken leaves the floor"
+    );
+}
+
+/// GP-33, GP-32: a reprisal band that retakes the town is the rival's
+/// conquest: `Conquest` by the rival with `Cause::Conquest`, `Conquered`,
+/// no sack, and it raises no band or vow of its own.
+#[test]
+fn a_reprisal_retake_is_a_conquest() {
+    let mut app = run_app(SEED);
+    quiet_director(&mut app);
+    let cal = app.world().resource::<Calendar>().clone();
+    // A reprisal that can win: leave soon, big, and a garrison levied up.
+    edit_row(&mut app, |r| {
+        r.reprisal_from_day = 0.0;
+        r.reprisal_size = 60;
+        r.levy_every_days = 0.1;
+        r.levy_size = 40;
+    });
+    {
+        let mut s = app.world_mut().resource_mut::<RivalState>();
+        s.next_levy = cal.days(0.1);
+    }
+    // The town nearest the seat: the band must arrive before it revolts.
+    let seat_at = app.world().resource::<RivalState>().seat_center;
+    let towns = outlying(&mut app);
+    let &(id, s) = towns
+        .iter()
+        .min_by_key(|(id, e)| {
+            let c = app.world().get::<Settlement>(*e).unwrap().center;
+            ((c - seat_at).as_vec2().length() as u32, *id)
+        })
+        .expect("a rival town");
+    // Sworn wholeheartedly (loyalty 1.0), so it holds until the band comes
+    // rather than revolting free first.
+    transfer_seeded(
+        app.world_mut(),
+        s,
+        FactionId::PLAYER,
+        Cause::Submission { captain: 0 },
+        Some(1.0),
+    )
+    .expect("populated");
+    let mut won = None;
+    for _ in 0..(6 * 24) {
+        app.step(cal.ticks_per_hour());
+        if owner_of(&app, s) == FactionId::RIVAL {
+            won = Some(app.world().resource::<SimTick>().0);
+            break;
+        }
+    }
+    let reprisal = chronicle(&app)
+        .into_iter()
+        .find(|e| e.event.kind == SimEventKind::RivalReprisal);
+    println!("reprisal {reprisal:?}; retaken at {won:?}");
+    assert!(reprisal.is_some(), "a reprisal left");
+    assert!(won.is_some(), "the reprisal retook #{id} within six days");
+    let ev = chronicle(&app)
+        .into_iter()
+        .rfind(|e| e.event.kind == SimEventKind::Conquest)
+        .expect("a Conquest");
+    assert_eq!(ev.event.faction, FactionId::RIVAL);
+    assert_eq!(ev.event.subject, id);
+    assert!(matches!(ev.event.cause, Cause::Conquest { .. }));
+    let t = app.world().get::<Tenure>(s).unwrap();
+    assert_eq!(t.how, TakenBy::Conquered);
+    assert_eq!(t.by, FactionId::RIVAL);
+    assert!(app.world().resource::<Fallout>().pending.is_empty());
 }
